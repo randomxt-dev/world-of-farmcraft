@@ -15,10 +15,11 @@ use crate::settings::SabotageKind;
 pub const PREFIX: &str = "AMONG";
 
 /// A button press, HUD to server. The server picks the target (nearest legal one) for kill,
-/// report and use, so a client cannot aim past what the rules allow.
+/// report, use and fix, so a client cannot aim past what the rules allow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Start,
+    /// Work on the nearest task step.
     Use,
     Kill,
     Report,
@@ -26,6 +27,12 @@ pub enum Request {
     Sabotage(SabotageKind),
     /// Let go of a held sabotage station.
     Release,
+    /// Fix (or hold) the nearest station of the active sabotage.
+    Fix,
+    /// Press the emergency button.
+    Emergency,
+    /// The host takes everyone back to the lobby after a game.
+    Lobby,
 }
 
 /// What the server tells one player.
@@ -253,6 +260,9 @@ impl Request {
             Request::Vote(vote) => format!("vote {}", vote_word(*vote)),
             Request::Sabotage(kind) => format!("sabotage {}", sabotage_word(*kind)),
             Request::Release => "release".into(),
+            Request::Fix => "fix".into(),
+            Request::Emergency => "emergency".into(),
+            Request::Lobby => "lobby".into(),
         }
     }
 
@@ -266,6 +276,9 @@ impl Request {
             "vote" => Request::Vote(parse_vote(w.next()?)?),
             "sabotage" => Request::Sabotage(parse_sabotage(w.next()?)?),
             "release" => Request::Release,
+            "fix" => Request::Fix,
+            "emergency" => Request::Emergency,
+            "lobby" => Request::Lobby,
             _ => return None,
         };
         w.next().is_none().then_some(request)
@@ -294,10 +307,12 @@ impl Notice {
             Notice::Slay { task, kills, count } => format!("slay {} {kills} {count}", task.0),
             Notice::Dead => "dead".into(),
             Notice::Actions(a) => format!(
-                "actions {} {} {} {} {}",
+                "actions {} {} {} {} {} {} {}",
                 u8::from(a.kill),
                 u8::from(a.report),
                 u8::from(a.use_),
+                u8::from(a.fix),
+                u8::from(a.emergency),
                 u8::from(a.sabotage),
                 a.kill_cooldown_secs
             ),
@@ -421,6 +436,8 @@ impl Notice {
                     kill: flag()?,
                     report: flag()?,
                     use_: flag()?,
+                    fix: flag()?,
+                    emergency: flag()?,
                     sabotage: flag()?,
                     kill_cooldown_secs: next()?.parse().ok()?,
                 })

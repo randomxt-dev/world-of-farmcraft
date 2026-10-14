@@ -20,6 +20,9 @@ fn every_request_round_trips() {
         Request::Vote(Vote::Player(PlayerId(17))),
         Request::Sabotage(SabotageKind::Reactor),
         Request::Release,
+        Request::Fix,
+        Request::Emergency,
+        Request::Lobby,
     ];
     for r in requests {
         assert_eq!(Request::decode(&r.encode()), Some(r), "{}", r.encode());
@@ -71,6 +74,8 @@ fn every_notice_round_trips() {
             kill: true,
             report: false,
             use_: true,
+            fix: false,
+            emergency: true,
             sabotage: true,
             kill_cooldown_secs: 12,
         }),

@@ -64,16 +64,66 @@ fn report_targets_the_nearest_body() {
 }
 
 #[test]
-fn use_picks_the_nearest_legal_task_station_or_button() {
+fn use_picks_the_nearest_legal_task_step_only() {
     let (mut g, imp, crew) = spread(instant());
     let c = crew[0];
-    assert_eq!(g.use_target(c), None);
+    assert_eq!(g.task_target(c), None);
     put(&mut g, c, BUTTON);
-    assert_eq!(g.use_target(c), Some(Command::CallEmergency { player: c }));
+    assert_eq!(
+        g.task_target(c),
+        None,
+        "the button is Emergency's, not Use's"
+    );
     let task = g.player(c).unwrap().tasks[0].task;
     let spot = task_spot(&g, c, task);
     put(&mut g, c, spot);
-    assert_eq!(g.use_target(c), Some(Command::UseTask { player: c, task }));
+    assert_eq!(g.task_target(c), Some(task));
+    // An impostor's Use fakes their own cover task.
+    let cover = g.player(imp).unwrap().tasks[0].task;
+    let cover_spot = task_spot(&g, imp, cover);
+    put(&mut g, imp, cover_spot);
+    assert_eq!(g.task_target(imp), Some(cover));
+}
+
+#[test]
+fn fix_picks_the_nearest_open_station_of_the_sabotage() {
+    let (mut g, imp, crew) = spread(instant());
+    let c = crew[0];
+    put(&mut g, c, O2[0]);
+    assert_eq!(g.fix_target(c), None, "nothing is sabotaged");
+    ok(
+        &mut g,
+        Command::Sabotage {
+            player: imp,
+            kind: SabotageKind::Oxygen,
+        },
+    );
+    assert_eq!(g.fix_target(c), Some(0));
+    ok(
+        &mut g,
+        Command::Fix {
+            player: c,
+            station: 0,
+        },
+    );
+    assert_eq!(g.fix_target(c), None, "a fixed station is done");
+    put(&mut g, c, O2[1]);
+    assert_eq!(g.fix_target(c), Some(1));
+}
+
+#[test]
+fn sabotage_aims_away_from_the_impostor() {
+    let (mut g, imp, crew) = spread(instant());
+    assert_eq!(
+        g.sabotage_target(crew[0]),
+        None,
+        "crewmates have no sabotage"
+    );
+    // Next to Lights, the farthest sabotage is the Reactor.
+    put(&mut g, imp, LIGHTS);
+    assert_eq!(g.sabotage_target(imp), Some(SabotageKind::Reactor));
+    put(&mut g, imp, REACTOR[0]);
+    assert_eq!(g.sabotage_target(imp), Some(SabotageKind::Lights));
     ok(
         &mut g,
         Command::Sabotage {
@@ -81,25 +131,17 @@ fn use_picks_the_nearest_legal_task_station_or_button() {
             kind: SabotageKind::Lights,
         },
     );
-    put(&mut g, c, LIGHTS);
-    assert_eq!(
-        g.use_target(c),
-        Some(Command::Fix {
-            player: c,
-            station: 0
-        })
-    );
-    // An impostor's Use fakes their own cover task.
-    let cover = g.player(imp).unwrap().tasks[0].task;
-    let cover_spot = task_spot(&g, imp, cover);
-    put(&mut g, imp, cover_spot);
-    assert_eq!(
-        g.use_target(imp),
-        Some(Command::UseTask {
-            player: imp,
-            task: cover
-        })
-    );
+    assert_eq!(g.sabotage_target(imp), None, "one sabotage at a time");
+}
+
+#[test]
+fn emergency_is_its_own_button() {
+    let (mut g, _imp, crew) = spread(instant());
+    let c = crew[0];
+    assert!(!g.actions(c).emergency);
+    put(&mut g, c, BUTTON);
+    let a = g.actions(c);
+    assert!(a.emergency && !a.use_ && !a.fix);
 }
 
 #[test]

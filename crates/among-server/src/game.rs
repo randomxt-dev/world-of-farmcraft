@@ -110,8 +110,8 @@ impl Inner {
         Ok(())
     }
 
-    /// The command a press means now. Kill, report and use aim at the nearest legal target; with
-    /// none, the refusal names the first rule in the way, or "nothing in reach".
+    /// The command a press means now. Kill, report, use and fix aim at the nearest legal target;
+    /// with none, the refusal names the first rule in the way, or "too far away".
     fn command(&self, player: PlayerId, request: Request) -> Result<Command, Reject> {
         let g = &self.game;
         let none = |probe: Command| match g.validate(&probe) {
@@ -144,10 +144,21 @@ impl Inner {
                     }))
                 }
             },
-            Request::Use => match g.use_target(player) {
-                Some(cmd) => cmd,
-                None => return Err(none(Command::CallEmergency { player })),
+            Request::Use => match g.task_target(player) {
+                Some(task) => Command::UseTask { player, task },
+                None => return Err(no_task(g, player)),
             },
+            Request::Fix => match g.fix_target(player) {
+                Some(station) => Command::Fix { player, station },
+                None => {
+                    return Err(none(Command::Fix {
+                        player,
+                        station: usize::MAX,
+                    }))
+                }
+            },
+            Request::Emergency => Command::CallEmergency { player },
+            Request::Lobby => Command::ReturnToLobby { by: player },
             Request::Vote(vote) => Command::Vote {
                 voter: player,
                 vote,
@@ -182,6 +193,27 @@ impl Inner {
             To::All => self.map.guids().into_iter().for_each(send),
         }
     }
+}
+
+/// Why a Use press found no task step. Phase and player rules refuse every task alike; past them
+/// a cast step is out of reach, a Slay step is fought, and with no step left the tasks are done.
+fn no_task(g: &Game, player: PlayerId) -> Reject {
+    let use_task = |task| Command::UseTask { player, task };
+    let reasons: Vec<Reject> = (g.player(player).into_iter())
+        .flat_map(|p| p.tasks.iter())
+        .filter(|t| t.step < g.layout().tasks[t.task.0].steps.len())
+        .filter_map(|t| g.validate(&use_task(t.task)).err())
+        .collect();
+    if reasons.is_empty() {
+        // No step left, or no tasks at all (the lobby): the rule a made-up task meets first.
+        return match g.validate(&use_task(among_rules::TaskId(usize::MAX))) {
+            Err(Reject::TaskNotAssigned) | Ok(()) => Reject::TaskDone,
+            Err(r) => r,
+        };
+    }
+    (reasons.iter().copied())
+        .find(|r| *r != Reject::NotAUseStep)
+        .unwrap_or(Reject::NotAUseStep)
 }
 
 /// Stand-in spots around Northshire Abbey's steps until the map is surveyed: the button on the

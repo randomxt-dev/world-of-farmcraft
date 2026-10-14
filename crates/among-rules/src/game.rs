@@ -145,7 +145,12 @@ pub enum MeetingStage {
 pub struct Actions {
     pub kill: bool,
     pub report: bool,
+    /// A task step in reach.
     pub use_: bool,
+    /// A sabotage station in reach.
+    pub fix: bool,
+    /// The emergency button in reach and pressable.
+    pub emergency: bool,
     pub sabotage: bool,
     /// Whole seconds until a living impostor may kill again, rounded up; 0 otherwise.
     pub kill_cooldown_secs: u32,
@@ -284,33 +289,50 @@ impl Game {
         self.nearest(from, bodies, |&body| Command::Report { player, body })
     }
 
-    /// What a Use button would do for `player` right now: fix the nearest sabotage station, do
-    /// the nearest task step, or press the emergency button, whichever legal one is closest.
-    pub fn use_target(&self, player: PlayerId) -> Option<Command> {
+    /// The task a Use button would work on for `player` right now: the nearest step in reach,
+    /// a cover task's for an impostor.
+    pub fn task_target(&self, player: PlayerId) -> Option<TaskId> {
         let p = self.players.get(&player)?;
-        let mut spots: Vec<(Position, Command)> = Vec::new();
-        if let Some(s) = &self.sabotage {
-            for station in 0..s.stations.len() {
-                let at = self.station_position(s.kind, station);
-                spots.push((at, Command::Fix { player, station }));
-            }
-        }
-        for t in &p.tasks {
-            if let Some(step) = self.layout.tasks[t.task.0].steps.get(t.step) {
-                spots.push((
-                    step.at,
-                    Command::UseTask {
-                        player,
-                        task: t.task,
-                    },
-                ));
-            }
-        }
-        spots.push((
-            self.layout.emergency_button,
-            Command::CallEmergency { player },
-        ));
-        self.nearest(p.position, spots, Clone::clone)
+        let steps = (p.tasks.iter()).filter_map(|t| {
+            let step = self.layout.tasks[t.task.0].steps.get(t.step)?;
+            Some((step.at, t.task))
+        });
+        self.nearest(p.position, steps, |&task| Command::UseTask { player, task })
+    }
+
+    /// The station of the active sabotage a Fix button would work on for `player` right now.
+    pub fn fix_target(&self, player: PlayerId) -> Option<usize> {
+        let p = self.players.get(&player)?;
+        let s = self.sabotage.as_ref()?;
+        let stations = (0..s.stations.len()).map(|i| (self.station_position(s.kind, i), i));
+        self.nearest(p.position, stations, |&station| Command::Fix {
+            player,
+            station,
+        })
+    }
+
+    /// The sabotage a Sabotage button would start for `player` right now: of those legal, the one
+    /// whose nearest station is farthest away, so the crew is drawn from the impostor.
+    pub fn sabotage_target(&self, player: PlayerId) -> Option<SabotageKind> {
+        let from = self.players.get(&player)?.position;
+        let reach = |def: &SabotageDef| {
+            (def.stations.iter())
+                .map(|&at| distance_squared(from, at))
+                .fold(f32::INFINITY, f32::min)
+        };
+        (self.layout.sabotages.iter())
+            .filter(|def| {
+                let cmd = Command::Sabotage {
+                    player,
+                    kind: def.kind,
+                };
+                // The first definition of a kind is the one in force.
+                self.sabotage_def(def.kind)
+                    .is_some_and(|first| std::ptr::eq(first, *def))
+                    && self.validate(&cmd).is_ok()
+            })
+            .max_by(|a, b| reach(a).total_cmp(&reach(b)))
+            .map(|def| def.kind)
     }
 
     /// Which buttons `player` has live right now.
@@ -329,7 +351,9 @@ impl Game {
         Actions {
             kill: self.kill_target(player).is_some(),
             report: self.report_target(player).is_some(),
-            use_: self.use_target(player).is_some(),
+            use_: self.task_target(player).is_some(),
+            fix: self.fix_target(player).is_some(),
+            emergency: self.validate(&Command::CallEmergency { player }).is_ok(),
             sabotage,
             kill_cooldown_secs: kill_cooldown.as_secs_f32().ceil() as u32,
         }

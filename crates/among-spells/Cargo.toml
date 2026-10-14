@@ -1,0 +1,15 @@
+[package]
+name = "among-spells"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "The 1.12 spell ids Among Azeroth's buttons are, shared by the server's bar and the client's tooltips"
+publish = false
+
+[lints]
+workspace = true
+
+# Only the rules' `Class`: the client builds this for the browser, so no network and no tokio.
+[dependencies]
+among-rules = { path = "../among-rules" }

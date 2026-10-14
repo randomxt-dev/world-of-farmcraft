@@ -1,11 +1,11 @@
 //! What each action-bar spell is called and does in Among Azeroth. The server grants borrowed 1.12
-//! spells for their icons (`among_server::world::spells`); the client still reads their names and
+//! spells for their icons (`among_spells`); the client still reads their names and
 //! descriptions from `Spell.dbc`, so this table is what the tooltip and the spellbook show instead.
 
 use std::time::Duration;
 
 use among_rules::{Class, Settings};
-use among_server::world::spells;
+use among_spells as spells;
 
 /// One action-bar spell as Among Azeroth presents it.
 #[derive(Clone, Debug, PartialEq)]

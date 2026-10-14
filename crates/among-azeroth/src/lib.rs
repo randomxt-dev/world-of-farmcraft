@@ -3,6 +3,8 @@
 
 pub mod abilities;
 pub mod ability_text;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod install;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 

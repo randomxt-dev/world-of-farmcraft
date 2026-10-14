@@ -4,6 +4,7 @@
 use benilla_app::BuildId;
 
 fn main() -> benilla_app::AppExit {
+    among_azeroth::install::ensure_wow_data();
     let build = BuildId {
         version: env!("CARGO_PKG_VERSION"),
         describe: env!("BENILLA_GIT_DESCRIBE"),

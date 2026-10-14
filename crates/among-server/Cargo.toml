@@ -19,6 +19,8 @@ benilla-protocol = { path = "../benilla-protocol" }
 benilla-srp = { path = "../benilla-srp" }
 # The game itself: rules, targets, and the addon-message vocabulary the HUD speaks.
 among-rules = { path = "../among-rules" }
+# The button spell ids, shared with the client.
+among-spells = { path = "../among-spells" }
 num-bigint = "0.4.6"
 rand = "0.8.6"
 # The surveyed marks and the hand-written layout are TOML files (the versions benilla-app uses).

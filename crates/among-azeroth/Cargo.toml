@@ -23,7 +23,13 @@ benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
 # The spell ids the server puts on the action bar, and the rules the tooltips quote.
 among-rules = { path = "../among-rules" }
-among-server = { path = "../among-server" }
+among-spells = { path = "../among-spells" }
+# Where the player's install is; `default-features = false`, or a player build looks in our source tree.
+benilla-formats = { path = "../benilla-formats", default-features = false }
+
+# The first run's folder picker for the player's own install (the browser streams its data instead).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.15"
 
 [dev-dependencies]
 # The data-gated test reads the install's own Spell.dbc names.

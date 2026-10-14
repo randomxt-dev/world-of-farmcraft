@@ -2,7 +2,7 @@
 //! launcher runs it. FrameXML is not loaded: the tests create the `GameTooltip` it would, and push
 //! the action slots, book and spell views the client's feeds push.
 
-use among_server::world::spells;
+use among_spells as spells;
 use benilla_ui::script::{ActionSlot, SpellBookState, SpellSlotView, SpellTooltipView, UiScript};
 
 use super::*;

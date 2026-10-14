@@ -33,6 +33,7 @@ mod game;
 mod protocol;
 mod rng;
 mod settings;
+pub mod wire;
 
 pub use game::{
     Actions, ActiveSabotage, Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask, Station,

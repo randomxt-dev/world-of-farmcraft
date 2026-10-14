@@ -42,17 +42,19 @@ async fn main() -> Result<()> {
         )
         .init();
     let args = Args::parse();
+    let bind = args.bind.clone();
     let prepared = args.server.prepare(args.bind)?;
     let code = prepared
         .lobby_code
         .clone()
         .context("the invite link needs a lobby code: add --lobby-code or drop --account")?;
-    let (auth_port, world_port) = (prepared.config.auth_port, prepared.config.world_port);
 
     let data = args.data.unwrap_or_else(default_data);
     let www = args.www.unwrap_or_else(default_www);
 
     let server = among_server::Server::bind(&prepared.config, prepared.accounts).await?;
+    // The ports as bound: `--auth-port 0` picks a free one.
+    let (auth_port, world_port) = (server.auth_addr().port(), server.world_addr().port());
     let chain = Arc::new(
         benilla_formats::Chain::open(&data)
             .with_context(|| format!("opening the game data at {}", data.display()))?,
@@ -77,7 +79,8 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding the web page on {}", args.web))?;
     let web_port = listener.local_addr()?.port();
 
-    print_invite(&code, web_port);
+    let native = reachable_from_lan(&bind);
+    print_invite(&code, web_port, native, args.tunnel);
     // Kept for the host's lifetime: dropping the child closes the tunnel.
     let _tunnel = if args.tunnel {
         Some(open_tunnel(web_port, code.clone())?)
@@ -150,7 +153,13 @@ fn default_www() -> PathBuf {
         .unwrap_or_else(|| Path::new("target/among-web/dist").to_path_buf())
 }
 
-fn print_invite(code: &str, web_port: u16) {
+/// Whether native clients on other machines can reach the game server: it listens on more than
+/// loopback.
+fn reachable_from_lan(bind: &str) -> bool {
+    !matches!(bind, "127.0.0.1" | "localhost" | "::1")
+}
+
+fn print_invite(code: &str, web_port: u16, native: bool, tunnel: bool) {
     println!();
     println!("Among Azeroth lobby is up. Lobby code: {code}");
     println!("Players log in with any account name and the lobby code as the password.");
@@ -158,10 +167,13 @@ fn print_invite(code: &str, web_port: u16) {
     println!("Browser (Chrome or Edge). The world needs WebGPU, which needs https or localhost:");
     println!("  this PC:  http://localhost:{web_port}/?lobby={code}");
     println!("  friends need an https link, either of:");
-    println!("    Cloudflare: run `cloudflared tunnel --url http://localhost:{web_port}` and send");
-    println!(
-        "                the https://....trycloudflare.com address it prints + /?lobby={code}"
-    );
+    if tunnel {
+        println!("    Cloudflare: the \"Friends:\" link below, once the tunnel is up");
+    } else {
+        println!(
+            "    Cloudflare: start the host with --tunnel for a ready link (needs cloudflared)"
+        );
+    }
     match among_host::tailscale_name() {
         Some(name) => {
             println!("    Tailscale:  https://{name}/?lobby={code}");
@@ -170,9 +182,12 @@ fn print_invite(code: &str, web_port: u16) {
         None => println!("    Tailscale:  `tailscale funnel --bg {web_port}`, then its https link"),
     }
     println!();
-    match among_host::lan_ip() {
-        Some(ip) => println!("Native among-azeroth: realmlist {ip} (TCP 3724 and 8085 open)."),
-        None => {
+    match (native, among_host::lan_ip()) {
+        (false, _) => println!("Native among-azeroth: this PC only (--bind 0.0.0.0 opens it)."),
+        (true, Some(ip)) => {
+            println!("Native among-azeroth: realmlist {ip} (TCP 3724 and 8085 open).")
+        }
+        (true, None) => {
             println!("Native among-azeroth: realmlist this PC's address (TCP 3724 and 8085 open).")
         }
     }

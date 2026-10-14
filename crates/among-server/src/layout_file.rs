@@ -313,7 +313,7 @@ pub fn summary(l: &Layout) -> String {
         .iter()
         .map(|s| format!("{:?}", s.kind))
         .collect();
-    format!(
+    let mut out = format!(
         "button at {:?}\n{} tasks: {} common, {} long, {} short\n{} creatures\nsabotages: {}",
         l.emergency_button,
         l.tasks.len(),
@@ -326,7 +326,38 @@ pub fn summary(l: &Layout) -> String {
         } else {
             sabotages.join(", ")
         }
-    )
+    );
+    for line in gathering(l) {
+        out.push('\n');
+        out.push_str(&line);
+    }
+    out
+}
+
+/// One line per task that gathers: its scarcest step's spots, which cap how many crewmates it is
+/// dealt to (a pick takes a node from everyone), and how many hold it at the layout's full count.
+fn gathering(l: &Layout) -> Vec<String> {
+    (l.tasks.iter())
+        .filter_map(|t| {
+            let (spots, count) = (t.steps.iter())
+                .filter_map(|s| match &s.action {
+                    StepAction::Gather { nodes, count, .. } => Some((nodes.len().min(64), *count)),
+                    _ => None,
+                })
+                .min_by_key(|&(spots, _)| spots)?;
+            let full = spots / count.max(1) as usize;
+            let common = if t.kind == TaskKind::Common {
+                " (common: left out of games with more crewmates)"
+            } else {
+                ""
+            };
+            Some(format!(
+                "gather {:?}: {spots} spots, dealt to at most {spots} crewmates{common}; \
+                 {count} each for up to {full}, fewer each past that",
+                t.name
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -506,6 +537,18 @@ mod tests {
     }
 
     /// The shipped Northshire example parses once every mark it names is surveyed.
+    #[test]
+    fn the_summary_says_how_many_crewmates_each_gathering_serves() {
+        let l = parse(SMALL, &marks(&["hall", "herb", "den", "pump"])).unwrap();
+        let text = summary(&l);
+        let gather: Vec<&str> = text.lines().filter(|l| l.starts_with("gather")).collect();
+        assert_eq!(gather.len(), 1, "{text}");
+        assert!(
+            gather[0].contains("1 spots, dealt to at most 1 crewmates"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn the_northshire_example_is_a_valid_layout() {
         let text = include_str!("../layouts/northshire.example.toml");

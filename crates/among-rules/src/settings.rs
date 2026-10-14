@@ -8,8 +8,13 @@ pub type Position = [f32; 3];
 
 /// Whether `a` and `b` are at most `range` yards apart in 3D.
 pub fn within(a: Position, b: Position, range: f32) -> bool {
+    distance_squared(a, b) <= range * range
+}
+
+/// Squared 3D distance in yards, for ranking by nearness.
+pub fn distance_squared(a: Position, b: Position) -> f32 {
     let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= range * range
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
 /// The host's rules for one game. Distances are WoW yards.

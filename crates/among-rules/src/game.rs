@@ -10,7 +10,8 @@ use crate::protocol::{
 };
 use crate::rng::SplitMix64;
 use crate::settings::{
-    max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings, TaskKind,
+    distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
+    TaskKind,
 };
 
 /// One player's standing in the game.
@@ -96,6 +97,17 @@ pub struct Meeting {
 pub enum MeetingStage {
     Discussion,
     Voting,
+}
+
+/// The buttons a player's HUD shows as live; see [Game::actions].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Actions {
+    pub kill: bool,
+    pub report: bool,
+    pub use_: bool,
+    pub sabotage: bool,
+    /// Whole seconds until a living impostor may kill again, rounded up; 0 otherwise.
+    pub kill_cooldown_secs: u32,
 }
 
 /// The sabotage in force and how far its fix has come.
@@ -206,7 +218,89 @@ impl Game {
         (done, total)
     }
 
-    /// Applies `cmd` if it is legal now and returns what happened; otherwise changes nothing.
+    /// The nearest living crewmate killer may kill right now: what a Kill button would hit.
+    pub fn kill_target(&self, killer: PlayerId) -> Option<PlayerId> {
+        let from = self.players.get(&killer)?.position;
+        self.nearest(
+            from,
+            self.players.iter().map(|(&id, p)| (p.position, id)),
+            |&victim| Command::Kill { killer, victim },
+        )
+    }
+
+    /// The nearest body player may report right now.
+    pub fn report_target(&self, player: PlayerId) -> Option<PlayerId> {
+        let from = self.players.get(&player)?.position;
+        let bodies = self.bodies.iter().map(|b| (b.position, b.victim));
+        self.nearest(from, bodies, |&body| Command::Report { player, body })
+    }
+
+    /// What a Use button would do for player right now: fix the nearest sabotage station, do
+    /// the nearest task step, or press the emergency button, whichever legal one is closest.
+    pub fn use_target(&self, player: PlayerId) -> Option<Command> {
+        let p = self.players.get(&player)?;
+        let mut spots: Vec<(Position, Command)> = Vec::new();
+        if let Some(s) = &self.sabotage {
+            for station in 0..s.stations.len() {
+                let at = self.station_position(s.kind, station);
+                spots.push((at, Command::Fix { player, station }));
+            }
+        }
+        for t in &p.tasks {
+            if let Some(&at) = self.layout.tasks[t.task.0].steps.get(t.step) {
+                spots.push((
+                    at,
+                    Command::UseTask {
+                        player,
+                        task: t.task,
+                    },
+                ));
+            }
+        }
+        spots.push((
+            self.layout.emergency_button,
+            Command::CallEmergency { player },
+        ));
+        self.nearest(p.position, spots, Clone::clone)
+    }
+
+    /// Which buttons player has live right now.
+    pub fn actions(&self, player: PlayerId) -> Actions {
+        let sabotage = [
+            SabotageKind::Lights,
+            SabotageKind::Comms,
+            SabotageKind::Oxygen,
+            SabotageKind::Reactor,
+        ]
+        .into_iter()
+        .any(|kind| self.validate(&Command::Sabotage { player, kind }).is_ok());
+        let kill_cooldown = (self.players.get(&player))
+            .filter(|p| p.is_impostor() && p.alive && self.phase == Phase::Playing)
+            .map_or(Duration::ZERO, |p| p.kill_cooldown);
+        Actions {
+            kill: self.kill_target(player).is_some(),
+            report: self.report_target(player).is_some(),
+            use_: self.use_target(player).is_some(),
+            sabotage,
+            kill_cooldown_secs: kill_cooldown.as_secs_f32().ceil() as u32,
+        }
+    }
+
+    /// The candidate nearest rom whose command validates.
+    fn nearest<T>(
+        &self,
+        from: Position,
+        candidates: impl IntoIterator<Item = (Position, T)>,
+        command: impl Fn(&T) -> Command,
+    ) -> Option<T> {
+        candidates
+            .into_iter()
+            .filter(|(_, c)| self.validate(&command(c)).is_ok())
+            .min_by(|a, b| distance_squared(from, a.0).total_cmp(&distance_squared(from, b.0)))
+            .map(|(_, c)| c)
+    }
+
+    /// Applies cmd if it is legal now and returns what happened; otherwise changes nothing.
     pub fn apply(&mut self, cmd: Command) -> Result<Vec<Event>, Reject> {
         self.validate(&cmd)?;
         self.execute(cmd);

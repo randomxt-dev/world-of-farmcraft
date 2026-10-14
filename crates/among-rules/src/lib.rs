@@ -35,12 +35,13 @@ mod rng;
 mod settings;
 
 pub use game::{
-    ActiveSabotage, Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask, Station,
+    Actions, ActiveSabotage, Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask, Station,
 };
 pub use protocol::{
     Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
     WinReason,
 };
 pub use settings::{
-    max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings, TaskDef, TaskKind,
+    distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
+    TaskDef, TaskKind,
 };

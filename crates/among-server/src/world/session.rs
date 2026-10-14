@@ -254,6 +254,19 @@ impl Session {
             // A ghost here has no corpse run, so the client draws no marker and offers no
             // Resurrect.
             opcode::MSG_CORPSE_QUERY => self.send(super::death::corpse_not_found())?,
+            // The vote menu: the voter picks a line of their own ballot.
+            opcode::CMSG_GOSSIP_SELECT_OPTION => {
+                if let (Some(me), Some((menu, option))) =
+                    (&self.in_world, super::meeting::read_choice(body))
+                {
+                    self.host.choose(me.guid, menu, option);
+                }
+            }
+            opcode::CMSG_NPC_TEXT_QUERY => {
+                if read_u32_le(&mut cur)? == super::meeting::VOTE_TEXT {
+                    self.send(super::meeting::vote_text())?;
+                }
+            }
             opcode::CMSG_GAMEOBJECT_QUERY => {
                 let entry = read_u32_le(&mut cur)?;
                 self.send(self.host.gameobject_query(entry))?;

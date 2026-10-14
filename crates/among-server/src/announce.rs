@@ -73,7 +73,7 @@ pub fn line(
             format!("{what} Discuss for {} s, then vote.", discussion.as_secs())
         }
         Notice::Voting(time) => format!(
-            "Voting is open for {} s. Type .vote <name> or .vote skip in chat.",
+            "Voting is open for {} s: pick in the vote window, or type .vote <name> or .vote skip.",
             time.as_secs()
         ),
         Notice::Voted(voter) => format!("{} has voted.", name(*voter)),
@@ -167,6 +167,31 @@ pub fn line(
         | Notice::Actions(_)
         | Notice::Refused(_)
         | Notice::Station { .. } => return None,
+    })
+}
+
+/// The mid-screen headline `notice` also raises for `reader`, for the moments that matter most.
+pub fn headline(notice: &Notice, name: &dyn Fn(PlayerId) -> String) -> Option<String> {
+    Some(match notice {
+        Notice::Role {
+            role: Role::Impostor,
+            ..
+        } => "You are an Impostor".into(),
+        Notice::Role {
+            role: Role::Crewmate,
+            ..
+        } => "You are a Crewmate".into(),
+        Notice::Dead => "You died".into(),
+        Notice::Ejected { player, .. } => format!("{} was ejected", name(*player)),
+        Notice::Sabotage { .. } => "Sabotage!".into(),
+        Notice::Over {
+            winner: Team::Crew, ..
+        } => "The crew wins!".into(),
+        Notice::Over {
+            winner: Team::Impostors,
+            ..
+        } => "The impostors win!".into(),
+        _ => return None,
     })
 }
 

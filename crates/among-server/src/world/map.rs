@@ -147,6 +147,33 @@ impl Map {
         }
     }
 
+    /// Move `guid` to `at` facing `facing` at once: their client is told with the acked teleport,
+    /// everyone who sees them with `MSG_MOVE_TELEPORT`, sent twice as vmangos sends a near one.
+    pub fn teleport(&self, guid: u64, at: [f32; 3], facing: f32) {
+        let mut world = self.lock();
+        let Some(me) = world.occupants.get_mut(&guid) else {
+            return;
+        };
+        me.counter = me.counter.wrapping_add(1);
+        me.living = Living {
+            movement_flags: 0,
+            position: at,
+            orientation: facing,
+            ..me.living
+        };
+        let _ = me
+            .outbox
+            .send(super::meeting::teleport(guid, me.counter, at, facing));
+        let life = me.life;
+        let seen = super::meeting::teleported(guid, at, facing);
+        for (&other, o) in &world.occupants {
+            if other != guid && sees(o.life, life) {
+                let _ = o.outbox.send(seen.clone());
+                let _ = o.outbox.send(seen.clone());
+            }
+        }
+    }
+
     /// The next forced-change counter for `guid`, or `None` if they are not in the world.
     pub fn next_counter(&self, guid: u64) -> Option<u32> {
         let mut world = self.lock();

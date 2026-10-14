@@ -6,6 +6,7 @@ pub mod creatures;
 pub mod death;
 pub mod guid;
 mod map;
+pub mod meeting;
 pub mod objects;
 pub mod packets;
 pub mod player;

@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
-    Actions, Class, Command, CreatureId, Event, Game, Layout, Phase, PlayerId, Position, Reject,
-    SabotageDef, SabotageKind, Settings, StepAction, TaskDef, TaskId, TaskKind, TaskStep, Vote,
+    Actions, Class, Command, CreatureId, Event, Game, Layout, MeetingReason, Phase, PlayerId,
+    Position, Reject, SabotageDef, SabotageKind, Settings, StepAction, TaskDef, TaskId, TaskKind,
+    TaskStep, Vote,
 };
 use rand::RngCore;
 
@@ -18,7 +19,7 @@ use crate::look::Look;
 use crate::world::creatures::{self, Shown};
 use crate::world::player::Life;
 use crate::world::spells::{self, CastRequest, Target};
-use crate::world::{combat, death, guid, objects, packets, player, Map, Packet};
+use crate::world::{combat, death, guid, meeting, objects, packets, player, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
@@ -67,6 +68,8 @@ struct Inner {
     countdown: Duration,
     /// A start counting down: who pressed it, and the time left.
     starting: Option<(PlayerId, Duration)>,
+    /// Each open ballot's options by index, as its voter's menu lists them.
+    ballots: HashMap<PlayerId, Vec<Vote>>,
 }
 
 impl GameHost {
@@ -97,6 +100,7 @@ impl GameHost {
             corpses: Vec::new(),
             countdown: START_COUNTDOWN,
             starting: None,
+            ballots: HashMap::new(),
         })))
     }
 
@@ -267,6 +271,22 @@ impl GameHost {
         }
     }
 
+    /// A `CMSG_GOSSIP_SELECT_OPTION` on `menu`: on the voter's own ballot, the vote it names.
+    pub fn choose(&self, guid: u64, menu: u64, option: u32) {
+        let mut inner = self.lock();
+        let voter = PlayerId(guid);
+        let vote = (menu == guid)
+            .then(|| inner.ballots.get(&voter))
+            .flatten()
+            .and_then(|votes| votes.get(option as usize).copied());
+        let Some(vote) = vote else {
+            return;
+        };
+        if let Err(r) = inner.apply(Command::Vote { voter, vote }) {
+            inner.map.send(guid, spells::notification(&sentence(r)));
+        }
+    }
+
     /// Count a start down for `countdown` (zero: start on the press), as tests and quick
     /// runs set it.
     pub fn set_start_countdown(&self, countdown: Duration) {
@@ -353,6 +373,11 @@ fn spawn_nodes(layout: &Layout, look: &Look, map: &Map) {
     }
 }
 
+/// `d` in whole milliseconds, as the wire carries it.
+fn millis(d: Duration) -> u32 {
+    d.as_millis().min(u32::MAX.into()) as u32
+}
+
 /// A refusal as red error text: "Too far away".
 fn sentence(r: Reject) -> String {
     let text = r.to_string();
@@ -394,6 +419,7 @@ impl Inner {
             let (was, is) = (left.as_secs_f32().ceil(), now.as_secs_f32().ceil());
             if is < was {
                 self.announce(&format!("{is}..."));
+                self.map.broadcast(&meeting::headline(&is.to_string()));
             }
             return;
         }
@@ -520,6 +546,40 @@ impl Inner {
                 self.fall(victim);
             }
             Event::Slain { victim, .. } => self.fall(victim),
+            Event::MeetingCalled {
+                reason, discussion, ..
+            } => {
+                self.seat_the_living();
+                let headline = match reason {
+                    MeetingReason::Report { .. } => "Dead body reported!",
+                    MeetingReason::Emergency => "Emergency meeting!",
+                };
+                self.map.broadcast(&meeting::headline(headline));
+                self.map.broadcast(&meeting::countdown(millis(discussion)));
+            }
+            Event::VotingOpened { voting } => {
+                self.map.broadcast(&meeting::headline("Vote!"));
+                self.map.broadcast(&meeting::countdown(millis(voting)));
+                let voters: Vec<PlayerId> = (self.game.players())
+                    .filter(|(_, p)| p.connected && p.alive)
+                    .map(|(id, _)| id)
+                    .collect();
+                for voter in voters {
+                    self.open_ballot(voter);
+                }
+            }
+            Event::VoteCast { voter } => {
+                if self.ballots.remove(&voter).is_some() {
+                    self.map.send(voter.0, meeting::ballot_closed());
+                }
+            }
+            Event::VoteReturned { voter } => self.open_ballot(voter),
+            Event::VotingClosed { .. } => {
+                self.map.broadcast(&meeting::countdown_stop());
+                for (voter, _) in std::mem::take(&mut self.ballots) {
+                    self.map.send(voter.0, meeting::ballot_closed());
+                }
+            }
             // The ejected leave no body: their spirit walks on at once.
             Event::Ejected { player, .. } => self.become_ghost(player, None),
             Event::BodiesCleared => {
@@ -617,6 +677,40 @@ impl Inner {
         self.map.send(g, death::force_swim_speed(g, next(), swim));
         self.map.set_run_speed(g, run);
         self.map.set_swim_speed(g, swim);
+    }
+
+    /// Seat every living player in a ring around the meeting table (the emergency button),
+    /// facing it, as Among Us gathers the crew at the table.
+    fn seat_the_living(&mut self) {
+        let living: Vec<PlayerId> = (self.game.players())
+            .filter(|(_, p)| p.connected && p.alive)
+            .map(|(id, _)| id)
+            .collect();
+        let table = self.game.layout().emergency_button;
+        for (player, (at, facing)) in living.iter().zip(meeting::seats(table, living.len())) {
+            self.map.teleport(player.0, at, facing);
+            let _ = self.game.apply(Command::Move {
+                player: *player,
+                position: at,
+            });
+        }
+    }
+
+    /// Open `voter`'s ballot: a menu with every living player and a skip.
+    fn open_ballot(&mut self, voter: PlayerId) {
+        let mut votes: Vec<Vote> = (self.game.players())
+            .filter(|(_, p)| p.connected && p.alive)
+            .map(|(id, _)| Vote::Player(id))
+            .collect();
+        votes.push(Vote::Skip);
+        let lines: Vec<String> = (votes.iter())
+            .map(|v| match v {
+                Vote::Player(p) => format!("Vote: {}", self.name(*p)),
+                Vote::Skip => "Skip vote".into(),
+            })
+            .collect();
+        self.map.send(voter.0, meeting::ballot(voter.0, &lines));
+        self.ballots.insert(voter, votes);
     }
 
     /// Every task node's template as `life` sees it, replacing what `g`'s client cached: a ghost's
@@ -1081,6 +1175,9 @@ impl Inner {
             let name = |p: PlayerId| self.name(p);
             if let Some(text) = announce::line(notice, PlayerId(guid), &self.game, &name) {
                 self.map.send(guid, packets::system_message(&text));
+            }
+            if let Some(text) = announce::headline(notice, &name) {
+                self.map.send(guid, meeting::headline(&text));
             }
         };
         match to {
@@ -2034,7 +2131,8 @@ mod tests {
     fn chat_lines(inbox: &mut UnboundedReceiver<Packet>) -> Vec<String> {
         (received(inbox).into_iter())
             .filter_map(|p| match p {
-                ServerPacket::MessageChat(m) if !m.is_addon() => Some(m.text),
+                // `CHAT_MSG_SYSTEM`; the raid-warning headlines ride beside them.
+                ServerPacket::MessageChat(m) if m.chat_type == 0x0A => Some(m.text),
                 _ => None,
             })
             .collect()
@@ -2148,6 +2246,75 @@ mod tests {
         let seen = received(&mut inboxes[ghost as usize - 1]);
         assert!(seen.iter().any(|p| matches!(p,
             ServerPacket::GameObjectQueryResponse { info: Some(t), .. } if t.data[0] != 0)));
+    }
+
+    #[test]
+    fn a_meeting_seats_the_living_at_the_table_and_hands_each_a_ballot() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        let (victim, reporter, far) = (crew[0], crew[1], crew[2]);
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+        drain(&mut inboxes);
+        host.request(reporter, Request::Report);
+        let table = host.lock().game.layout().emergency_button;
+
+        // The living are teleported to seats around the table; the dead stay where they are.
+        for g in [imp, reporter, far] {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            let to = (seen.iter()).find_map(|p| match p {
+                ServerPacket::Teleport { guid, position, .. } if *guid == g => {
+                    Some([position.x, position.y, position.z])
+                }
+                _ => None,
+            });
+            let to = to.unwrap_or_else(|| panic!("{g} is seated"));
+            assert!(among_rules::within(to, table, 4.0), "{g} at the table");
+            let rules_at = host.lock().game.player(PlayerId(g)).unwrap().position;
+            assert_eq!(rules_at, to, "the rules know the seat");
+            assert!(seen.iter().any(|p| matches!(p,
+                ServerPacket::MessageChat(m) if m.chat_type == 0x58 && m.text == "Dead body reported!")));
+            assert!(seen.iter().any(|p| matches!(p,
+                ServerPacket::MirrorTimerStart(t) if t.remaining_ms == 15_000)));
+        }
+        let mine = received(&mut inboxes[victim as usize - 1]);
+        assert!(!mine
+            .iter()
+            .any(|p| matches!(p, ServerPacket::Teleport { .. })));
+
+        // Voting opens a ballot on each living voter's own guid: everyone standing, and skip.
+        host.tick(Duration::from_secs(15));
+        let seen = received(&mut inboxes[reporter as usize - 1]);
+        let options = (seen.iter())
+            .find_map(|p| match p {
+                ServerPacket::GossipMessage { npc, options, .. } if *npc == reporter => {
+                    Some(options.clone())
+                }
+                _ => None,
+            })
+            .expect("a ballot");
+        let lines: Vec<&str> = options.iter().map(|o| o.message.as_str()).collect();
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert_eq!(*lines.last().unwrap(), "Skip vote");
+        assert!(!lines.contains(&format!("Vote: P{victim}").as_str()));
+        assert!(received(&mut inboxes[victim as usize - 1])
+            .iter()
+            .all(|p| !matches!(p, ServerPacket::GossipMessage { .. })));
+
+        // Picking a line votes, and the ballot closes for that voter.
+        let pick = lines
+            .iter()
+            .position(|l| *l == format!("Vote: P{imp}"))
+            .unwrap();
+        host.choose(reporter, reporter, pick as u32);
+        assert_eq!(
+            match host.lock().game.phase() {
+                Phase::Meeting(m) => m.votes.get(&PlayerId(reporter)).copied(),
+                _ => None,
+            },
+            Some(Vote::Player(PlayerId(imp)))
+        );
+        assert!(received(&mut inboxes[reporter as usize - 1])
+            .iter()
+            .any(|p| matches!(p, ServerPacket::GossipComplete)));
     }
 
     #[test]

@@ -1,0 +1,14 @@
+[package]
+name = "among-rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "Among Azeroth's game as a pure state machine: lobby, roles, tasks, kills, meetings, votes, sabotage, win check"
+publish = false
+
+[lints]
+workspace = true
+
+# No dependencies: no Bevy, no network, no clock, no OS randomness. Time and the seed come in as inputs.
+[dependencies]

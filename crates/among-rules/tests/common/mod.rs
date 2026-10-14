@@ -93,6 +93,30 @@ pub fn combat_layout() -> Layout {
     l
 }
 
+/// Where the herbs grow: four Peacebloom nodes 10 yd apart, far from everything else.
+pub const MEADOW: [Position; 4] = [
+    [0.0, 700.0, 0.0],
+    [10.0, 700.0, 0.0],
+    [20.0, 700.0, 0.0],
+    [30.0, 700.0, 0.0],
+];
+
+/// [`layout`] with both common tasks gathering: pick 3 of the 4 [`MEADOW`] nodes, 2 s each.
+pub fn gather_layout() -> Layout {
+    let mut l = layout();
+    for t in l.tasks.iter_mut().filter(|t| t.kind == TaskKind::Common) {
+        t.steps = vec![TaskStep {
+            at: MEADOW[0],
+            action: StepAction::Gather {
+                nodes: MEADOW.to_vec(),
+                cast: Duration::from_secs(2),
+                count: 3,
+            },
+        }];
+    }
+    l
+}
+
 /// Players `1..=n` joined, player 1 hosting.
 pub fn lobby_with(settings: Settings, n: u64) -> Game {
     let mut g = Game::new(settings, layout());

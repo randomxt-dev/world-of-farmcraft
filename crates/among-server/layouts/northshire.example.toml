@@ -10,12 +10,19 @@
 # Where meetings are called: the Abbey's main hall.
 button = "abbey-hall"
 
+# Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`); a
+# node you picked is spent for you, so you walk on to the next. 7 spots for 5 picks leaves spares.
+
 # --- Common: everyone gets the same one -------------------------------------------------------
 
 [[tasks]]
 name = "Pick Peacebloom"
 kind = "common"
-steps = [{ at = "herb-north", cast = 5.0 }]   # the meadow north of the Abbey
+# The meadows around the Abbey.
+steps = [{ gather = [
+    "peacebloom-1", "peacebloom-2", "peacebloom-3", "peacebloom-4",
+    "peacebloom-5", "peacebloom-6", "peacebloom-7",
+], cast = 5.0, count = 5 }]
 
 [[tasks]]
 name = "Roast a meal"
@@ -28,7 +35,10 @@ steps = [{ at = "campfire", cast = 3.0 }]     # by the stables
 name = "Mine and smelt Copper"
 kind = "long"
 steps = [
-    { at = "mine-vein", cast = 3.2 },         # inside Echo Ridge Mine
+    # Copper veins inside Echo Ridge Mine.
+    { gather = [
+        "copper-1", "copper-2", "copper-3", "copper-4", "copper-5", "copper-6", "copper-7",
+    ], cast = 3.2, count = 5 },
     { at = "forge", cast = 3.0 },             # by the stables or lumber area
 ]
 
@@ -36,7 +46,7 @@ steps = [
 name = "Hunt and cook wolf meat"
 kind = "long"
 steps = [
-    { at = "wolf-den", slay = ["wolf-1", "wolf-2", "wolf-3"], count = 1 },
+    { slay = ["wolf-1", "wolf-2", "wolf-3"], count = 1 },
     { at = "campfire", cast = 3.0 },
 ]
 
@@ -45,12 +55,20 @@ steps = [
 [[tasks]]
 name = "Pick Silverleaf"
 kind = "short"
-steps = [{ at = "herb-vineyard", cast = 5.0 }]
+# Along the vineyards.
+steps = [{ gather = [
+    "silverleaf-1", "silverleaf-2", "silverleaf-3", "silverleaf-4",
+    "silverleaf-5", "silverleaf-6", "silverleaf-7",
+], cast = 5.0, count = 5 }]
 
 [[tasks]]
 name = "Pick Earthroot"
 kind = "short"
-steps = [{ at = "herb-mine-path", cast = 5.0 }]
+# Along the path to the mine.
+steps = [{ gather = [
+    "earthroot-1", "earthroot-2", "earthroot-3", "earthroot-4",
+    "earthroot-5", "earthroot-6", "earthroot-7",
+], cast = 5.0, count = 5 }]
 
 [[tasks]]
 name = "Sharpen at the anvil"
@@ -60,12 +78,12 @@ steps = [{ at = "anvil", cast = 3.0 }]
 [[tasks]]
 name = "Clear the kobolds"
 kind = "short"
-steps = [{ at = "mine-entrance", slay = ["kobold-1", "kobold-2"], count = 2 }]
+steps = [{ slay = ["kobold-1", "kobold-2"], count = 2 }]
 
 [[tasks]]
 name = "Drive off the Defias"
 kind = "short"
-steps = [{ at = "vineyard", slay = ["defias-1", "defias-2"], count = 2 }]
+steps = [{ slay = ["defias-1", "defias-2"], count = 2 }]
 
 # --- Sabotage stations --------------------------------------------------------------------------
 

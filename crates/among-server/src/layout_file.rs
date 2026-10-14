@@ -42,12 +42,15 @@ struct TaskEntry {
     steps: Vec<StepEntry>,
 }
 
-/// Exactly one of `cast` (seconds) or `slay` (creature ids, with `count` kills, default 1).
+/// One of: `cast` alone (seconds at `at`); `gather` (node spots) with `cast` per node and
+/// `count` nodes; `slay` (creature ids) with `count` kills. `count` defaults to 1, and `at` (the
+/// area a player is pointed to) to the first node or creature.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StepEntry {
-    at: Spot,
+    at: Option<Spot>,
     cast: Option<f32>,
+    gather: Option<Vec<Spot>>,
     slay: Option<Vec<String>>,
     count: Option<u32>,
 }
@@ -138,21 +141,48 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
         let mut steps = Vec::new();
         for (n, s) in t.steps.iter().enumerate() {
             let what = format!("task {:?} step {}", t.name, n + 1);
-            let at = spot(&s.at, &what)?;
-            let action = match (&s.cast, &s.slay) {
-                (Some(secs), None) if s.count.is_none() => {
-                    StepAction::Cast(Duration::from_secs_f32(*secs))
+            let count = s.count.unwrap_or(1);
+            let (action, first) = match (&s.cast, &s.gather, &s.slay) {
+                (Some(secs), None, None) if s.count.is_none() => {
+                    (StepAction::Cast(Duration::from_secs_f32(*secs)), None)
                 }
-                (None, Some(ids)) => StepAction::Slay {
-                    creatures: (ids.iter())
+                (Some(secs), Some(spots), None) => {
+                    let nodes: Vec<Position> = (spots.iter())
+                        .map(|n| spot(n, &what))
+                        .collect::<Result<_>>()?;
+                    if nodes.len() > 64 {
+                        bail!("{what}: at most 64 nodes to gather from");
+                    }
+                    if count == 0 || count as usize > nodes.len() {
+                        bail!("{what}: count {count} needs 1 to {} nodes", nodes.len());
+                    }
+                    let first = nodes[0];
+                    let action = StepAction::Gather {
+                        nodes,
+                        cast: Duration::from_secs_f32(*secs),
+                        count,
+                    };
+                    (action, Some(first))
+                }
+                (None, None, Some(ids)) if !ids.is_empty() && count > 0 => {
+                    let creatures: Vec<CreatureId> = (ids.iter())
                         .map(|id| {
                             (creature_ids.get(id.as_str()).copied())
                                 .ok_or_else(|| anyhow!("{what}: no creature with id {id:?}"))
                         })
-                        .collect::<Result<_>>()?,
-                    count: s.count.unwrap_or(1),
-                },
-                _ => bail!("{what}: give either cast = <seconds>, or slay = [ids] with count"),
+                        .collect::<Result<_>>()?;
+                    let first = creatures_at(&creatures, &file, &spot, &what)?;
+                    (StepAction::Slay { creatures, count }, Some(first))
+                }
+                _ => bail!(
+                    "{what}: give cast = <seconds>; or gather = [spots], cast and count; \
+                     or slay = [ids] and count"
+                ),
+            };
+            let at = match (&s.at, first) {
+                (Some(at), _) => spot(at, &what)?,
+                (None, Some(first)) => first,
+                (None, None) => bail!("{what}: a cast step needs at = <spot>"),
             };
             steps.push(TaskStep { at, action });
         }
@@ -196,12 +226,21 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
     })
 }
 
+/// Where the first of a Slay step's creatures spawns: the area the step points to by default.
+fn creatures_at(
+    creatures: &[CreatureId],
+    file: &LayoutFile,
+    spot: &impl Fn(&Spot, &str) -> Result<Position>,
+    what: &str,
+) -> Result<Position> {
+    spot(&file.creatures[creatures[0].0].at, what)
+}
+
 /// Every mark the file names that the survey lacks, sorted and once each: the to-do list.
 fn unsurveyed(file: &LayoutFile, marks: &BTreeMap<String, Mark>) -> Vec<String> {
-    let steps = file
-        .tasks
-        .iter()
-        .flat_map(|t| t.steps.iter().map(|s| &s.at));
+    let steps = (file.tasks.iter())
+        .flat_map(|t| t.steps.iter())
+        .flat_map(|s| s.at.iter().chain(s.gather.iter().flatten()));
     let stations = file.sabotages.iter().flat_map(|s| s.stations.iter());
     let creatures = file.creatures.iter().map(|c| &c.at);
     let mut names: Vec<String> = std::iter::once(&file.button)
@@ -344,7 +383,7 @@ mod tests {
             name = "X"
             kind = "short"
             steps = [{ at = "herb", cast = 1.0, slay = ["a"] }]"#);
-        assert!(e.contains("step 1: give either cast"), "{e}");
+        assert!(e.contains("step 1: give cast = <seconds>"), "{e}");
         let e = err(r#"button = "hall"
             [[tasks]]
             name = "X"
@@ -355,44 +394,55 @@ mod tests {
         assert!(e.contains("colour"), "unknown keys are refused: {e}");
     }
 
+    #[test]
+    fn a_gather_step_lists_its_nodes_and_points_at_the_first() {
+        let text = r#"button = "hall"
+            [[tasks]]
+            name = "Pick Peacebloom"
+            kind = "common"
+            steps = [{ gather = ["herb", [5.0, 5.0, 5.0]], cast = 5.0, count = 2 }]"#;
+        let l = parse(text, &marks(&["hall", "herb"])).unwrap();
+        let step = &l.tasks[0].steps[0];
+        assert_eq!(step.at, [10.0, 0.0, 0.0], "the first node");
+        assert_eq!(
+            step.action,
+            StepAction::Gather {
+                nodes: vec![[10.0, 0.0, 0.0], [5.0, 5.0, 5.0]],
+                cast: Duration::from_secs(5),
+                count: 2
+            }
+        );
+        let too_many = text.replace("count = 2", "count = 3");
+        let e = format!(
+            "{:#}",
+            parse(&too_many, &marks(&["hall", "herb"])).unwrap_err()
+        );
+        assert!(e.contains("count 3 needs 1 to 2 nodes"), "{e}");
+        let no_cast = text.replace("cast = 5.0, ", "");
+        let e = format!(
+            "{:#}",
+            parse(&no_cast, &marks(&["hall", "herb"])).unwrap_err()
+        );
+        assert!(e.contains("gather = [spots], cast and count"), "{e}");
+    }
+
     /// The shipped Northshire example parses once every mark it names is surveyed.
     #[test]
     fn the_northshire_example_is_a_valid_layout() {
         let text = include_str!("../layouts/northshire.example.toml");
-        let names = example_mark_names(text);
-        assert!(names.len() > 10, "{names:?}");
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let file: LayoutFile = toml::from_str(text).unwrap();
+        let checklist = unsurveyed(&file, &BTreeMap::new());
+        assert!(checklist.len() > 30, "{checklist:?}");
+        let refs: Vec<&str> = checklist.iter().map(String::as_str).collect();
         let l = parse(text, &marks(&refs)).unwrap();
         assert!(l.tasks.iter().any(|t| t.kind == TaskKind::Common));
         assert!(l.tasks.iter().any(|t| t.kind == TaskKind::Long));
         assert!(l.tasks.iter().filter(|t| t.kind == TaskKind::Short).count() >= 2);
+        assert!(l
+            .tasks
+            .iter()
+            .any(|t| matches!(t.steps[0].action, StepAction::Gather { count: 5, .. })));
         assert_eq!(l.sabotages.len(), 4);
         assert!(!l.creatures.is_empty());
-    }
-
-    /// Every quoted name the example places something at: its survey checklist.
-    fn example_mark_names(text: &str) -> Vec<String> {
-        let file: toml::Value = toml::from_str(text).unwrap();
-        let mut names = Vec::new();
-        let mut push = |v: &toml::Value| {
-            if let Some(s) = v.as_str() {
-                names.push(s.to_owned());
-            }
-        };
-        push(&file["button"]);
-        for t in file["tasks"].as_array().unwrap() {
-            for s in t["steps"].as_array().unwrap() {
-                push(&s["at"]);
-            }
-        }
-        for s in file["sabotages"].as_array().unwrap() {
-            s["stations"].as_array().unwrap().iter().for_each(&mut push);
-        }
-        for c in file["creatures"].as_array().unwrap() {
-            push(&c["at"]);
-        }
-        names.sort();
-        names.dedup();
-        names
     }
 }

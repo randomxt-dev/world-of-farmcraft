@@ -202,6 +202,13 @@ pub enum Event {
     CastInterrupted {
         player: PlayerId,
     },
+    /// Private. One more node gathered toward the current Gather step of `task`.
+    GatherProgress {
+        player: PlayerId,
+        task: TaskId,
+        picked: u32,
+        count: u32,
+    },
     /// Private. One more kill toward the current Slay step of `task`.
     SlayProgress {
         player: PlayerId,
@@ -355,7 +362,8 @@ impl Event {
             | Event::TasksAssigned { player, .. }
             | Event::TaskProgress { player, .. }
             | Event::TaskCompleted { player, .. }
-            | Event::SlayProgress { player, .. } => Some(player),
+            | Event::SlayProgress { player, .. }
+            | Event::GatherProgress { player, .. } => Some(player),
             _ => None,
         }
     }

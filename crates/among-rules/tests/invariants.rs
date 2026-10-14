@@ -179,6 +179,7 @@ fn check_state(g: &Game) {
 fn random_streams_keep_the_invariants() {
     // Every layout's spots, plus the den and a step from each wolf.
     let mut spots = spots(&layout());
+    spots.extend(MEADOW);
     let [x, y, z] = DEN;
     spots.extend([
         DEN,
@@ -192,16 +193,18 @@ fn random_streams_keep_the_invariants() {
     let mut casts = [0usize; 3];
     // Creature deaths, monster kills, spell hits, Slay progress.
     let mut fights = [0usize; 4];
+    let mut gathered = 0usize;
     for seed in 1..=300u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let settings = Settings {
             impostors: 1 + rng.below(3),
             ..instant()
         };
-        // A third of the seeds each: wolves and Slay steps, 2 s casts, instant steps.
-        let layout = match seed % 3 {
+        // A quarter of the seeds each: wolves and Slay steps, 2 s casts, gathering, instant steps.
+        let layout = match seed % 4 {
             0 => combat_layout(),
             1 => cast_layout(2.0),
+            2 => gather_layout(),
             _ => layout(),
         };
         let mut g = Game::new(settings, layout);
@@ -235,6 +238,7 @@ fn random_streams_keep_the_invariants() {
                             Event::Slain { .. } => fights[1] += 1,
                             Event::SpellHit { .. } => fights[2] += 1,
                             Event::SlayProgress { .. } => fights[3] += 1,
+                            Event::GatherProgress { .. } => gathered += 1,
                             _ => {}
                         }
                         if let Some(p) = e.private_to() {
@@ -273,6 +277,7 @@ fn random_streams_keep_the_invariants() {
         fights.iter().all(|&n| n > 10),
         "fights barely exercised: {fights:?}"
     );
+    assert!(gathered > 10, "gathering barely exercised: {gathered}");
     assert!(
         casts.iter().all(|&n| n > 10),
         "casts barely exercised: {casts:?}"

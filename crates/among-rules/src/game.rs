@@ -86,6 +86,8 @@ pub struct Casting {
     pub task: TaskId,
     pub remaining: Duration,
     pub from: Position,
+    /// The node being gathered, for a Gather step.
+    pub node: Option<usize>,
 }
 
 /// How far a caster may drift before the cast breaks; WoW breaks a cast on any step, not a turn.
@@ -98,6 +100,8 @@ pub struct PlayerTask {
     pub step: usize,
     /// Kills toward the current step, when it is a Slay step.
     pub kills: u32,
+    /// The nodes already gathered in the current step, one bit each, when it is a Gather step.
+    pub picked: u64,
 }
 
 /// A dead crewmate's body, where they fell, until a meeting clears the map.
@@ -296,14 +300,20 @@ impl Game {
             }
         }
         for t in &p.tasks {
-            if let Some(step) = self.layout.tasks[t.task.0].steps.get(t.step) {
-                spots.push((
-                    step.at,
-                    Command::UseTask {
-                        player,
-                        task: t.task,
-                    },
-                ));
+            let Some(step) = self.layout.tasks[t.task.0].steps.get(t.step) else {
+                continue;
+            };
+            let use_it = Command::UseTask {
+                player,
+                task: t.task,
+            };
+            match &step.action {
+                StepAction::Gather { nodes, .. } => spots.extend(
+                    (nodes.iter().enumerate())
+                        .filter(|(i, _)| *i < 64 && t.picked & 1 << i == 0)
+                        .map(|(_, &at)| (at, use_it.clone())),
+                ),
+                _ => spots.push((step.at, use_it)),
             }
         }
         spots.push((
@@ -403,10 +413,15 @@ impl Game {
                     .steps
                     .get(t.step)
                     .ok_or(Reject::TaskDone)?;
-                if matches!(step.action, StepAction::Slay { .. }) {
-                    return Err(Reject::NotAUseStep);
+                match &step.action {
+                    StepAction::Slay { .. } => Err(Reject::NotAUseStep),
+                    StepAction::Gather { nodes, .. } => (self.gather_node(p.position, t, nodes))
+                        .map(drop)
+                        .ok_or(Reject::OutOfRange),
+                    StepAction::Cast(_) => {
+                        self.in_reach(p.position, step.at, self.settings.use_distance)
+                    }
                 }
-                self.in_reach(p.position, step.at, self.settings.use_distance)
             }
             Command::Kill { killer, victim } => {
                 self.playing()?;
@@ -621,6 +636,7 @@ impl Game {
                     task,
                     step: 0,
                     kills: 0,
+                    picked: 0,
                 })
                 .collect();
             p.health = self.settings.kits.get(p.class).health;
@@ -655,11 +671,15 @@ impl Game {
             .find(|t| t.task == task)
             .expect("validated task");
         // Slay steps never reach here: validate refuses Use on them.
-        let StepAction::Cast(time) = self.layout.tasks[task.0].steps[t.step].action else {
-            return;
+        let (time, node) = match &self.layout.tasks[task.0].steps[t.step].action {
+            StepAction::Cast(time) => (*time, None),
+            StepAction::Gather { nodes, cast, .. } => {
+                (*cast, self.gather_node(p.position, t, nodes))
+            }
+            StepAction::Slay { .. } => return,
         };
         if time.is_zero() {
-            self.advance(player, task);
+            self.finish_step_cast(player, task, node);
             return;
         }
         let from = p.position;
@@ -667,8 +687,52 @@ impl Game {
             task,
             remaining: time,
             from,
+            node,
         });
         self.out.push(Event::CastStarted { player, task, time });
+    }
+
+    /// The nearest node of a Gather step `t` has not picked yet, within reach of `from`.
+    fn gather_node(&self, from: Position, t: &PlayerTask, nodes: &[Position]) -> Option<usize> {
+        (nodes.iter().enumerate())
+            .filter(|&(i, &at)| {
+                i < 64 && t.picked & 1 << i == 0 && within(from, at, self.settings.use_distance)
+            })
+            .min_by(|a, b| distance_squared(from, *a.1).total_cmp(&distance_squared(from, *b.1)))
+            .map(|(i, _)| i)
+    }
+
+    /// A task cast ran out: a gathered node counts toward its step; any other cast is the step.
+    fn finish_step_cast(&mut self, player: PlayerId, task: TaskId, node: Option<usize>) {
+        let Some(node) = node else {
+            self.advance(player, task);
+            return;
+        };
+        let p = &self.players[&player];
+        // An impostor's gathering is for show.
+        if p.is_impostor() {
+            return;
+        }
+        let i = (p.tasks.iter())
+            .position(|t| t.task == task)
+            .expect("validated task");
+        let StepAction::Gather { count, .. } =
+            self.layout.tasks[task.0].steps[p.tasks[i].step].action
+        else {
+            return;
+        };
+        let t = &mut self.seat(player).tasks[i];
+        t.picked |= 1 << node;
+        let picked = t.picked.count_ones();
+        self.out.push(Event::GatherProgress {
+            player,
+            task,
+            picked,
+            count,
+        });
+        if picked >= count {
+            self.advance(player, task);
+        }
     }
 
     /// Break every cast and fight: play stops for a meeting or the end of the game.
@@ -695,18 +759,18 @@ impl Game {
         for (&id, p) in self.players.iter_mut() {
             let Some(c) = &mut p.casting else { continue };
             if dt >= c.remaining {
-                finished.push((id, c.task));
+                finished.push((id, c.task, c.node));
                 p.casting = None;
             } else {
                 c.remaining -= dt;
             }
         }
-        for (player, task) in finished {
+        for (player, task, node) in finished {
             if self.phase != Phase::Playing {
                 return;
             }
             self.out.push(Event::CastFinished { player });
-            self.advance(player, task);
+            self.finish_step_cast(player, task, node);
         }
     }
 
@@ -724,6 +788,7 @@ impl Game {
             .expect("validated task");
         t.step += 1;
         t.kills = 0;
+        t.picked = 0;
         let step = t.step;
         self.out.push(Event::TaskProgress {
             player,

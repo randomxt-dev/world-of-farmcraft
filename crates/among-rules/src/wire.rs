@@ -57,6 +57,12 @@ pub enum Notice {
         kills: u32,
         count: u32,
     },
+    /// Nodes gathered toward your current Gather step of `task`.
+    Gather {
+        task: TaskId,
+        picked: u32,
+        count: u32,
+    },
     /// You were killed, by an impostor or a monster.
     Dead,
     /// Your live buttons; sent when they change.
@@ -158,6 +164,19 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
             Notice::Slay {
                 task: *task,
                 kills: *kills,
+                count: *count,
+            },
+        )],
+        Event::GatherProgress {
+            player,
+            task,
+            picked,
+            count,
+        } => vec![(
+            To::Player(*player),
+            Notice::Gather {
+                task: *task,
+                picked: *picked,
                 count: *count,
             },
         )],
@@ -292,6 +311,11 @@ impl Notice {
             } => format!("task {} {step} {steps} {name}", task.0),
             Notice::TaskBar { done, total } => format!("bar {done} {total}"),
             Notice::Slay { task, kills, count } => format!("slay {} {kills} {count}", task.0),
+            Notice::Gather {
+                task,
+                picked,
+                count,
+            } => format!("gather {} {picked} {count}", task.0),
             Notice::Dead => "dead".into(),
             Notice::Actions(a) => format!(
                 "actions {} {} {} {} {}",
@@ -408,6 +432,11 @@ impl Notice {
             "slay" => Notice::Slay {
                 task: TaskId(next()?.parse().ok()?),
                 kills: next()?.parse().ok()?,
+                count: next()?.parse().ok()?,
+            },
+            "gather" => Notice::Gather {
+                task: TaskId(next()?.parse().ok()?),
+                picked: next()?.parse().ok()?,
                 count: next()?.parse().ok()?,
             },
             "dead" => Notice::Dead,

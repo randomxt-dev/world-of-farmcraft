@@ -222,6 +222,20 @@ impl Session {
                     self.host.cast(me.guid, cast);
                 }
             }
+            opcode::CMSG_CREATURE_QUERY => {
+                let entry = read_u32_le(&mut cur)?;
+                self.send(self.host.creature_query(entry))?;
+            }
+            opcode::CMSG_ATTACKSWING => {
+                if let Some(me) = &self.in_world {
+                    self.host.attack(me.guid, read_u64_le(&mut cur)?);
+                }
+            }
+            opcode::CMSG_ATTACKSTOP => {
+                if let Some(me) = &self.in_world {
+                    self.host.stop_attack(me.guid);
+                }
+            }
             opcode::CMSG_GAMEOBJECT_QUERY => {
                 let entry = read_u32_le(&mut cur)?;
                 self.send(self.host.gameobject_query(entry))?;

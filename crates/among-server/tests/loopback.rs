@@ -318,7 +318,11 @@ fn a_newcomer_sees_every_task_node_and_learns_its_template() {
     let host = start_server();
     let (mut one, _) = enter(&host, "among1", "secret1");
     let layout = among_server::game::placeholder_layout();
-    let steps: usize = layout.tasks.iter().map(|t| t.steps.len()).sum();
+    // Slay steps are fought, not worked at a node.
+    let steps = (layout.tasks.iter())
+        .flat_map(|t| &t.steps)
+        .filter(|s| matches!(s.action, among_rules::StepAction::Cast(_)))
+        .count();
     let mut nodes = Vec::new();
     while nodes.len() < steps {
         nodes.extend(wait_for(&mut one, |p| {
@@ -326,7 +330,7 @@ fn a_newcomer_sees_every_task_node_and_learns_its_template() {
             (!created.is_empty()).then_some(created)
         }));
     }
-    assert_eq!(nodes.len(), steps, "one node per task step");
+    assert_eq!(nodes.len(), steps, "one node per cast step");
     // The client asks for a node's template by the entry in its guid.
     let entry = benilla_protocol::guid::entry(nodes[0]).unwrap();
     one.gameobject_query(entry, nodes[0]).unwrap();
@@ -339,4 +343,52 @@ fn a_newcomer_sees_every_task_node_and_learns_its_template() {
     });
     assert_eq!(answered, entry);
     assert!(!name.is_empty());
+}
+
+#[test]
+fn a_started_game_shows_the_wolves_and_a_swing_at_one_is_echoed() {
+    let settings = Settings {
+        min_players: 3,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=3 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    press(&mut players[0].0, Request::Start);
+    let (one, me) = &mut players[1];
+    let wolf = wait_for(one, |p| {
+        let ServerPacket::UpdateObject { objects } = p else {
+            return None;
+        };
+        objects.iter().find_map(|o| match o {
+            Object::Create {
+                guid,
+                object_type: ObjectType::Unit,
+                ..
+            } => Some(*guid),
+            _ => None,
+        })
+    });
+    let entry = benilla_protocol::guid::entry(wolf).unwrap();
+    one.creature_query(entry, wolf).unwrap();
+    let name = wait_for(one, |p| match p {
+        ServerPacket::CreatureQueryResponse {
+            info: Some(info), ..
+        } => Some(info.name.clone()),
+        _ => None,
+    });
+    assert_eq!(name, "Young Wolf");
+    // Auto-attack may start out of reach; the server's echo is what engages the client.
+    one.attack_swing(wolf).unwrap();
+    let (attacker, victim) = wait_for(one, |p| match p {
+        ServerPacket::AttackStart { attacker, victim } if *attacker == *me => {
+            Some((*attacker, *victim))
+        }
+        _ => None,
+    });
+    assert_eq!((attacker, victim), (*me, wolf));
 }

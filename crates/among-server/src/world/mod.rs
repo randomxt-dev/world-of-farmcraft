@@ -1,6 +1,8 @@
 //! The world server: the `SMSG_AUTH_CHALLENGE`/`CMSG_AUTH_SESSION` handshake, the character
 //! roster, world entry, and the shared map every logged-in player stands on.
 
+pub mod combat;
+pub mod creatures;
 pub mod guid;
 mod map;
 pub mod objects;

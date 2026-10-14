@@ -40,6 +40,17 @@ pub fn class_spell(class: Class) -> u32 {
     }
 }
 
+/// The class spell's school, for the damage log: physical strikes, holy, nature, fire, shadow.
+pub fn class_school(class: Class) -> u8 {
+    match class {
+        Class::Warrior | Class::Hunter | Class::Rogue => 0,
+        Class::Paladin | Class::Priest => 1,
+        Class::Mage => 2,
+        Class::Shaman | Class::Druid => 3,
+        Class::Warlock => 5,
+    }
+}
+
 /// The main bar, slots 0-8 (keys 1-9): fight, then the Among Us buttons.
 pub fn main_bar(class: Class) -> [u32; 9] {
     [

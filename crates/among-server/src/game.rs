@@ -8,14 +8,15 @@ use std::time::Duration;
 
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
-    Actions, Class, Command, Event, Game, Layout, Phase, PlayerId, Position, Reject, SabotageDef,
-    SabotageKind, Settings, TaskDef, TaskId, TaskKind, TaskStep, Vote,
+    Actions, Class, Command, CreatureId, Event, Game, Layout, Phase, PlayerId, Position, Reject,
+    SabotageDef, SabotageKind, Settings, TaskDef, TaskId, TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
 use crate::look::Look;
+use crate::world::creatures::{self, Shown};
 use crate::world::spells::{self, CastRequest, Target};
-use crate::world::{guid, objects, packets, player, Map, Packet};
+use crate::world::{combat, guid, objects, packets, player, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
@@ -36,6 +37,14 @@ struct Inner {
     shown: HashMap<PlayerId, u32>,
     /// Each player's cooldowns as they stood at the last refresh, by spell.
     cooldowns: HashMap<PlayerId, Vec<(u32, Duration)>>,
+    /// Each living player's health and maximum as clients were last told.
+    health: HashMap<PlayerId, (u32, u32)>,
+    /// The creature each player auto-attacks, for the stop that names it.
+    attacking: HashMap<PlayerId, CreatureId>,
+    /// The player each creature fights, for the stop that names them.
+    hunting: HashMap<CreatureId, PlayerId>,
+    /// Where each creature was last shown, the start of its next move.
+    creature_at: HashMap<CreatureId, Position>,
 }
 
 impl GameHost {
@@ -57,6 +66,10 @@ impl GameHost {
             casts: HashMap::new(),
             shown: HashMap::new(),
             cooldowns: HashMap::new(),
+            health: HashMap::new(),
+            attacking: HashMap::new(),
+            hunting: HashMap::new(),
+            creature_at: HashMap::new(),
         })))
     }
 
@@ -86,6 +99,7 @@ impl GameHost {
         inner.actions.remove(&player);
         inner.cooldowns.remove(&player);
         inner.casts.remove(&player);
+        inner.health.remove(&player);
     }
 
     /// A character moved; spectators outside the game are ignored.
@@ -165,6 +179,46 @@ impl GameHost {
         let _ = self.lock().apply(Command::Tick { dt });
     }
 
+    /// A `CMSG_ATTACKSWING`: auto-attack a creature. Players are never fought: their FFA flag
+    /// exists for Kill, so a swing at one is refused.
+    pub fn attack(&self, guid: u64, target: u64) {
+        let mut inner = self.lock();
+        let player = PlayerId(guid);
+        let result = guid::creature_id(target)
+            .ok_or(Reject::InvalidTarget)
+            .and_then(|creature| inner.apply(Command::Attack { player, creature }));
+        let started =
+            |e: &Event| matches!(e, Event::AttackStarted { player: p, .. } if *p == player);
+        match result {
+            Err(r) => {
+                tracing::debug!("game: {guid} swing at {target:#x} refused: {r}");
+                inner.map.send(guid, combat::cant_attack());
+            }
+            // Already on it: the client still waits for its echo to count as engaged.
+            Ok(events) if !events.iter().any(started) => {
+                inner.map.send(guid, combat::attack_start(guid, target));
+            }
+            Ok(_) => {}
+        }
+    }
+
+    /// A `CMSG_ATTACKSTOP`.
+    pub fn stop_attack(&self, guid: u64) {
+        let _ = self.lock().apply(Command::StopAttack {
+            player: PlayerId(guid),
+        });
+    }
+
+    /// The answer to `CMSG_CREATURE_QUERY` for template `entry`: a monster's, or a miss.
+    pub fn creature_query(&self, entry: u32) -> Packet {
+        let inner = self.lock();
+        let found = guid::creature_entry(entry).and_then(|id| {
+            let def = inner.game.layout().creatures.get(id.0)?;
+            Some((def.name.as_str(), inner.look.creatures.get(id.0)?))
+        });
+        creatures::query_response(entry, found)
+    }
+
     /// The answer to `CMSG_GAMEOBJECT_QUERY` for template `entry`: a task node's, or a miss.
     pub fn gameobject_query(&self, entry: u32) -> Packet {
         let inner = self.lock();
@@ -216,6 +270,7 @@ impl Inner {
         }
         self.refresh_actions();
         self.refresh_cooldowns();
+        self.refresh_health();
         Ok(events)
     }
 
@@ -279,6 +334,157 @@ impl Inner {
                 self.shown.insert(killer, spells::KILL);
             }
             _ => {}
+        }
+        self.show_fight(event);
+    }
+
+    /// Monsters and auto-attack: spawns, chases, swings, damage, deaths and despawns.
+    fn show_fight(&mut self, event: &Event) {
+        let unit = guid::creature;
+        match *event {
+            Event::CreatureSpawned { creature, at } => {
+                self.creature_at.insert(creature, at);
+                self.hunting.remove(&creature);
+                // A respawn replaces the corpse.
+                self.map.despawn(unit(creature));
+                if let Some(create) = self.creature_create(creature) {
+                    self.map.spawn(unit(creature), create);
+                }
+            }
+            Event::CreatureAggro { creature, player } => {
+                self.hunting.insert(creature, player);
+                self.map
+                    .broadcast(&combat::attack_start(unit(creature), player.0));
+            }
+            Event::CreatureMoved { creature, position } => self.move_creature(creature, position),
+            Event::CreatureEvaded { creature, at } => {
+                let victim = self.hunting.remove(&creature).map_or(0, |p| p.0);
+                self.map
+                    .broadcast(&combat::attack_stop(unit(creature), victim));
+                self.move_creature(creature, at);
+                self.show_creature_health(creature);
+            }
+            Event::CreatureHit {
+                creature,
+                player,
+                damage,
+                ..
+            } => {
+                self.map
+                    .broadcast(&combat::swing(unit(creature), player.0, damage));
+            }
+            Event::AttackStarted { player, creature } => {
+                self.attacking.insert(player, creature);
+                self.map
+                    .broadcast(&combat::attack_start(player.0, unit(creature)));
+            }
+            Event::AttackStopped { player } => {
+                let victim = self.attacking.remove(&player).map_or(0, unit);
+                self.map.broadcast(&combat::attack_stop(player.0, victim));
+            }
+            Event::MeleeHit {
+                player,
+                creature,
+                damage,
+                ..
+            } => {
+                self.map
+                    .broadcast(&combat::swing(player.0, unit(creature), damage));
+                self.show_creature_health(creature);
+            }
+            Event::SpellHit {
+                player,
+                creature,
+                damage,
+                ..
+            } => {
+                let class = self.game.player(player).map_or(Class::Warrior, |p| p.class);
+                self.map.broadcast(&combat::spell_damage(
+                    unit(creature),
+                    player.0,
+                    spells::class_spell(class),
+                    damage,
+                    spells::class_school(class),
+                ));
+                self.show_creature_health(creature);
+            }
+            Event::CreatureDied { creature, .. } => {
+                if let Some(victim) = self.hunting.remove(&creature) {
+                    self.map
+                        .broadcast(&combat::attack_stop(unit(creature), victim.0));
+                }
+                self.show_creature_health(creature);
+            }
+            Event::ReturnedToLobby => {
+                for i in 0..self.game.layout().creatures.len() {
+                    self.map.despawn(unit(CreatureId(i)));
+                }
+                self.creature_at.clear();
+                self.hunting.clear();
+                self.attacking.clear();
+            }
+            _ => {}
+        }
+    }
+
+    /// The creature as it stands now, for newcomers; `None` outside a game.
+    fn creature_create(&self, creature: CreatureId) -> Option<Packet> {
+        let c = self.game.creatures().get(creature.0)?;
+        let def = self.game.layout().creatures.get(creature.0)?;
+        let look = self.look.creatures.get(creature.0)?;
+        let shown = Shown {
+            guid: guid::creature(creature),
+            entry: creature.0 as u32 + 1,
+            position: c.position,
+            orientation: 0.0,
+            health: if c.alive { c.health } else { 0 },
+            max_health: def.health,
+            swing_ms: def.swing.as_millis() as u32,
+        };
+        Some(creatures::create(&shown, look))
+    }
+
+    /// Run the creature from where it was last shown to `to`, at its chase speed.
+    fn move_creature(&mut self, creature: CreatureId, to: Position) {
+        let from = self.creature_at.insert(creature, to).unwrap_or(to);
+        let speed = (self.game.layout().creatures.get(creature.0)).map_or(6.0, |d| d.speed);
+        let yards = among_rules::distance_squared(from, to).sqrt();
+        let ms = (yards / speed.max(0.1) * 1000.0) as u32;
+        let g = guid::creature(creature);
+        self.map.broadcast(&creatures::move_to(g, from, to, ms));
+        if let Some(create) = self.creature_create(creature) {
+            self.map.restate(g, create);
+        }
+    }
+
+    fn show_creature_health(&mut self, creature: CreatureId) {
+        let (Some(c), Some(def)) = (
+            self.game.creatures().get(creature.0),
+            self.game.layout().creatures.get(creature.0),
+        ) else {
+            return;
+        };
+        let health = if c.alive { c.health } else { 0 };
+        let g = guid::creature(creature);
+        self.map.broadcast(&combat::health(g, health, def.health));
+        if let Some(create) = self.creature_create(creature) {
+            self.map.restate(g, create);
+        }
+    }
+
+    /// Tell everyone each living player's health when it changed: hits, regeneration, and the
+    /// class's pool at join and after a meeting. A dead player's health is left as it was; the
+    /// world's side of a death (corpse, ghost) is not shown yet.
+    fn refresh_health(&mut self) {
+        let kits = &self.game.settings().kits;
+        let changed: Vec<(PlayerId, (u32, u32))> = (self.game.players())
+            .filter(|(_, p)| p.connected && p.alive)
+            .map(|(id, p)| (id, (p.health.max(1), kits.get(p.class).health)))
+            .filter(|(id, h)| self.health.get(id) != Some(h))
+            .collect();
+        for (id, (health, max)) in changed {
+            self.health.insert(id, (health, max));
+            self.map.broadcast(&combat::health(id.0, health, max));
         }
     }
 
@@ -530,18 +736,19 @@ fn no_task(g: &Game, player: PlayerId) -> Reject {
 }
 
 /// Stand-in spots around Northshire Abbey's steps until the map is surveyed: the button on the
-/// spawn, tasks and stations 8-25 yd out at the spawn's height.
+/// spawn, tasks and stations 8-25 yd out at the spawn's height, two wolves 40 yd out.
 pub fn placeholder_layout() -> Layout {
     placeholder().0
 }
 
-/// How [`placeholder_layout`] looks: herbs, a copper vein and crafting stations.
+/// How [`placeholder_layout`] looks: herbs, a copper vein, crafting stations and wolves.
 pub fn placeholder_look() -> Look {
     placeholder().1
 }
 
 fn placeholder() -> (Layout, Look) {
-    use crate::look::{self, NodeLook};
+    use crate::look::{self, CreatureLook, NodeLook};
+    use among_rules::{CreatureDef, StepAction};
     let [x, y, z] = player::SPAWN.position;
     let at = |dx: f32, dy: f32| [x + dx, y + dy, z];
     // Gathering takes 5 s, as Herb Gathering and the kneeling "Opening" do; crafting 3 s.
@@ -559,8 +766,33 @@ fn placeholder() -> (Layout, Look) {
         let node = NodeLook::station(name, display, spell);
         (TaskStep::cast(at(dx, dy), 3.0), node)
     };
-    // Each task's name, kind, and steps with the node each is worked at.
-    type Steps = Vec<(TaskStep, NodeLook)>;
+    // Two young wolves past the tasks, beyond aggro range of every task spot.
+    let den = at(-30.0, 29.0);
+    let creatures = vec![
+        CreatureDef::beast("Young Wolf", at(-30.0, 25.0)),
+        CreatureDef::beast("Young Wolf", at(-30.0, 33.0)),
+    ];
+    let slay = TaskStep {
+        at: den,
+        action: StepAction::Slay {
+            creatures: vec![CreatureId(0), CreatureId(1)],
+            count: 2,
+        },
+    };
+    // Each task's name, kind, and steps with the node each is worked at; a Slay step has none.
+    type Steps = Vec<(TaskStep, Option<NodeLook>)>;
+    let herb = |dx, dy, name, display| {
+        let (s, n) = herb(dx, dy, name, display);
+        (s, Some(n))
+    };
+    let vein = |dx, dy| {
+        let (s, n) = vein(dx, dy);
+        (s, Some(n))
+    };
+    let craft = |dx, dy, name, display, spell| {
+        let (s, n) = craft(dx, dy, name, display, spell);
+        (s, Some(n))
+    };
     let tasks: Vec<(&str, TaskKind, Steps)> = vec![
         (
             "Pick Peacebloom",
@@ -608,6 +840,7 @@ fn placeholder() -> (Layout, Look) {
             TaskKind::Short,
             vec![craft(-10.0, -15.0, "Anvil", look::ANVIL, 2663)],
         ),
+        ("Cull the Young Wolves", TaskKind::Short, vec![(slay, None)]),
     ];
     let sabotage = |kind, stations, deadline| SabotageDef {
         kind,
@@ -638,14 +871,13 @@ fn placeholder() -> (Layout, Look) {
                 critical,
             ),
         ],
-        // No monsters until the server can show them (creature create and combat packets).
-        creatures: Vec::new(),
+        creatures,
     };
     let look = Look {
         steps: (tasks.into_iter())
-            .map(|(_, _, steps)| steps.into_iter().map(|(_, n)| Some(n)).collect())
+            .map(|(_, _, steps)| steps.into_iter().map(|(_, n)| n).collect())
             .collect(),
-        creatures: Vec::new(),
+        creatures: vec![CreatureLook::wolf(), CreatureLook::wolf()],
     };
     (layout, look)
 }
@@ -756,6 +988,119 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Whether `seen` holds a values update giving `guid` this health.
+    fn health_of(seen: &[ServerPacket], guid: u64) -> Vec<u32> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::UpdateObject { objects } => Some(objects),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|o| match o {
+                benilla_protocol::messages::Object::Values { guid: g, mask } if *g == guid => {
+                    mask.unit_health()
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_wolf_fight_shows_aggro_swings_damage_and_death() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.request(1, Request::Start);
+        let wolf = guid::creature(CreatureId(0));
+        // Everyone is shown both wolves, and their template answers by entry.
+        let seen = received(&mut inboxes[2]);
+        let created: Vec<u64> = (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::UpdateObject { objects } => Some(objects),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|o| match o {
+                benilla_protocol::messages::Object::Create { guid, .. } => Some(*guid),
+                _ => None,
+            })
+            .collect();
+        assert!(created.contains(&wolf) && created.contains(&guid::creature(CreatureId(1))));
+        let entry = benilla_protocol::guid::entry(wolf).unwrap();
+        let ServerPacket::CreatureQueryResponse { info, .. } =
+            parse_server_with_tail(0x61, &host.creature_query(entry).body)
+                .unwrap()
+                .0
+        else {
+            panic!("not a creature template");
+        };
+        assert_eq!(info.unwrap().name, "Young Wolf");
+
+        // A crewmate walks up; the nearer wolf turns on it and runs in.
+        let c = roles(&host).1[0];
+        let me = c as usize - 1;
+        let home = host.lock().game.layout().creatures[0].at;
+        host.moved(c, [home[0] + 6.0, home[1] - 3.0, home[2]]);
+        host.tick(Duration::from_millis(100));
+        let seen = received(&mut inboxes[me]);
+        assert!(seen.iter().any(|p| matches!(p,
+            ServerPacket::AttackStart { attacker, victim } if *attacker == wolf && *victim == c)));
+        assert!(seen.iter().any(|p| matches!(p,
+            ServerPacket::MonsterMove { guid, stop: false, .. } if *guid == wolf)));
+
+        // Swinging at a player is refused; at the wolf, it is echoed so the client engages.
+        host.attack(c, roles(&host).0);
+        assert!(received(&mut inboxes[me])
+            .iter()
+            .any(|p| matches!(p, ServerPacket::AttackSwingError(_))));
+        host.attack(c, wolf);
+        assert!(received(&mut inboxes[me]).iter().any(|p| matches!(p,
+            ServerPacket::AttackStart { attacker, victim } if *attacker == c && *victim == wolf)));
+
+        // Heroic Strike, instant, once the wolf is in reach: the cast shows to everyone, with
+        // the damage in the log.
+        for _ in 0..10 {
+            host.tick(Duration::from_millis(100));
+            let inner = host.lock();
+            let at = inner.game.player(PlayerId(c)).unwrap().position;
+            if among_rules::within(inner.game.creatures()[0].position, at, 5.0) {
+                break;
+            }
+        }
+        drain(&mut inboxes);
+        cast(
+            &host,
+            c,
+            spells::class_spell(Class::Warrior),
+            Target::Unit(wolf),
+        );
+        let seen = received(&mut inboxes[(me + 1) % 3]);
+        assert_eq!(launches(&seen, 78), [c]);
+        assert!(seen.iter().any(|p| matches!(p,
+            ServerPacket::SpellDamageLog(d) if d.target == wolf && d.attacker == c && d.damage == 15)));
+        let left = host.lock().game.creatures()[0].health;
+        assert!(left <= 25);
+        assert_eq!(health_of(&seen, wolf).last(), Some(&left));
+
+        // The fight runs: swings both ways, the crewmate's health drops, the wolf dies.
+        let mut all = Vec::new();
+        for _ in 0..100 {
+            host.tick(Duration::from_millis(100));
+            all.extend(received(&mut inboxes[me]));
+            if !host.lock().game.creatures()[0].alive {
+                break;
+            }
+        }
+        assert!(!host.lock().game.creatures()[0].alive, "the wolf died");
+        assert!(all.iter().any(|p| matches!(p,
+            ServerPacket::AttackerState(s) if s.attacker == c && s.victim == wolf)));
+        assert!(all.iter().any(|p| matches!(p,
+            ServerPacket::AttackerState(s) if s.attacker == wolf && s.victim == c)));
+        assert_eq!(health_of(&all, wolf).last(), Some(&0), "a corpse");
+        let mine = health_of(&all, c);
+        assert!(mine.last().is_some_and(|&h| h < 120), "{mine:?}");
+        assert!(all.iter().any(|p| matches!(p,
+            ServerPacket::AttackStop { attacker, victim } if *attacker == c && *victim == wolf)));
     }
 
     #[test]

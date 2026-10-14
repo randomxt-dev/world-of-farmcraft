@@ -54,8 +54,21 @@ fn random_command(rng: &mut Rng, g: &Game, spots: &[Position]) -> Command {
         let [x, y, z] = rng.pick(spots);
         [x + rng.below(7) as f32 - 3.0, y, z]
     };
-    match rng.below(20) {
-        0 => Command::Join { player: p },
+    let wolf = CreatureId(rng.below(2));
+    match rng.below(23) {
+        0 => Command::Join {
+            player: p,
+            class: rng.pick(&Class::ALL),
+        },
+        18 => Command::Attack {
+            player: p,
+            creature: wolf,
+        },
+        19 => Command::StopAttack { player: p },
+        20 => Command::CastSpell {
+            player: p,
+            creature: wolf,
+        },
         1 if rng.below(8) == 0 => Command::Leave { player: p },
         2 => Command::Start {
             by: p,
@@ -112,9 +125,32 @@ fn random_command(rng: &mut Rng, g: &Game, spots: &[Position]) -> Command {
 fn check_state(g: &Game) {
     if !matches!(g.phase(), Phase::Playing) {
         assert!(
-            g.players().all(|(_, p)| p.casting.is_none()),
-            "a cast outside play"
+            g.players().all(|(_, p)| p.casting.is_none()
+                && p.spell_cast.is_none()
+                && p.attacking.is_none()),
+            "a cast or fight outside play"
         );
+        assert!(
+            g.creatures().iter().all(|c| c.target.is_none()),
+            "a creature hunting outside play"
+        );
+    }
+    for (_, p) in g.players() {
+        if !p.alive || !p.connected {
+            assert!(
+                p.attacking.is_none() && p.spell_cast.is_none(),
+                "a ghost fighting"
+            );
+        }
+        assert!(p.health <= g.settings().kits.get(p.class).health);
+    }
+    for (i, c) in g.creatures().iter().enumerate() {
+        assert!(c.health <= g.layout().creatures[i].health);
+        if let Some(t) = c.target {
+            assert!(c.alive, "a dead creature with a target");
+            let t = g.player(t).unwrap();
+            assert!(t.alive && t.connected, "a creature hunting a ghost");
+        }
     }
     let living = |role| {
         g.players()
@@ -141,27 +177,43 @@ fn check_state(g: &Game) {
 
 #[test]
 fn random_streams_keep_the_invariants() {
-    // Both layouts share every spot.
-    let spots = spots(&layout());
+    // Every layout's spots, plus the den and a step from each wolf.
+    let mut spots = spots(&layout());
+    let [x, y, z] = DEN;
+    spots.extend([
+        DEN,
+        [x, y + 4.0, z],
+        [x + 20.0, y + 4.0, z],
+        [x, y + 9.0, z],
+    ]);
     let mut accepted = 0;
     let mut by_kind: std::collections::BTreeMap<String, usize> = Default::default();
     let mut games_over = 0;
     let mut casts = [0usize; 3];
-    for seed in 1..=200u64 {
+    // Creature deaths, monster kills, spell hits, Slay progress.
+    let mut fights = [0usize; 4];
+    for seed in 1..=300u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let settings = Settings {
             impostors: 1 + rng.below(3),
             ..instant()
         };
-        // Odd seeds play instant steps, even ones 2 s casts.
-        let layout = if seed % 2 == 0 {
-            cast_layout(2.0)
-        } else {
-            layout()
+        // A third of the seeds each: wolves and Slay steps, 2 s casts, instant steps.
+        let layout = match seed % 3 {
+            0 => combat_layout(),
+            1 => cast_layout(2.0),
+            _ => layout(),
         };
         let mut g = Game::new(settings, layout);
         for i in 1..=4 + rng.below(6) as u64 {
-            ok(&mut g, Command::Join { player: id(i) });
+            let class = rng.pick(&Class::ALL);
+            ok(
+                &mut g,
+                Command::Join {
+                    player: id(i),
+                    class,
+                },
+            );
         }
         for _ in 0..3000 {
             let cmd = random_command(&mut rng, &g, &spots);
@@ -179,6 +231,10 @@ fn random_streams_keep_the_invariants() {
                             Event::CastStarted { .. } => casts[0] += 1,
                             Event::CastFinished { .. } => casts[1] += 1,
                             Event::CastInterrupted { .. } => casts[2] += 1,
+                            Event::CreatureDied { .. } => fights[0] += 1,
+                            Event::Slain { .. } => fights[1] += 1,
+                            Event::SpellHit { .. } => fights[2] += 1,
+                            Event::SlayProgress { .. } => fights[3] += 1,
                             _ => {}
                         }
                         if let Some(p) = e.private_to() {
@@ -210,7 +266,12 @@ fn random_streams_keep_the_invariants() {
     }
     // The stream must actually play games, not bounce off the lobby.
     eprintln!(
-        "accepted: {by_kind:?}, games over: {games_over}, casts started/finished/broken: {casts:?}"
+        "accepted: {by_kind:?}, games over: {games_over}, casts started/finished/broken: {casts:?}, \
+         creature deaths/monster kills/spell hits/slay progress: {fights:?}"
+    );
+    assert!(
+        fights.iter().all(|&n| n > 10),
+        "fights barely exercised: {fights:?}"
     );
     assert!(
         casts.iter().all(|&n| n > 10),
@@ -219,7 +280,7 @@ fn random_streams_keep_the_invariants() {
     // Every kind but Configure, which the stream never sends.
     assert_eq!(
         by_kind.len(),
-        14,
+        17,
         "a command kind was never accepted: {by_kind:?}"
     );
     assert!(accepted > 100_000, "only {accepted} commands accepted");

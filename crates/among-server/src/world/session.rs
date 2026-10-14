@@ -175,7 +175,7 @@ impl Session {
                     self.outbox.clone(),
                     player::spawn_living(),
                 );
-                self.host.join(character.guid);
+                self.host.join(character.guid, character.class);
                 self.in_world = Some(character);
             }
             opcode::CMSG_PING => {

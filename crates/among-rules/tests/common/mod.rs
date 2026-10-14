@@ -65,14 +65,45 @@ pub fn layout() -> Layout {
                 deadline: Some(CRITICAL),
             },
         ],
+        creatures: Vec::new(),
     }
+}
+
+/// Where the wolves live: far from every task, station and the button.
+pub const DEN: Position = [0.0, -500.0, 0.0];
+
+/// [`layout`] with two wolves at [`DEN`] (20 yd apart), and every short task a Slay step: kill
+/// two of them.
+pub fn combat_layout() -> Layout {
+    let mut l = layout();
+    let [x, y, z] = DEN;
+    l.creatures = vec![
+        CreatureDef::beast("Young Wolf", [x, y, z]),
+        CreatureDef::beast("Young Wolf", [x + 20.0, y, z]),
+    ];
+    for t in l.tasks.iter_mut().filter(|t| t.kind == TaskKind::Short) {
+        t.steps = vec![TaskStep {
+            at: DEN,
+            action: StepAction::Slay {
+                creatures: vec![CreatureId(0), CreatureId(1)],
+                count: 2,
+            },
+        }];
+    }
+    l
 }
 
 /// Players `1..=n` joined, player 1 hosting.
 pub fn lobby_with(settings: Settings, n: u64) -> Game {
     let mut g = Game::new(settings, layout());
     for i in 1..=n {
-        ok(&mut g, Command::Join { player: id(i) });
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(i),
+                class: Class::Warrior,
+            },
+        );
     }
     g
 }
@@ -94,7 +125,13 @@ pub fn cast_layout(secs: f32) -> Layout {
 pub fn started_on(layout: Layout, settings: Settings, n: u64, seed: u64) -> Game {
     let mut g = Game::new(settings, layout);
     for i in 1..=n {
-        ok(&mut g, Command::Join { player: id(i) });
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(i),
+                class: Class::Warrior,
+            },
+        );
     }
     ok(&mut g, Command::Start { by: id(1), seed });
     g

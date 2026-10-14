@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
-    Actions, Command, Game, Layout, PlayerId, Position, Reject, SabotageDef, SabotageKind,
+    Actions, Class, Command, Game, Layout, PlayerId, Position, Reject, SabotageDef, SabotageKind,
     Settings, TaskDef, TaskKind, TaskStep,
 };
 use rand::RngCore;
@@ -38,11 +38,14 @@ impl GameHost {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A character entered the world: seat it in the lobby, or refuse while a game runs.
-    pub fn join(&self, guid: u64) {
+    /// A character entered the world: seat it in the lobby with its WoW class (`ChrClasses` id),
+    /// or refuse while a game runs.
+    pub fn join(&self, guid: u64, wow_class: u8) {
         let mut inner = self.lock();
         let player = PlayerId(guid);
-        if let Err(r) = inner.apply(Command::Join { player }) {
+        // Character creation offers only the nine 1.12 classes; anything else fights as a warrior.
+        let class = Class::from_wow(wow_class).unwrap_or(Class::Warrior);
+        if let Err(r) = inner.apply(Command::Join { player, class }) {
             inner.notify(To::Player(player), &Notice::Refused(r.to_string()));
         }
         let host = inner.game.host();
@@ -241,6 +244,8 @@ pub fn placeholder_layout() -> Layout {
                 critical,
             ),
         ],
+        // No monsters until the server can show them (creature create and combat packets).
+        creatures: Vec::new(),
     }
 }
 
@@ -274,7 +279,7 @@ mod tests {
                 level: 1,
             };
             map.enter(character, tx, player::spawn_living());
-            host.join(guid);
+            host.join(guid, 1);
             inboxes.push(rx);
         }
         (host, inboxes)

@@ -12,7 +12,7 @@
 //!
 //! let mut game = Game::new(Settings::default(), Layout::default());
 //! for id in 1..=4 {
-//!     game.apply(Command::Join { player: PlayerId(id) }).unwrap();
+//!     game.apply(Command::Join { player: PlayerId(id), class: Class::Mage }).unwrap();
 //! }
 //! let events = game.apply(Command::Start { by: PlayerId(1), seed: 42 }).unwrap();
 //! for event in &events {
@@ -29,21 +29,23 @@
 //! assert_eq!(game.phase(), &Phase::Playing);
 //! ```
 
+mod classes;
 mod game;
 mod protocol;
 mod rng;
 mod settings;
 pub mod wire;
 
+pub use classes::{Class, ClassSpell, Kit, Kits};
 pub use game::{
-    Actions, ActiveSabotage, Body, Casting, Game, Meeting, MeetingStage, Phase, Player, PlayerTask,
-    Station,
+    Actions, ActiveSabotage, Body, Casting, Creature, Game, Meeting, MeetingStage, Phase, Player,
+    PlayerTask, SpellCast, Station,
 };
 pub use protocol::{
-    Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
-    WinReason,
+    Command, CreatureId, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote,
+    VoteOutcome, WinReason,
 };
 pub use settings::{
-    distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
-    StepAction, TaskDef, TaskKind, TaskStep,
+    distance_squared, max_impostors, within, CreatureDef, Layout, Position, SabotageDef,
+    SabotageKind, Settings, StepAction, TaskDef, TaskKind, TaskStep,
 };

@@ -59,7 +59,13 @@ fn a_map_offers_only_its_own_sabotages() {
     layout.sabotages.retain(|s| s.kind != SabotageKind::Oxygen);
     let mut g = Game::new(instant(), layout);
     for i in 1..=4 {
-        ok(&mut g, Command::Join { player: id(i) });
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(i),
+                class: Class::Warrior,
+            },
+        );
     }
     ok(&mut g, Command::Start { by: id(1), seed: 0 });
     let imp = impostors(&g)[0];

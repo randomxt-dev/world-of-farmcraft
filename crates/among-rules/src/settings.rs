@@ -1,7 +1,10 @@
 //! What a host can tune ([`Settings`]) and what a map provides ([`Layout`]): where the tasks, the
-//! emergency button and the sabotage stations stand, in WoW world coordinates (yards).
+//! emergency button, the sabotage stations and the monsters stand, in WoW world coordinates (yards).
 
 use std::time::Duration;
+
+use crate::classes::Kits;
+use crate::protocol::CreatureId;
 
 /// A point in WoW world coordinates (x, y, z), in yards.
 pub type Position = [f32; 3];
@@ -48,6 +51,12 @@ pub struct Settings {
     pub short_tasks: usize,
     /// At game start and after each sabotage ends, before impostors may sabotage again.
     pub sabotage_cooldown: Duration,
+    /// What each class fights with.
+    pub kits: Kits,
+    /// Where auto-attack swings land, both ways.
+    pub melee_range: f32,
+    /// Health a living player regains per second while out of combat.
+    pub health_regen: u32,
 }
 
 impl Default for Settings {
@@ -72,6 +81,9 @@ impl Default for Settings {
             long_tasks: 1,
             short_tasks: 2,
             sabotage_cooldown: Duration::from_secs(30),
+            kits: Kits::default(),
+            melee_range: 5.0,
+            health_regen: 2,
         }
     }
 }
@@ -93,6 +105,44 @@ pub struct Layout {
     pub tasks: Vec<TaskDef>,
     /// At most one per [`SabotageKind`]; the first of a kind wins.
     pub sabotages: Vec<SabotageDef>,
+    /// Indexed by [`crate::CreatureId`]: each spawns at game start and respawns after dying.
+    pub creatures: Vec<CreatureDef>,
+}
+
+/// A monster at a task spot that fights back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CreatureDef {
+    pub name: String,
+    /// Home: where it spawns, and where it returns when it gives up.
+    pub at: Position,
+    pub health: u32,
+    /// Per swing, landing within melee range.
+    pub damage: u32,
+    pub swing: Duration,
+    /// It turns on the nearest living player this close.
+    pub aggro: f32,
+    /// It gives up once its target is this far from home.
+    pub leash: f32,
+    /// Chase speed, yards per second.
+    pub speed: f32,
+    pub respawn: Duration,
+}
+
+impl CreatureDef {
+    /// A young-wolf-like beast at `at`: weak alone, dangerous to ignore.
+    pub fn beast(name: &str, at: Position) -> Self {
+        Self {
+            name: name.into(),
+            at,
+            health: 40,
+            damage: 5,
+            swing: Duration::from_secs(2),
+            aggro: 10.0,
+            leash: 30.0,
+            speed: 6.0,
+            respawn: Duration::from_secs(20),
+        }
+    }
 }
 
 /// One task: a named sequence of places to use, one step each.
@@ -133,6 +183,11 @@ impl TaskStep {
 pub enum StepAction {
     /// A cast of this long, standing still; zero completes on use.
     Cast(Duration),
+    /// Kill `count` of these creatures: kills you tapped (damaged first) count.
+    Slay {
+        creatures: Vec<CreatureId>,
+        count: u32,
+    },
 }
 
 /// Common tasks are the same for every player in a game; short and long ones are drawn per player.

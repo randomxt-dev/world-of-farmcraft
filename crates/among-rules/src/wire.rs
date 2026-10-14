@@ -51,7 +51,13 @@ pub enum Notice {
         done: usize,
         total: usize,
     },
-    /// You were killed.
+    /// Kills toward your current Slay step of `task`.
+    Slay {
+        task: TaskId,
+        kills: u32,
+        count: u32,
+    },
+    /// You were killed, by an impostor or a monster.
     Dead,
     /// Your live buttons; sent when they change.
     Actions(Actions),
@@ -139,7 +145,35 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
             done: *done,
             total: *total,
         }),
-        Event::Killed { victim, .. } => vec![(To::Player(*victim), Notice::Dead)],
+        Event::Killed { victim, .. } | Event::Slain { victim, .. } => {
+            vec![(To::Player(*victim), Notice::Dead)]
+        }
+        Event::SlayProgress {
+            player,
+            task,
+            kills,
+            count,
+        } => vec![(
+            To::Player(*player),
+            Notice::Slay {
+                task: *task,
+                kills: *kills,
+                count: *count,
+            },
+        )],
+        // Fights are the world's to show: creatures, swings, spell casts and hits.
+        Event::CreatureSpawned { .. }
+        | Event::CreatureAggro { .. }
+        | Event::CreatureMoved { .. }
+        | Event::CreatureEvaded { .. }
+        | Event::CreatureHit { .. }
+        | Event::AttackStarted { .. }
+        | Event::AttackStopped { .. }
+        | Event::MeleeHit { .. }
+        | Event::SpellCastStarted { .. }
+        | Event::SpellCastInterrupted { .. }
+        | Event::SpellHit { .. }
+        | Event::CreatureDied { .. } => Vec::new(),
         Event::MeetingCalled {
             caller,
             reason,
@@ -257,6 +291,7 @@ impl Notice {
                 name,
             } => format!("task {} {step} {steps} {name}", task.0),
             Notice::TaskBar { done, total } => format!("bar {done} {total}"),
+            Notice::Slay { task, kills, count } => format!("slay {} {kills} {count}", task.0),
             Notice::Dead => "dead".into(),
             Notice::Actions(a) => format!(
                 "actions {} {} {} {} {}",
@@ -369,6 +404,11 @@ impl Notice {
             "bar" => Notice::TaskBar {
                 done: next()?.parse().ok()?,
                 total: next()?.parse().ok()?,
+            },
+            "slay" => Notice::Slay {
+                task: TaskId(next()?.parse().ok()?),
+                kills: next()?.parse().ok()?,
+                count: next()?.parse().ok()?,
             },
             "dead" => Notice::Dead,
             "actions" => {

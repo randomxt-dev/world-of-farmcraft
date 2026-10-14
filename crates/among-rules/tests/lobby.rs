@@ -8,7 +8,13 @@ use common::*;
 #[test]
 fn the_first_to_join_hosts() {
     let mut g = Game::new(Settings::default(), layout());
-    let events = ok(&mut g, Command::Join { player: id(7) });
+    let events = ok(
+        &mut g,
+        Command::Join {
+            player: id(7),
+            class: Class::Warrior,
+        },
+    );
     assert_eq!(
         events,
         [
@@ -17,12 +23,24 @@ fn the_first_to_join_hosts() {
         ]
     );
     assert_eq!(
-        ok(&mut g, Command::Join { player: id(3) }),
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(3),
+                class: Class::Warrior
+            }
+        ),
         [Event::Joined { player: id(3) }]
     );
     assert_eq!(g.host(), Some(id(7)));
     assert_eq!(
-        rejected(&mut g, Command::Join { player: id(3) }),
+        rejected(
+            &mut g,
+            Command::Join {
+                player: id(3),
+                class: Class::Warrior
+            }
+        ),
         Reject::AlreadyJoined
     );
 }
@@ -37,7 +55,13 @@ fn a_full_lobby_refuses() {
         4,
     );
     assert_eq!(
-        rejected(&mut g, Command::Join { player: id(5) }),
+        rejected(
+            &mut g,
+            Command::Join {
+                player: id(5),
+                class: Class::Warrior
+            }
+        ),
         Reject::LobbyFull
     );
 }
@@ -68,7 +92,7 @@ fn only_the_host_configures_and_starts() {
             &mut g,
             Command::Configure {
                 by: id(2),
-                settings: settings.clone()
+                settings: Box::new(settings.clone())
             }
         ),
         Reject::NotHost
@@ -78,7 +102,7 @@ fn only_the_host_configures_and_starts() {
             &mut g,
             Command::Configure {
                 by: id(1),
-                settings: settings.clone()
+                settings: Box::new(settings.clone())
             }
         ),
         [Event::SettingsChanged]
@@ -225,7 +249,13 @@ fn every_player_draws_the_common_tasks_plus_their_own() {
 fn a_running_game_refuses_joins_and_lobby_commands() {
     let mut g = started(5, 0);
     assert_eq!(
-        rejected(&mut g, Command::Join { player: id(9) }),
+        rejected(
+            &mut g,
+            Command::Join {
+                player: id(9),
+                class: Class::Warrior
+            }
+        ),
         Reject::WrongPhase
     );
     assert_eq!(
@@ -257,6 +287,12 @@ fn after_game_over_the_host_returns_everyone_connected_to_the_lobby() {
     assert!(g
         .players()
         .all(|(_, p)| p.role.is_none() && p.alive && p.tasks.is_empty()));
-    ok(&mut g, Command::Join { player: id(9) });
+    ok(
+        &mut g,
+        Command::Join {
+            player: id(9),
+            class: Class::Warrior,
+        },
+    );
     ok(&mut g, Command::Start { by: host, seed: 6 });
 }

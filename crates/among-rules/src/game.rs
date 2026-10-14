@@ -1,12 +1,17 @@
 //! [`Game`]: the whole match as one state machine. [`Game::apply`] validates a [`Command`] against
 //! the current state and either refuses it (state unchanged) or applies it and returns the events.
 
+mod combat;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+pub use combat::{Creature, SpellCast};
+
+use crate::classes::Class;
 use crate::protocol::{
-    Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
-    WinReason,
+    Command, CreatureId, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote,
+    VoteOutcome, WinReason,
 };
 use crate::rng::SplitMix64;
 use crate::settings::{
@@ -30,10 +35,22 @@ pub struct Player {
     pub emergencies_left: u32,
     /// A task cast under way.
     pub casting: Option<Casting>,
+    pub class: Class,
+    pub health: u32,
+    /// The creature this player auto-attacks.
+    pub attacking: Option<CreatureId>,
+    /// Until the next auto-attack swing may land.
+    pub swing: Duration,
+    /// A class spell cast under way.
+    pub spell_cast: Option<SpellCast>,
+    /// Until the class spell may be cast again.
+    pub spell_cooldown: Duration,
+    /// Out-of-combat time not yet turned into regained health.
+    regen: Duration,
 }
 
 impl Player {
-    fn new(emergencies: u32) -> Self {
+    fn new(class: Class, settings: &Settings) -> Self {
         Self {
             position: [0.0; 3],
             role: None,
@@ -41,8 +58,15 @@ impl Player {
             connected: true,
             tasks: Vec::new(),
             kill_cooldown: Duration::ZERO,
-            emergencies_left: emergencies,
+            emergencies_left: settings.emergency_meetings,
             casting: None,
+            class,
+            health: settings.kits.get(class).health,
+            attacking: None,
+            swing: Duration::ZERO,
+            spell_cast: None,
+            spell_cooldown: Duration::ZERO,
+            regen: Duration::ZERO,
         }
     }
 
@@ -72,6 +96,8 @@ const CAST_DRIFT: f32 = 0.1;
 pub struct PlayerTask {
     pub task: TaskId,
     pub step: usize,
+    /// Kills toward the current step, when it is a Slay step.
+    pub kills: u32,
 }
 
 /// A dead crewmate's body, where they fell, until a meeting clears the map.
@@ -155,6 +181,8 @@ pub struct Game {
     emergency_cooldown: Duration,
     sabotage: Option<ActiveSabotage>,
     sabotage_cooldown: Duration,
+    /// Indexed by [`CreatureId`]; empty outside a game.
+    creatures: Vec<Creature>,
     out: Vec<Event>,
 }
 
@@ -170,8 +198,14 @@ impl Game {
             emergency_cooldown: Duration::ZERO,
             sabotage: None,
             sabotage_cooldown: Duration::ZERO,
+            creatures: Vec::new(),
             out: Vec::new(),
         }
+    }
+
+    /// The monsters at the task spots, indexed by [`CreatureId`].
+    pub fn creatures(&self) -> &[Creature] {
+        &self.creatures
     }
 
     pub fn settings(&self) -> &Settings {
@@ -325,7 +359,7 @@ impl Game {
     /// Whether `cmd` would be accepted now, without applying it (a HUD can grey out a button).
     pub fn validate(&self, cmd: &Command) -> Result<(), Reject> {
         match *cmd {
-            Command::Join { player } => {
+            Command::Join { player, .. } => {
                 self.in_lobby()?;
                 if self.players.contains_key(&player) {
                     return Err(Reject::AlreadyJoined);
@@ -357,7 +391,7 @@ impl Game {
                 if !p.alive && p.is_impostor() {
                     return Err(Reject::Dead);
                 }
-                if p.casting.is_some() {
+                if p.casting.is_some() || p.spell_cast.is_some() {
                     return Err(Reject::AlreadyCasting);
                 }
                 let t = p
@@ -369,6 +403,9 @@ impl Game {
                     .steps
                     .get(t.step)
                     .ok_or(Reject::TaskDone)?;
+                if matches!(step.action, StepAction::Slay { .. }) {
+                    return Err(Reject::NotAUseStep);
+                }
                 self.in_reach(p.position, step.at, self.settings.use_distance)
             }
             Command::Kill { killer, victim } => {
@@ -456,6 +493,9 @@ impl Game {
                 self.in_reach(p.position, at, self.settings.use_distance)
             }
             Command::ReleaseFix { player } => self.connected(player).map(drop),
+            Command::Attack { player, creature } => self.validate_attack(player, creature),
+            Command::StopAttack { player } => self.connected(player).map(drop),
+            Command::CastSpell { player, creature } => self.validate_spell(player, creature),
             Command::ReturnToLobby { by } => {
                 if !matches!(self.phase, Phase::GameOver { .. }) {
                     return Err(Reject::WrongPhase);
@@ -468,9 +508,9 @@ impl Game {
 
     fn execute(&mut self, cmd: Command) {
         match cmd {
-            Command::Join { player } => {
+            Command::Join { player, class } => {
                 self.players
-                    .insert(player, Player::new(self.settings.emergency_meetings));
+                    .insert(player, Player::new(class, &self.settings));
                 self.out.push(Event::Joined { player });
                 if self.host.is_none() {
                     self.set_host(Some(player));
@@ -478,7 +518,7 @@ impl Game {
             }
             Command::Leave { player } => self.leave(player),
             Command::Configure { settings, .. } => {
-                self.settings = settings;
+                self.settings = *settings;
                 for p in self.players.values_mut() {
                     p.emergencies_left = self.settings.emergency_meetings;
                 }
@@ -488,10 +528,17 @@ impl Game {
             Command::Move { player, position } => {
                 let p = self.seat(player);
                 p.position = position;
-                if p.casting
-                    .is_some_and(|c| !within(c.from, position, CAST_DRIFT))
-                {
+                let task_cast_broken = p
+                    .casting
+                    .is_some_and(|c| !within(c.from, position, CAST_DRIFT));
+                let spell_broken = p
+                    .spell_cast
+                    .is_some_and(|c| !within(c.from, position, CAST_DRIFT));
+                if task_cast_broken {
                     self.interrupt(player);
+                }
+                if spell_broken {
+                    self.interrupt_spell(player);
                 }
                 self.release_out_of_reach(player);
             }
@@ -516,6 +563,9 @@ impl Game {
             Command::Sabotage { kind, .. } => self.start_sabotage(kind),
             Command::Fix { player, station } => self.fix(player, station),
             Command::ReleaseFix { player } => self.release_stations(player),
+            Command::Attack { player, creature } => self.attack(player, creature),
+            Command::StopAttack { player } => self.stop_attack(player),
+            Command::CastSpell { player, creature } => self.cast_spell(player, creature),
             Command::ReturnToLobby { .. } => self.return_to_lobby(),
             Command::Tick { dt } => self.tick(dt),
         }
@@ -567,8 +617,13 @@ impl Game {
             p.alive = true;
             p.tasks = tasks
                 .iter()
-                .map(|&task| PlayerTask { task, step: 0 })
+                .map(|&task| PlayerTask {
+                    task,
+                    step: 0,
+                    kills: 0,
+                })
                 .collect();
+            p.health = self.settings.kits.get(p.class).health;
             p.kill_cooldown = self.settings.initial_kill_cooldown;
             p.emergencies_left = self.settings.emergency_meetings;
             let fellow_impostors = if impostor {
@@ -588,6 +643,7 @@ impl Game {
         self.sabotage_cooldown = self.settings.sabotage_cooldown;
         self.phase = Phase::Playing;
         self.push_task_bar();
+        self.spawn_creatures();
     }
 
     /// Start the step's cast, or do the step at once if it takes no time.
@@ -598,7 +654,10 @@ impl Game {
             .iter()
             .find(|t| t.task == task)
             .expect("validated task");
-        let StepAction::Cast(time) = self.layout.tasks[task.0].steps[t.step].action;
+        // Slay steps never reach here: validate refuses Use on them.
+        let StepAction::Cast(time) = self.layout.tasks[task.0].steps[t.step].action else {
+            return;
+        };
         if time.is_zero() {
             self.advance(player, task);
             return;
@@ -612,7 +671,7 @@ impl Game {
         self.out.push(Event::CastStarted { player, task, time });
     }
 
-    /// Break every cast: play stops for a meeting or the end of the game.
+    /// Break every cast and fight: play stops for a meeting or the end of the game.
     fn interrupt_all(&mut self) {
         let casters: Vec<PlayerId> = (self.players.iter())
             .filter(|(_, p)| p.casting.is_some())
@@ -621,6 +680,7 @@ impl Game {
         for player in casters {
             self.interrupt(player);
         }
+        self.halt_combat();
     }
 
     fn interrupt(&mut self, player: PlayerId) {
@@ -663,6 +723,7 @@ impl Game {
             .find(|t| t.task == task)
             .expect("validated task");
         t.step += 1;
+        t.kills = 0;
         let step = t.step;
         self.out.push(Event::TaskProgress {
             player,
@@ -679,6 +740,7 @@ impl Game {
 
     fn kill(&mut self, killer: PlayerId, victim: PlayerId) {
         self.interrupt(victim);
+        self.leave_combat(victim);
         let v = self.seat(victim);
         v.alive = false;
         let at = v.position;
@@ -700,6 +762,7 @@ impl Game {
             self.players.remove(&player);
         } else {
             self.interrupt(player);
+            self.leave_combat(player);
             self.seat(player).connected = false;
             self.release_stations(player);
         }
@@ -824,16 +887,21 @@ impl Game {
         for p in self.players.values_mut().filter(|p| p.is_impostor()) {
             p.kill_cooldown = cooldown;
         }
+        // Everyone walks out of a meeting at full health.
+        for p in self.players.values_mut().filter(|p| p.alive) {
+            p.health = self.settings.kits.get(p.class).health;
+        }
         self.emergency_cooldown = self.settings.emergency_cooldown;
     }
 
     fn return_to_lobby(&mut self) {
         self.players.retain(|_, p| p.connected);
         self.bodies.clear();
+        self.creatures.clear();
         for p in self.players.values_mut() {
             *p = Player {
                 position: p.position,
-                ..Player::new(self.settings.emergency_meetings)
+                ..Player::new(p.class, &self.settings)
             };
         }
         self.emergency_cooldown = Duration::ZERO;
@@ -872,6 +940,10 @@ impl Game {
                         p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
                     }
                     self.tick_casts(dt);
+                    if self.phase != Phase::Playing {
+                        return;
+                    }
+                    self.tick_combat(dt);
                     if self.phase != Phase::Playing {
                         return;
                     }

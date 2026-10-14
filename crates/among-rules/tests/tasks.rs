@@ -181,7 +181,13 @@ fn a_crewmate_leaving_takes_their_tasks_off_the_bar() {
 fn no_tasks_in_the_layout_means_no_task_win() {
     let mut g = Game::new(Settings::default(), Layout::default());
     for i in 1..=4 {
-        ok(&mut g, Command::Join { player: id(i) });
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(i),
+                class: Class::Warrior,
+            },
+        );
     }
     let events = ok(&mut g, Command::Start { by: id(1), seed: 0 });
     assert_eq!(events.last(), Some(&Event::TaskBar { done: 0, total: 0 }));

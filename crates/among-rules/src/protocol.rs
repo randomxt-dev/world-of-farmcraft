@@ -4,6 +4,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use crate::classes::Class;
 use crate::settings::{Position, SabotageKind, Settings};
 
 /// A player, opaque to the rules; the server maps it to a WoW guid.
@@ -13,6 +14,10 @@ pub struct PlayerId(pub u64);
 /// An index into [`crate::Layout::tasks`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TaskId(pub usize);
+
+/// An index into [`crate::Layout::creatures`]: one creature per spawn point, respawning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CreatureId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -66,8 +71,10 @@ pub enum VoteOutcome {
 /// Everything the server can ask of the game. Positions are WoW world coordinates in yards.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
+    /// Take a seat in the lobby, fighting as `class`.
     Join {
         player: PlayerId,
+        class: Class,
     },
     Leave {
         player: PlayerId,
@@ -75,7 +82,7 @@ pub enum Command {
     /// The host replaces the settings while in the lobby.
     Configure {
         by: PlayerId,
-        settings: Settings,
+        settings: Box<Settings>,
     },
     /// The host starts; `seed` drives role and task assignment.
     Start {
@@ -117,6 +124,19 @@ pub enum Command {
     /// Let go of any station the player holds.
     ReleaseFix {
         player: PlayerId,
+    },
+    /// Start auto-attacking a creature; swings land while within melee range.
+    Attack {
+        player: PlayerId,
+        creature: CreatureId,
+    },
+    StopAttack {
+        player: PlayerId,
+    },
+    /// Cast the class spell at a creature.
+    CastSpell {
+        player: PlayerId,
+        creature: CreatureId,
     },
     ReturnToLobby {
         by: PlayerId,
@@ -181,6 +201,82 @@ pub enum Event {
     /// The cast broke: the caster moved, a meeting began, or the caster died or left.
     CastInterrupted {
         player: PlayerId,
+    },
+    /// Private. One more kill toward the current Slay step of `task`.
+    SlayProgress {
+        player: PlayerId,
+        task: TaskId,
+        kills: u32,
+        count: u32,
+    },
+    /// A creature stands at `at`, full health: at game start and on respawn.
+    CreatureSpawned {
+        creature: CreatureId,
+        at: Position,
+    },
+    /// The creature turned on `player`.
+    CreatureAggro {
+        creature: CreatureId,
+        player: PlayerId,
+    },
+    /// The creature chased its target to `position`.
+    CreatureMoved {
+        creature: CreatureId,
+        position: Position,
+    },
+    /// The creature gave up (its target fled past the leash, died, or play stopped): back home,
+    /// full health, no target.
+    CreatureEvaded {
+        creature: CreatureId,
+        at: Position,
+    },
+    /// The creature hit `player` for `damage`, leaving `health`.
+    CreatureHit {
+        creature: CreatureId,
+        player: PlayerId,
+        damage: u32,
+        health: u32,
+    },
+    AttackStarted {
+        player: PlayerId,
+        creature: CreatureId,
+    },
+    AttackStopped {
+        player: PlayerId,
+    },
+    /// An auto-attack swing landed on the creature, leaving `health`.
+    MeleeHit {
+        player: PlayerId,
+        creature: CreatureId,
+        damage: u32,
+        health: u32,
+    },
+    SpellCastStarted {
+        player: PlayerId,
+        creature: CreatureId,
+        time: Duration,
+    },
+    /// The spell cast broke: the caster moved, the target died, or play stopped.
+    SpellCastInterrupted {
+        player: PlayerId,
+    },
+    /// The class spell landed on the creature, leaving `health`.
+    SpellHit {
+        player: PlayerId,
+        creature: CreatureId,
+        damage: u32,
+        health: u32,
+    },
+    /// The creature died; `credit` is whoever damaged it first (WoW's tap), if still seated.
+    CreatureDied {
+        creature: CreatureId,
+        credit: Option<PlayerId>,
+    },
+    /// A creature killed `victim`: a ghost now, with a reportable body at `at`.
+    Slain {
+        victim: PlayerId,
+        creature: CreatureId,
+        at: Position,
     },
     /// Crew tasks done of the total still counted (connected crewmates, living or dead).
     TaskBar {
@@ -258,7 +354,8 @@ impl Event {
             Event::RoleAssigned { player, .. }
             | Event::TasksAssigned { player, .. }
             | Event::TaskProgress { player, .. }
-            | Event::TaskCompleted { player, .. } => Some(player),
+            | Event::TaskCompleted { player, .. }
+            | Event::SlayProgress { player, .. } => Some(player),
             _ => None,
         }
     }
@@ -293,6 +390,8 @@ pub enum Reject {
     StationBusy,
     AlreadyVoted,
     AlreadyCasting,
+    /// A Slay step is done by fighting, not by Use.
+    NotAUseStep,
 }
 
 impl fmt::Display for Reject {
@@ -322,6 +421,7 @@ impl fmt::Display for Reject {
             Reject::StationBusy => "someone else is at that station",
             Reject::AlreadyVoted => "already voted",
             Reject::AlreadyCasting => "already busy",
+            Reject::NotAUseStep => "fight it instead",
         })
     }
 }

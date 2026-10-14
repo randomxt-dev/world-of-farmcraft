@@ -35,6 +35,8 @@ struct Account {
 struct Inner {
     accounts: HashMap<String, Account>,
     next_guid: u64,
+    /// An open lobby's shared password: any unknown name logs in with it and is registered.
+    lobby_code: Option<NormalizedString>,
 }
 
 /// The account table, shared by realmd and the world server.
@@ -65,9 +67,31 @@ impl Accounts {
         Ok(())
     }
 
-    /// The account's salt and verifier, `None` for an unknown account.
+    /// An open lobby: any account name logs in with `code` as its password.
+    pub fn open_lobby(code: &str) -> anyhow::Result<Self> {
+        let code = NormalizedString::new(code).map_err(|e| anyhow::anyhow!("lobby code: {e}"))?;
+        let accounts = Self::default();
+        accounts.lock().lobby_code = Some(code);
+        Ok(accounts)
+    }
+
+    /// The account's salt and verifier; an unknown name is registered with the lobby code in an
+    /// open lobby, and is `None` otherwise.
     pub fn verifier(&self, user: &str) -> Option<Verifier> {
-        self.lock().accounts.get(user).map(|a| a.verifier.clone())
+        let mut inner = self.lock();
+        if !inner.accounts.contains_key(user) {
+            let code = inner.lobby_code.clone()?;
+            let name = NormalizedString::new(user).ok()?;
+            inner.accounts.insert(
+                name.as_ref().to_owned(),
+                Account {
+                    verifier: Verifier::new(&name, &code),
+                    session_key: None,
+                    characters: Vec::new(),
+                },
+            );
+        }
+        inner.accounts.get(user).map(|a| a.verifier.clone())
     }
 
     pub fn set_session_key(&self, user: &str, key: [u8; 40]) {
@@ -87,6 +111,7 @@ impl Accounts {
         let Inner {
             accounts,
             next_guid,
+            ..
         } = &mut *inner;
         let Some(account) = accounts.get_mut(user) else {
             return Vec::new();
@@ -149,6 +174,17 @@ impl Accounts {
     }
 }
 
+/// A fresh lobby code: six letters and digits with the look-alikes (0/O, 1/I/L) left out, so it
+/// reads aloud and types cleanly as a password.
+pub fn new_lobby_code() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::thread_rng();
+    (0..6)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
+}
+
 /// `CHAR_CREATE_ERROR` (0x2F, vmangos `SharedDefines.h`), the generic create failure.
 pub const CHAR_CREATE_ERROR: u8 = 0x2F;
 
@@ -175,6 +211,31 @@ mod tests {
         assert_eq!(roster[0].name, "Among1");
         // Stable across calls: the default is made once.
         assert_eq!(accounts.characters("AMONG1"), roster);
+    }
+
+    #[test]
+    fn an_open_lobby_registers_any_name_with_its_code() {
+        let accounts = Accounts::open_lobby("k3xq9p").unwrap();
+        let joined = accounts.verifier("THRALL").expect("an unknown name joins");
+        // The same verifier on a second logon: the account was kept, not remade.
+        assert_eq!(accounts.verifier("THRALL").unwrap().salt, joined.salt);
+        assert_eq!(accounts.characters("THRALL")[0].name, "Thrall");
+    }
+
+    #[test]
+    fn a_closed_server_refuses_unknown_names() {
+        let accounts = Accounts::default();
+        accounts.register("among1", "secret").unwrap();
+        assert!(accounts.verifier("AMONG1").is_some());
+        assert!(accounts.verifier("THRALL").is_none());
+    }
+
+    #[test]
+    fn lobby_codes_are_six_unambiguous_characters() {
+        let code = new_lobby_code();
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| !"01OIL".contains(c)), "{code}");
+        assert!(NormalizedString::new(&code).is_ok());
     }
 
     #[test]

@@ -32,8 +32,20 @@ const VERSION_CHALLENGE: [u8; 16] = [
 #[derive(Clone)]
 pub struct RealmConfig {
     pub name: String,
-    /// The world server's port; the host is the address the client reached realmd on.
+    /// The world server's host; `None` is the address the client reached realmd on.
+    pub advertise: Option<String>,
     pub world_port: u16,
+}
+
+impl RealmConfig {
+    /// The world address for a client that reached realmd on `local`: a LAN guest gets the LAN
+    /// address, unless a public one is advertised for players behind the host's router.
+    fn world_address(&self, local: std::net::IpAddr) -> String {
+        match &self.advertise {
+            Some(host) => format!("{host}:{}", self.world_port),
+            None => format!("{local}:{}", self.world_port),
+        }
+    }
 }
 
 /// Accept logons forever.
@@ -57,8 +69,7 @@ async fn handle(
     realm: RealmConfig,
 ) -> Result<()> {
     stream.set_nodelay(true)?;
-    // The world address is wherever this client found us, so a LAN guest gets the LAN address.
-    let world_address = format!("{}:{}", stream.local_addr()?.ip(), realm.world_port);
+    let world_address = realm.world_address(stream.local_addr()?.ip());
 
     // ── CMD_AUTH_LOGON_CHALLENGE: cmd, protocol, u16 size, then `size` bytes ──
     let mut head = [0u8; 4];
@@ -209,6 +220,19 @@ mod tests {
         let c = parse_challenge(&packet[4..]).unwrap();
         assert_eq!(c.build, 5875);
         assert_eq!(c.account, "AMONG1");
+    }
+
+    #[test]
+    fn the_world_address_is_the_advertised_host_when_set() {
+        let lan: std::net::IpAddr = [192, 168, 1, 20].into();
+        let mut realm = RealmConfig {
+            name: "Among Azeroth".into(),
+            advertise: None,
+            world_port: 8085,
+        };
+        assert_eq!(realm.world_address(lan), "192.168.1.20:8085");
+        realm.advertise = Some("among.example.net".into());
+        assert_eq!(realm.world_address(lan), "among.example.net:8085");
     }
 
     /// The client's own realm-list reader takes our packet, every field intact.

@@ -4,6 +4,7 @@
 
 pub mod accounts;
 mod announce;
+pub mod cli;
 pub mod game;
 pub mod layout_file;
 pub mod look;
@@ -39,6 +40,9 @@ pub struct ServerConfig {
     pub auth_port: u16,
     pub world_port: u16,
     pub realm_name: String,
+    /// The host the realm list sends clients to for the world server; `None` is the address each
+    /// client reached realmd on.
+    pub advertise: Option<String>,
     /// The match's rules and the map's task, button and station spots.
     pub settings: among_rules::Settings,
     pub layout: among_rules::Layout,
@@ -57,6 +61,7 @@ impl Default for ServerConfig {
             auth_port: benilla_protocol::AUTH_PORT,
             world_port: benilla_protocol::WORLD_PORT,
             realm_name: "Among Azeroth".into(),
+            advertise: None,
             settings: among_rules::Settings::default(),
             layout: game::placeholder_layout(),
             look: game::placeholder_look(),
@@ -71,6 +76,7 @@ pub struct Server {
     auth: TcpListener,
     world: TcpListener,
     realm_name: String,
+    advertise: Option<String>,
     accounts: Accounts,
     settings: among_rules::Settings,
     layout: among_rules::Layout,
@@ -96,6 +102,7 @@ impl Server {
             auth,
             world,
             realm_name: config.realm_name.clone(),
+            advertise: config.advertise.clone(),
             accounts,
             settings: config.settings.clone(),
             layout: config.layout.clone(),
@@ -127,6 +134,7 @@ impl Server {
         );
         let realm = realmd::RealmConfig {
             name: self.realm_name,
+            advertise: self.advertise,
             world_port: self.world.local_addr()?.port(),
         };
         let survey = Survey::open(&self.marks)?;

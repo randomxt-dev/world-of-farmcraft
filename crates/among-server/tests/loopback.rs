@@ -34,6 +34,11 @@ fn start_server_full(n: u32, settings: Settings, marks: std::path::PathBuf) -> S
             .register(&format!("among{i}"), &format!("secret{i}"))
             .unwrap();
     }
+    start_server_for(accounts, settings, marks)
+}
+
+/// Start a server on free ports for `accounts`; returns realmd's `host:port`.
+fn start_server_for(accounts: Accounts, settings: Settings, marks: std::path::PathBuf) -> String {
     let config = ServerConfig {
         auth_port: 0,
         world_port: 0,
@@ -196,6 +201,22 @@ fn a_wrong_password_is_refused_at_logon() {
     let host = start_server();
     let err = match benilla_protocol::logon(&host, "among1", "nope") {
         Ok(_) => panic!("a wrong password must not log on"),
+        Err(e) => e,
+    };
+    let reject = err
+        .downcast_ref::<benilla_protocol::AuthReject>()
+        .expect("a typed refusal");
+    assert_eq!(reject.code, 0x04);
+}
+
+#[test]
+fn an_open_lobby_lets_any_name_in_with_its_code_and_no_other_password() {
+    let accounts = Accounts::open_lobby("K3XQ9P").unwrap();
+    let host = start_server_for(accounts, Settings::default(), temp_marks("lobby"));
+    let (_session, guid) = enter(&host, "thrall", "k3xq9p");
+    assert_ne!(guid, 0);
+    let err = match benilla_protocol::logon(&host, "jaina", "guess1") {
+        Ok(_) => panic!("only the lobby code logs on"),
         Err(e) => e,
     };
     let reject = err

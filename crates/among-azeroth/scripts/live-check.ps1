@@ -1,11 +1,13 @@
-# Live check of the action-bar names and tooltips: builds and hosts among-server, then runs the
-# among-azeroth client against it in this window. Close the client to stop the server.
+# Live check of what the client shows: builds and hosts among-server, then runs the among-azeroth
+# client against it in this window. Close the client to stop the server.
 #
-#   .\crates\among-azeroth\scripts\ability-text-check.ps1
-#   .\crates\among-azeroth\scripts\ability-text-check.ps1 -Account TESTUSER:TESTPASS -NoBuild
+#   .\crates\among-azeroth\scripts\live-check.ps1
+#   .\crates\among-azeroth\scripts\live-check.ps1 -Account TESTUSER:TESTPASS -NoBuild -MinPlayers 3
 param(
     # A test account as NAME:PASSWORD; default: WOW_USER and WOW_PASS from .probe-identity.
     [string]$Account = '',
+    # Fewest players a game starts with; the rules never allow fewer than 3.
+    [int]$MinPlayers = 4,
     # Skip the release build (about 6.5 min from clean).
     [switch]$NoBuild
 )
@@ -49,7 +51,7 @@ if (Get-Process among-server -ErrorAction SilentlyContinue) {
     throw 'An among-server is already running: close it (and its clients) first.'
 }
 $serverExe = Join-Path $target 'release\among-server.exe'
-$server = Start-Process -FilePath $serverExe -ArgumentList @('--account', $Account) -WorkingDirectory $root -PassThru
+$server = Start-Process -FilePath $serverExe -ArgumentList @('--account', $Account, '--min-players', $MinPlayers) -WorkingDirectory $root -PassThru
 Write-Host ''
 Write-Host 'among-server is up in its own window. Log in with the account above, then:'
 Write-Host '  1. In the lobby the bar holds 7 buttons. Hover 3 to 7: Use, Report, Fix, Emergency'
@@ -59,10 +61,17 @@ Write-Host '  2. Hover button 2, your class spell: its real name and rank, and'
 Write-Host '     "Deals N damage to a monster within N yards. It cannot harm players."'
 Write-Host '  3. Press P: the spellbook lists every button, Kill and Sabotage included, with no rank.'
 Write-Host '  4. Type /reload, then hover button 3 again: still "Use".'
-Write-Host 'Role bars need a started game (4 players by default): the impostors alone get Kill on'
-Write-Host 'button 8 and Sabotage on 9, and lose them again when the host returns to the lobby.'
-Write-Host 'This window prints "among-azeroth: ability text hooked on VM session N" at login and at'
-Write-Host 'each /reload.'
+Write-Host '  5. A big red Emergency Button stands at the spawn, and the sabotage stations around it: a'
+Write-Host '     lamp post, a gnome terminal, two metal levers and two gnome machines. Hover each for'
+Write-Host '     its name.'
+Write-Host 'With a started game (-MinPlayers players logged in, then the host right-clicks the button):'
+Write-Host '  6. The quest tracker under the minimap lists Crew Tasks and your tasks at once.'
+Write-Host '  7. Impostors alone get Kill on button 8 and Sabotage on 9.'
+Write-Host '  8. An impostor presses Sabotage: a tall purple column rises over each station to fix.'
+Write-Host '     Right-click the station (or the column) within 5 yd: the column goes.'
+Write-Host '  9. Right-clicking the button within 5 yd calls a meeting (15 s after the start).'
+Write-Host 'This window prints "among-azeroth: ability text hooked" and "quest tracker hooked" at'
+Write-Host 'login and at each /reload.'
 Write-Host ''
 try {
     & (Join-Path $target 'release\among-azeroth.exe')

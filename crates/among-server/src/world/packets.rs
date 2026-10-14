@@ -41,7 +41,8 @@ pub fn auth_refused(code: u8) -> Packet {
     Packet::new(opcode::SMSG_AUTH_RESPONSE, vec![code])
 }
 
-/// `SMSG_CHAR_ENUM`: the roster, each character standing at `location`, wearing nothing.
+/// `SMSG_CHAR_ENUM`: the roster, each character standing at `location` in its starting gear,
+/// each equipment slot a display id and inventory type (vmangos `Player::BuildEnumData`).
 pub fn char_enum(characters: &[CharacterRecord], location: Location) -> Packet {
     let mut b = Body::default();
     b.u8(characters.len() as u8);
@@ -70,8 +71,12 @@ pub fn char_enum(characters: &[CharacterRecord], location: Location) -> Packet {
             .u32(0) // pet display
             .u32(0) // pet level
             .u32(0); // pet family
-        for _ in 0..19 {
-            b.u32(0).u8(0); // equipment: display id, inventory type
+        let gear = super::items::starting_gear(c.race, c.class, c.guid);
+        for slot in 0..super::items::EQUIPMENT_SLOTS {
+            match gear.iter().find(|w| w.slot == slot) {
+                Some(w) => b.u32(w.item.display_id).u8(w.item.inventory_type),
+                None => b.u32(0).u8(0),
+            };
         }
         b.u32(0).u8(0); // first bag
     }
@@ -279,6 +284,21 @@ mod tests {
             (characters[0].hair_style, characters[0].facial_hair),
             (4, 6)
         );
+        let worn: Vec<(usize, u32, u8)> = (characters[0].equipment.iter().enumerate())
+            .filter(|(_, e)| e.display_id != 0)
+            .map(|(slot, e)| (slot, e.display_id, e.inventory_type))
+            .collect();
+        assert_eq!(
+            worn,
+            [
+                (3, 9891, 4),
+                (6, 9892, 7),
+                (7, 10141, 8),
+                (15, 1542, 21),
+                (16, 18730, 14)
+            ],
+            "the human warrior's recruit kit"
+        );
         let ServerPacket::LoginVerifyWorld { map, position, .. } = parse(&login_verify_world(at))
         else {
             panic!("not a world verify");
@@ -371,7 +391,7 @@ mod tests {
             crate::world::player::Life::Alive,
         );
         let events = decode(parse(&p));
-        let [SessionEvent::ObjectCreate {
+        let [worn @ .., SessionEvent::ObjectCreate {
             guid,
             kind,
             display_id,
@@ -381,8 +401,12 @@ mod tests {
             ..
         }] = events.as_slice()
         else {
-            panic!("one object create, got {events:?}");
+            panic!("the body last, got {events:?}");
         };
+        assert_eq!(worn.len(), 5, "the warrior's five worn items first");
+        assert!(worn
+            .iter()
+            .all(|e| matches!(e, SessionEvent::ItemCreate { .. })));
         assert_eq!(*guid, 7);
         assert_eq!(*kind, EntityKind::Player);
         assert_eq!(*display_id, Some(50), "a human female");
@@ -405,8 +429,8 @@ mod tests {
                 is_self,
                 crate::world::player::Life::Alive,
             )));
-            let [SessionEvent::ObjectCreate { fields, .. }] = events.as_slice() else {
-                panic!("one object create, got {events:?}");
+            let [.., SessionEvent::ObjectCreate { fields, .. }] = events.as_slice() else {
+                panic!("the body last, got {events:?}");
             };
             fields.clone()
         };
@@ -435,5 +459,77 @@ mod tests {
                 "the inventory is the owner's"
             );
         }
+    }
+
+    /// Every race and class is created in its starting gear: everyone sees the worn entries, the
+    /// owner alone gets the item objects its slots name. A pair 1.12 never allowed wears nothing
+    /// but still holds a main hand the client cannot resolve, so Kill stays castable.
+    #[test]
+    fn every_class_is_created_in_its_starting_gear() {
+        use crate::world::items;
+        use benilla_protocol::{decode, SessionEvent};
+        let living = crate::world::player::spawn_living();
+        let created = |c: &CharacterRecord, is_self| {
+            decode(parse(&crate::world::player::create_packet(
+                c,
+                &living,
+                is_self,
+                crate::world::player::Life::Alive,
+            )))
+        };
+        let mut pairs = 0;
+        for race in 1..=8u8 {
+            for class in 1..=11u8 {
+                let c = CharacterRecord {
+                    race,
+                    class,
+                    ..character()
+                };
+                let gear = items::starting_gear(race, class, c.guid);
+                let events = created(&c, true);
+                let [worn @ .., SessionEvent::ObjectCreate { fields: me, .. }] = events.as_slice()
+                else {
+                    panic!("the body last, got {events:?}");
+                };
+                assert_eq!(
+                    worn.len(),
+                    gear.len(),
+                    "{race}/{class}: one create per item"
+                );
+                for (w, e) in gear.iter().zip(worn) {
+                    let SessionEvent::ItemCreate { guid, fields, .. } = e else {
+                        panic!("{race}/{class}: not an item create: {e:?}");
+                    };
+                    assert_eq!(*guid, w.guid);
+                    assert_eq!(fields.object_entry(), Some(w.item.entry));
+                    assert_eq!(fields.item_stack_count(), Some(w.count));
+                    assert_eq!(me.player_inv_slot(w.slot), Some(w.guid), "{race}/{class}");
+                    assert_eq!(me.player_visible_item_entry(w.slot), Some(w.item.entry));
+                }
+                let main = me.player_inv_slot(items::MAINHAND).unwrap_or(0);
+                assert_ne!(main, 0, "{race}/{class}: a main hand for Kill");
+                let events = created(&c, false);
+                let [SessionEvent::ObjectCreate { fields: them, .. }] = events.as_slice() else {
+                    panic!("only the body for another client, got {events:?}");
+                };
+                for slot in 0..items::EQUIPMENT_SLOTS {
+                    let w = gear.iter().find(|w| w.slot == slot);
+                    assert_eq!(
+                        them.player_visible_item_entry(slot),
+                        w.map(|w| w.item.entry),
+                        "{race}/{class} slot {slot}: seen by others"
+                    );
+                    assert_eq!(
+                        them.player_inv_slot(slot),
+                        None,
+                        "the inventory is the owner's"
+                    );
+                }
+                if !gear.is_empty() {
+                    pairs += 1;
+                }
+            }
+        }
+        assert_eq!(pairs, 40, "every 1.12 race and class wears its kit");
     }
 }

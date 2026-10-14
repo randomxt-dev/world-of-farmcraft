@@ -12,6 +12,7 @@ const UPDATETYPE_VALUES: u8 = 0;
 const UPDATETYPE_CREATE_OBJECT: u8 = 2;
 /// `UPDATETYPE_CREATE_OBJECT2`, the create vmangos sends for players.
 const UPDATETYPE_CREATE_OBJECT2: u8 = 3;
+const TYPEID_ITEM: u8 = 1;
 const TYPEID_UNIT: u8 = 3;
 const TYPEID_PLAYER: u8 = 4;
 const TYPEID_GAMEOBJECT: u8 = 5;
@@ -137,6 +138,31 @@ fn create_placed(
         .f32(orientation)
         .u32(1); // UPDATEFLAG_ALL's word
     fields.write(&mut b);
+    b.done()
+}
+
+/// One `CREATE_OBJECT` of an item: no pose, `UPDATEFLAG_ALL` alone (vmangos's `Item` constructor).
+pub fn create_item(guid: u64, fields: &Fields) -> Vec<u8> {
+    let mut b = Body::default();
+    b.u32(1).u8(0);
+    b.u8(UPDATETYPE_CREATE_OBJECT)
+        .packed_guid(guid)
+        .u8(TYPEID_ITEM)
+        .u8(UPDATEFLAG_ALL)
+        .u32(1); // UPDATEFLAG_ALL's word
+    fields.write(&mut b);
+    b.done()
+}
+
+/// One body of several blocks in order, from one-object bodies of this module: each one's count
+/// and transport byte dropped, one count for all in front (vmangos's `UpdateData`).
+pub fn join(bodies: &[Vec<u8>]) -> Vec<u8> {
+    let mut b = Body::default();
+    b.u32(bodies.len() as u32).u8(0);
+    for body in bodies {
+        debug_assert_eq!(body[..5], [1, 0, 0, 0, 0], "a one-object body");
+        b.bytes(&body[5..]);
+    }
     b.done()
 }
 

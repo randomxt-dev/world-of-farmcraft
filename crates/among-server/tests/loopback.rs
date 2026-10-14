@@ -343,6 +343,89 @@ fn the_action_bar_starts_a_game_and_kills_by_casting() {
     assert_eq!((caster, hits), (players[imp].1, vec![victim_guid]));
 }
 
+/// An item object created for its owner: its guid and template entry.
+type ItemObject = (u64, Option<u32>);
+
+/// The item objects and the player's own fields in the update that creates `guid`'s body.
+fn self_create_with_items(
+    packet: &ServerPacket,
+    guid: u64,
+) -> Option<(Vec<ItemObject>, benilla_protocol::messages::ObjectFields)> {
+    let ServerPacket::UpdateObject { objects } = packet else {
+        return None;
+    };
+    let mut items = Vec::new();
+    for o in objects {
+        match o {
+            Object::Create {
+                guid: g,
+                object_type: ObjectType::Item,
+                mask,
+                ..
+            } => items.push((*g, mask.object_entry())),
+            Object::Create {
+                guid: g,
+                object_type: ObjectType::Player,
+                mask,
+                ..
+            } if *g == guid => return Some((items, mask.clone())),
+            _ => {}
+        }
+    }
+    None
+}
+
+#[test]
+fn a_client_wears_its_starting_gear_and_learns_each_item() {
+    let host = start_server();
+    let (mut one, one_guid) = enter(&host, "among1", "secret1");
+    // A fresh account's human warrior: the recruit kit, the items ahead of the body.
+    let (items, me) = wait_for(&mut one, |p| self_create_with_items(p, one_guid));
+    let entries: Vec<Option<u32>> = items.iter().map(|(_, e)| *e).collect();
+    assert_eq!(
+        entries,
+        [Some(38), Some(39), Some(40), Some(25), Some(2362)]
+    );
+    for (slot, (guid, _)) in [3u8, 6, 7, 15, 16].into_iter().zip(&items) {
+        assert_eq!(me.player_inv_slot(slot), Some(*guid), "slot {slot}");
+    }
+    assert_eq!(me.player_visible_item_entry(15), Some(25));
+
+    // The character sheet asks for each template; the sword comes back whole.
+    one.item_query(25, items[3].0).unwrap();
+    let (entry, name, delay) = wait_for(&mut one, |p| match p {
+        ServerPacket::ItemQueryResponse {
+            entry,
+            info: Some(info),
+        } => Some((*entry, info.name.clone(), info.delay_ms)),
+        _ => None,
+    });
+    assert_eq!((entry, name.as_str(), delay), (25, "Worn Shortsword", 1900));
+
+    // Another client sees the gear on the body, but no item objects.
+    let (mut two, _) = enter(&host, "among2", "secret2");
+    let seen = wait_for(&mut two, |p| {
+        let ServerPacket::UpdateObject { objects } = p else {
+            return None;
+        };
+        objects.iter().find_map(|o| match o {
+            Object::Create {
+                guid,
+                object_type: ObjectType::Player,
+                mask,
+                ..
+            } if *guid == one_guid => Some(mask.clone()),
+            _ => None,
+        })
+    });
+    assert_eq!(seen.player_visible_item_entry(16), Some(2362));
+    assert_eq!(
+        seen.player_inv_slot(15),
+        None,
+        "the inventory is the owner's"
+    );
+}
+
 #[test]
 fn a_newcomer_sees_every_task_node_and_learns_its_template() {
     let host = start_server();

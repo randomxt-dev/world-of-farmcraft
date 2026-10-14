@@ -5,6 +5,7 @@ pub mod combat;
 pub mod creatures;
 pub mod death;
 pub mod guid;
+pub mod items;
 mod map;
 pub mod meeting;
 pub mod objects;

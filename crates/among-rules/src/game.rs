@@ -9,7 +9,9 @@ use crate::protocol::{
     WinReason,
 };
 use crate::rng::SplitMix64;
-use crate::settings::{max_impostors, within, Layout, Position, Settings, TaskKind};
+use crate::settings::{
+    max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings, TaskKind,
+};
 
 /// One player's standing in the game.
 #[derive(Clone, Debug, PartialEq)]
@@ -96,6 +98,24 @@ pub enum MeetingStage {
     Voting,
 }
 
+/// The sabotage in force and how far its fix has come.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveSabotage {
+    pub kind: SabotageKind,
+    /// Until the impostors win, for a critical sabotage.
+    pub remaining: Option<Duration>,
+    /// Indexed like the map's [SabotageDef::stations].
+    pub stations: Vec<Station>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Station {
+    Open,
+    /// Held by a player, for a sabotage that needs every station held at once.
+    Held(PlayerId),
+    Fixed,
+}
+
 /// The match: lobby, roles, tasks, kills, meetings, votes, sabotage and the win check.
 #[derive(Clone, Debug)]
 pub struct Game {
@@ -106,6 +126,8 @@ pub struct Game {
     players: BTreeMap<PlayerId, Player>,
     bodies: Vec<Body>,
     emergency_cooldown: Duration,
+    sabotage: Option<ActiveSabotage>,
+    sabotage_cooldown: Duration,
     out: Vec<Event>,
 }
 
@@ -119,6 +141,8 @@ impl Game {
             players: BTreeMap::new(),
             bodies: Vec::new(),
             emergency_cooldown: Duration::ZERO,
+            sabotage: None,
+            sabotage_cooldown: Duration::ZERO,
             out: Vec::new(),
         }
     }
@@ -156,6 +180,15 @@ impl Game {
     /// Until the emergency button works again.
     pub fn emergency_cooldown(&self) -> Duration {
         self.emergency_cooldown
+    }
+
+    pub fn sabotage(&self) -> Option<&ActiveSabotage> {
+        self.sabotage.as_ref()
+    }
+
+    /// Until the impostors may sabotage again; it runs only while no sabotage is active.
+    pub fn sabotage_cooldown(&self) -> Duration {
+        self.sabotage_cooldown
     }
 
     /// Crew tasks done, and the total over connected crewmates (living or dead).
@@ -253,6 +286,9 @@ impl Game {
                 if p.emergencies_left == 0 {
                     return Err(Reject::NoEmergencyMeetingsLeft);
                 }
+                if self.sabotage.is_some() {
+                    return Err(Reject::SabotageActive);
+                }
                 if !self.emergency_cooldown.is_zero() {
                     return Err(Reject::OnCooldown);
                 }
@@ -278,6 +314,34 @@ impl Game {
                     Vote::Skip => Ok(()),
                 }
             }
+            Command::Sabotage { player, kind } => {
+                self.playing()?;
+                if !self.connected(player)?.is_impostor() {
+                    return Err(Reject::NotImpostor);
+                }
+                if self.sabotage.is_some() {
+                    return Err(Reject::SabotageActive);
+                }
+                if !self.sabotage_cooldown.is_zero() {
+                    return Err(Reject::OnCooldown);
+                }
+                self.sabotage_def(kind)
+                    .map(drop)
+                    .ok_or(Reject::NoSuchSabotage)
+            }
+            Command::Fix { player, station } => {
+                self.playing()?;
+                let p = self.alive(player)?;
+                let s = self.sabotage.as_ref().ok_or(Reject::NoSabotage)?;
+                match s.stations.get(station).ok_or(Reject::NoSuchStation)? {
+                    Station::Fixed => return Err(Reject::StationFixed),
+                    Station::Held(other) if *other != player => return Err(Reject::StationBusy),
+                    _ => {}
+                }
+                let at = self.station_position(s.kind, station);
+                self.in_reach(p.position, at, self.settings.use_distance)
+            }
+            Command::ReleaseFix { player } => self.connected(player).map(drop),
             Command::ReturnToLobby { by } => {
                 if !matches!(self.phase, Phase::GameOver { .. }) {
                     return Err(Reject::WrongPhase);
@@ -285,7 +349,6 @@ impl Game {
                 self.is_host(by)
             }
             Command::Tick { .. } => Ok(()),
-            _ => Err(Reject::WrongPhase),
         }
     }
 
@@ -308,7 +371,10 @@ impl Game {
                 self.out.push(Event::SettingsChanged);
             }
             Command::Start { seed, .. } => self.start(seed),
-            Command::Move { player, position } => self.seat(player).position = position,
+            Command::Move { player, position } => {
+                self.seat(player).position = position;
+                self.release_out_of_reach(player);
+            }
             Command::UseTask { player, task } => self.use_task(player, task),
             Command::Kill { killer, victim } => self.kill(killer, victim),
             Command::Report { player, body } => {
@@ -327,9 +393,11 @@ impl Game {
                     self.close_voting();
                 }
             }
+            Command::Sabotage { kind, .. } => self.start_sabotage(kind),
+            Command::Fix { player, station } => self.fix(player, station),
+            Command::ReleaseFix { player } => self.release_stations(player),
             Command::ReturnToLobby { .. } => self.return_to_lobby(),
             Command::Tick { dt } => self.tick(dt),
-            _ => {}
         }
     }
 
@@ -396,6 +464,8 @@ impl Game {
             self.out.push(Event::TasksAssigned { player: id, tasks });
         }
         self.emergency_cooldown = self.settings.emergency_cooldown;
+        self.sabotage = None;
+        self.sabotage_cooldown = self.settings.sabotage_cooldown;
         self.phase = Phase::Playing;
         self.push_task_bar();
     }
@@ -431,6 +501,7 @@ impl Game {
             victim,
             position: at,
         });
+        self.release_stations(victim);
         self.out.push(Event::Killed { killer, victim, at });
         self.check_win();
     }
@@ -440,6 +511,7 @@ impl Game {
             self.players.remove(&player);
         } else {
             self.seat(player).connected = false;
+            self.release_stations(player);
         }
         self.out.push(Event::Left { player });
         if self.host == Some(player) {
@@ -479,6 +551,14 @@ impl Game {
         if !self.bodies.is_empty() {
             self.bodies.clear();
             self.out.push(Event::BodiesCleared);
+        }
+        // A meeting ends a critical sabotage; lights and comms stay broken through it.
+        if self
+            .sabotage
+            .as_ref()
+            .is_some_and(|s| s.remaining.is_some())
+        {
+            self.end_sabotage();
         }
         self.phase = Phase::Meeting(Meeting {
             caller,
@@ -566,6 +646,8 @@ impl Game {
             };
         }
         self.emergency_cooldown = Duration::ZERO;
+        self.sabotage = None;
+        self.sabotage_cooldown = Duration::ZERO;
         self.phase = Phase::Lobby;
         self.out.push(Event::ReturnedToLobby);
     }
@@ -598,6 +680,20 @@ impl Game {
                     for p in self.players.values_mut() {
                         p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
                     }
+                    match &mut self.sabotage {
+                        None => self.sabotage_cooldown = self.sabotage_cooldown.saturating_sub(dt),
+                        Some(ActiveSabotage {
+                            remaining: Some(left),
+                            ..
+                        }) => {
+                            if dt >= *left {
+                                self.game_over(Team::Impostors, WinReason::Sabotage);
+                            } else {
+                                *left -= dt;
+                            }
+                        }
+                        Some(_) => {}
+                    }
                     return;
                 }
                 Phase::Lobby | Phase::GameOver { .. } => return,
@@ -610,17 +706,105 @@ impl Game {
         let Some((winner, reason)) = self.winner() else {
             return false;
         };
+        self.game_over(winner, reason);
+        true
+    }
+
+    fn game_over(&mut self, winner: Team, reason: WinReason) {
         let impostors = (self.players.iter())
             .filter(|(_, p)| p.is_impostor())
             .map(|(&id, _)| id)
             .collect();
+        self.sabotage = None;
         self.phase = Phase::GameOver { winner, reason };
         self.out.push(Event::GameOver {
             winner,
             reason,
             impostors,
         });
-        true
+    }
+
+    fn start_sabotage(&mut self, kind: SabotageKind) {
+        let def = self.sabotage_def(kind).expect("validated sabotage");
+        let deadline = def.deadline;
+        self.sabotage = Some(ActiveSabotage {
+            kind,
+            remaining: deadline,
+            stations: vec![Station::Open; def.stations.len()],
+        });
+        self.out.push(Event::SabotageStarted { kind, deadline });
+    }
+
+    fn fix(&mut self, player: PlayerId, station: usize) {
+        let Some(s) = &self.sabotage else { return };
+        if !s.kind.needs_simultaneous_hold() {
+            self.set_station(station, Station::Fixed);
+            self.out.push(Event::StationFixed { station, player });
+        } else if s.stations[station] != Station::Held(player) {
+            self.release_stations(player);
+            self.set_station(station, Station::Held(player));
+            self.out.push(Event::StationHeld { station, player });
+        }
+        let s = self.sabotage.as_ref().expect("still active");
+        let done = |st: &Station| match st {
+            Station::Fixed => true,
+            Station::Held(_) => s.kind.needs_simultaneous_hold(),
+            Station::Open => false,
+        };
+        if s.stations.iter().all(done) {
+            self.end_sabotage();
+        }
+    }
+
+    fn set_station(&mut self, station: usize, state: Station) {
+        if let Some(s) = &mut self.sabotage {
+            s.stations[station] = state;
+        }
+    }
+
+    fn end_sabotage(&mut self) {
+        if let Some(s) = self.sabotage.take() {
+            self.sabotage_cooldown = self.settings.sabotage_cooldown;
+            self.out.push(Event::SabotageFixed { kind: s.kind });
+        }
+    }
+
+    /// Lets go of every station player holds.
+    fn release_stations(&mut self, player: PlayerId) {
+        self.release_where(|station, _| station == Station::Held(player));
+    }
+
+    /// Lets go of the stations player holds that are now out of their reach.
+    fn release_out_of_reach(&mut self, player: PlayerId) {
+        let Some(from) = self.players.get(&player).map(|p| p.position) else {
+            return;
+        };
+        let range = self.settings.use_distance;
+        self.release_where(|station, at| {
+            station == Station::Held(player) && !within(from, at, range)
+        });
+    }
+
+    fn release_where(&mut self, release: impl Fn(Station, Position) -> bool) {
+        let Some(s) = &self.sabotage else { return };
+        let kind = s.kind;
+        let freed: Vec<usize> = (0..s.stations.len())
+            .filter(|&i| release(s.stations[i], self.station_position(kind, i)))
+            .collect();
+        for station in freed {
+            self.set_station(station, Station::Open);
+            self.out.push(Event::StationReleased { station });
+        }
+    }
+
+    fn sabotage_def(&self, kind: SabotageKind) -> Option<&SabotageDef> {
+        self.layout.sabotages.iter().find(|s| s.kind == kind)
+    }
+
+    fn station_position(&self, kind: SabotageKind, station: usize) -> Position {
+        self.sabotage_def(kind)
+            .expect("active sabotage is on the map")
+            .stations[station]
     }
 
     fn winner(&self) -> Option<(Team, WinReason)> {

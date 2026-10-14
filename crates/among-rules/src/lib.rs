@@ -11,7 +11,9 @@ mod protocol;
 mod rng;
 mod settings;
 
-pub use game::{Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask};
+pub use game::{
+    ActiveSabotage, Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask, Station,
+};
 pub use protocol::{
     Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
     WinReason,

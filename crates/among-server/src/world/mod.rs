@@ -3,6 +3,7 @@
 
 pub mod combat;
 pub mod creatures;
+pub mod death;
 pub mod guid;
 mod map;
 pub mod objects;

@@ -15,6 +15,7 @@ const UPDATETYPE_CREATE_OBJECT2: u8 = 3;
 const TYPEID_UNIT: u8 = 3;
 const TYPEID_PLAYER: u8 = 4;
 const TYPEID_GAMEOBJECT: u8 = 5;
+const TYPEID_CORPSE: u8 = 7;
 
 /// The movement block's update flags (vmangos `ObjectDefines.h`).
 pub const UPDATEFLAG_SELF: u8 = 0x01;
@@ -109,11 +110,26 @@ pub fn create_gameobject(
     orientation: f32,
     fields: &Fields,
 ) -> Vec<u8> {
+    create_placed(TYPEID_GAMEOBJECT, guid, position, orientation, fields)
+}
+
+/// One `CREATE_OBJECT` of a corpse, placed as a gameobject is (vmangos's `Corpse` constructor).
+pub fn create_corpse(guid: u64, position: [f32; 3], orientation: f32, fields: &Fields) -> Vec<u8> {
+    create_placed(TYPEID_CORPSE, guid, position, orientation, fields)
+}
+
+fn create_placed(
+    type_id: u8,
+    guid: u64,
+    position: [f32; 3],
+    orientation: f32,
+    fields: &Fields,
+) -> Vec<u8> {
     let mut b = Body::default();
     b.u32(1).u8(0); // one object, no transport
     b.u8(UPDATETYPE_CREATE_OBJECT)
         .packed_guid(guid)
-        .u8(TYPEID_GAMEOBJECT)
+        .u8(type_id)
         .u8(UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION)
         .f32(position[0])
         .f32(position[1])

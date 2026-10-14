@@ -1,14 +1,15 @@
 //! The one map every player stands on: who is in the world, where, and how to reach them, plus
 //! the gameobjects and creatures the match shows. A move from one player is relayed to every other
 //! as the same `MSG_MOVE_*`, prefixed with the mover's packed guid, as vmangos's
-//! `MovementHandler` broadcasts it.
+//! `MovementHandler` broadcasts it. A ghost is shown only to other ghosts, as vmangos's
+//! `GHOST_VISIBILITY_GHOST` keeps it from the living.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use benilla_protocol::messages::opcode;
 
-use super::player;
+use super::player::{self, Life};
 use super::socket::{Outbox, Packet};
 use super::update::Living;
 use super::wire::Body;
@@ -18,6 +19,25 @@ struct Occupant {
     character: CharacterRecord,
     outbox: Outbox,
     living: Living,
+    life: Life,
+    /// The last counter a forced movement change (`SMSG_FORCE_*`) carried, which the ack echoes.
+    counter: u32,
+}
+
+/// Whether a client in `viewer`'s state is shown a player in `subject`'s: anyone not a ghost, and
+/// ghosts to ghosts.
+fn sees(viewer: Life, subject: Life) -> bool {
+    subject != Life::Ghost || viewer == Life::Ghost
+}
+
+impl Occupant {
+    fn create(&self) -> Packet {
+        player::create_packet(&self.character, &self.living, false, self.life)
+    }
+}
+
+fn destroy(guid: u64) -> Packet {
+    Packet::new(opcode::SMSG_DESTROY_OBJECT, guid.to_le_bytes().to_vec())
 }
 
 #[derive(Default)]
@@ -59,17 +79,15 @@ impl Map {
     pub fn despawn(&self, guid: u64) {
         let mut world = self.lock();
         if world.objects.remove(&guid).is_some() {
-            let destroy = Packet::new(opcode::SMSG_DESTROY_OBJECT, guid.to_le_bytes().to_vec());
             for o in world.occupants.values() {
-                let _ = o.outbox.send(destroy.clone());
+                let _ = o.outbox.send(destroy(guid));
             }
         }
     }
 
     /// Destroy `object` on `player`'s client only; the object stays in the world for everyone else.
     pub fn hide_from(&self, player: u64, object: u64) {
-        let destroy = Packet::new(opcode::SMSG_DESTROY_OBJECT, object.to_le_bytes().to_vec());
-        self.send(player, destroy);
+        self.send(player, destroy(object));
     }
 
     /// Create `object` again on `player`'s client, as it stands now, after [`Map::hide_from`].
@@ -88,6 +106,55 @@ impl Map {
         }
     }
 
+    /// Queue `packet`, which shows player `subject` doing something, for everyone who sees them:
+    /// a ghost's casts reach only ghosts. A guid that is no player reaches everyone.
+    pub fn broadcast_about(&self, subject: u64, packet: &Packet) {
+        let world = self.lock();
+        let life = world
+            .occupants
+            .get(&subject)
+            .map_or(Life::Alive, |o| o.life);
+        for (&guid, o) in &world.occupants {
+            if guid == subject || sees(o.life, life) {
+                let _ = o.outbox.send(packet.clone());
+            }
+        }
+    }
+
+    /// `guid` is now `life`: `change` (the values update that shows it) goes to whoever saw them
+    /// before and still does, and to themself. A ghost vanishes from the living and appears to
+    /// whoever is newly a ghost, who in turn now sees the other ghosts.
+    pub fn set_life(&self, guid: u64, life: Life, change: Packet) {
+        let mut world = self.lock();
+        let Some(me) = world.occupants.get_mut(&guid) else {
+            return;
+        };
+        let was = std::mem::replace(&mut me.life, life);
+        let me = &world.occupants[&guid];
+        let _ = me.outbox.send(change.clone());
+        for (&other, o) in world.occupants.iter().filter(|(&g, _)| g != guid) {
+            let _ = match (sees(o.life, was), sees(o.life, life)) {
+                (true, true) => o.outbox.send(change.clone()),
+                (true, false) => o.outbox.send(destroy(guid)),
+                (false, true) => o.outbox.send(me.create()),
+                (false, false) => Ok(()),
+            };
+            let _ = match (sees(was, o.life), sees(life, o.life)) {
+                (true, false) => me.outbox.send(destroy(other)),
+                (false, true) => me.outbox.send(o.create()),
+                _ => Ok(()),
+            };
+        }
+    }
+
+    /// The next forced-change counter for `guid`, or `None` if they are not in the world.
+    pub fn next_counter(&self, guid: u64) -> Option<u32> {
+        let mut world = self.lock();
+        let o = world.occupants.get_mut(&guid)?;
+        o.counter = o.counter.wrapping_add(1);
+        Some(o.counter)
+    }
+
     /// Where `guid` stands, if it is a player in the world.
     pub fn position(&self, guid: u64) -> Option<[f32; 3]> {
         self.lock().occupants.get(&guid).map(|o| o.living.position)
@@ -102,14 +169,12 @@ impl Map {
         }
         let occupants = &mut world.occupants;
         let guid = character.guid;
-        let newcomer = player::create_packet(&character, &living, false);
+        let newcomer = player::create_packet(&character, &living, false, Life::Alive);
         for other in occupants.values() {
             let _ = other.outbox.send(newcomer.clone());
-            let _ = outbox.send(player::create_packet(
-                &other.character,
-                &other.living,
-                false,
-            ));
+            if sees(Life::Alive, other.life) {
+                let _ = outbox.send(other.create());
+            }
         }
         occupants.insert(
             guid,
@@ -117,6 +182,8 @@ impl Map {
                 character,
                 outbox,
                 living,
+                life: Life::Alive,
+                counter: 0,
             },
         );
     }
@@ -132,8 +199,9 @@ impl Map {
             };
         }
         let relay = Packet::new(op, Body::default().packed_guid(guid).bytes(movement).done());
+        let life = occupants.get(&guid).map_or(Life::Alive, |o| o.life);
         for (&other, occupant) in occupants.iter() {
-            if other != guid {
+            if other != guid && sees(occupant.life, life) {
                 let _ = occupant.outbox.send(relay.clone());
             }
         }
@@ -146,9 +214,8 @@ impl Map {
         if occupants.remove(&guid).is_none() {
             return;
         }
-        let destroy = Packet::new(opcode::SMSG_DESTROY_OBJECT, guid.to_le_bytes().to_vec());
         for occupant in occupants.values() {
-            let _ = occupant.outbox.send(destroy.clone());
+            let _ = occupant.outbox.send(destroy(guid));
         }
     }
 
@@ -168,6 +235,13 @@ impl Map {
     pub fn set_run_speed(&self, guid: u64, speed: f32) {
         if let Some(o) = self.lock().occupants.get_mut(&guid) {
             o.living.speeds[1] = speed;
+        }
+    }
+
+    /// Record `guid`'s swim speed, which later creates of it carry.
+    pub fn set_swim_speed(&self, guid: u64, speed: f32) {
+        if let Some(o) = self.lock().occupants.get_mut(&guid) {
+            o.living.speeds[3] = speed;
         }
     }
 

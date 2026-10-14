@@ -368,6 +368,7 @@ mod tests {
             &character(),
             &crate::world::player::spawn_living(),
             true,
+            crate::world::player::Life::Alive,
         );
         let events = decode(parse(&p));
         let [SessionEvent::ObjectCreate {
@@ -399,7 +400,10 @@ mod tests {
         let living = crate::world::player::spawn_living();
         let created = |c: &CharacterRecord, is_self| {
             let events = decode(parse(&crate::world::player::create_packet(
-                c, &living, is_self,
+                c,
+                &living,
+                is_self,
+                crate::world::player::Life::Alive,
             )));
             let [SessionEvent::ObjectCreate { fields, .. }] = events.as_slice() else {
                 panic!("one object create, got {events:?}");

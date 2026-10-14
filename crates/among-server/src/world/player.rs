@@ -18,6 +18,17 @@ pub const SPAWN: Location = Location {
     orientation: 0.0,
 };
 
+/// Where a player stands between life and death, as the world shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Life {
+    #[default]
+    Alive,
+    /// Fallen where they died, health 0, the Release Spirit popup up.
+    Dead,
+    /// Released: health 1, `PLAYER_FLAGS_GHOST` and the Ghost aura, seen only by ghosts.
+    Ghost,
+}
+
 /// A fresh body at [`SPAWN`], standing still at base speeds.
 pub fn spawn_living() -> Living {
     Living {
@@ -41,12 +52,16 @@ const UNIT_FIELD_LEVEL: u16 = 34;
 const UNIT_FIELD_FACTIONTEMPLATE: u16 = 35;
 const UNIT_FIELD_BYTES_0: u16 = 36;
 const UNIT_FIELD_FLAGS: u16 = 46;
+const UNIT_FIELD_AURA: u16 = 47;
+const UNIT_FIELD_AURAFLAGS: u16 = 95;
+const UNIT_FIELD_AURALEVELS: u16 = 101;
 const UNIT_FIELD_AURASTATE: u16 = 125;
 const UNIT_FIELD_BASEATTACKTIME: u16 = 126;
 const UNIT_FIELD_BOUNDINGRADIUS: u16 = 129;
 const UNIT_FIELD_COMBATREACH: u16 = 130;
 const UNIT_FIELD_DISPLAYID: u16 = 131;
 const UNIT_FIELD_NATIVEDISPLAYID: u16 = 132;
+const UNIT_FIELD_BYTES_1: u16 = 138;
 const UNIT_MOD_CAST_SPEED: u16 = 145;
 const PLAYER_FLAGS: u16 = 190;
 const PLAYER_BYTES: u16 = 193;
@@ -55,6 +70,7 @@ const PLAYER_BYTES_3: u16 = 195;
 /// `PLAYER_FIELD_INV_SLOT_HEAD`, then two words per equipment slot; slot 15 is the main hand.
 const PLAYER_FIELD_INV_SLOT_MAINHAND: u16 = 486 + 2 * 15;
 const PLAYER_NEXT_LEVEL_XP: u16 = 717;
+const PLAYER_FIELD_BYTES: u16 = 1222;
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER`.
 const TYPE_PLAYER: u32 = 0x01 | 0x08 | 0x10;
@@ -64,6 +80,19 @@ const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x08;
 const REST_STATE_NORMAL: u32 = 0x02;
 /// `PLAYER_FLAGS_FFA_PVP`: every player may attack every other, so Kill can target anyone.
 const PLAYER_FLAGS_FFA_PVP: u32 = 0x80;
+/// `PLAYER_FLAGS_GHOST`: the client's ghost test, which turns on the death light and sky.
+const PLAYER_FLAGS_GHOST: u32 = 0x10;
+/// Spell 8326 Ghost, the aura a released spirit wears; the client tints and fades its wearer.
+pub const GHOST_AURA: u32 = 8326;
+/// Ghost's aura slot: the first debuff slot, as `Spell.dbc` marks 8326 `SPELL_ATTR_NEGATIVE`.
+const GHOST_SLOT: u16 = 32;
+/// `AFLAG_EFF_INDEX_0 | 1 | 2`: all three of Ghost's effects live, in its slot's nibble.
+const GHOST_AURA_FLAGS: u32 = 0x0E;
+/// `PLAYER_FIELD_BYTE_RELEASE_TIMER` in `PLAYER_FIELD_BYTES`' low byte: the Release Spirit
+/// popup counts down, as vmangos's `KillPlayer` sets it.
+const RELEASE_TIMER: u32 = 0x08;
+/// `UNIT_BYTE1_FLAG_GHOST` in `UNIT_FIELD_BYTES_1`'s top byte: no name or plate over a ghost.
+const UNIT_BYTE1_FLAG_GHOST: u32 = 0x01 << 24;
 /// `AURA_STATE_JUDGEMENT` (5) as its `UNIT_FIELD_AURASTATE` bit: Judgement greys out without it.
 const AURASTATE_JUDGEMENT: u32 = 1 << (5 - 1);
 /// An item guid (`HIGHGUID_ITEM` 0x4000) the client is never sent: a nonzero main-hand slot is
@@ -71,7 +100,7 @@ const AURASTATE_JUDGEMENT: u32 = 1 << (5 - 1);
 const PHANTOM_WEAPON: u64 = 0x4000_0000_0000_0000;
 
 /// The race's `CreatureDisplayInfo` id for `gender` (`ChrRaces.dbc` male/female display).
-fn display_id(race: u8, gender: u8) -> u32 {
+pub fn display_id(race: u8, gender: u8) -> u32 {
     let (male, female) = match race {
         2 => (51, 52),     // orc
         3 => (53, 54),     // dwarf
@@ -119,8 +148,9 @@ pub fn class(c: &CharacterRecord) -> Class {
     Class::from_wow(c.class).unwrap_or(Class::Warrior)
 }
 
-/// The player's create-time descriptor; `is_self` adds the fields only the owner is sent.
-pub fn fields(c: &CharacterRecord, is_self: bool) -> Fields {
+/// The player's create-time descriptor in `life`; `is_self` adds the fields only the owner is
+/// sent.
+pub fn fields(c: &CharacterRecord, is_self: bool, life: Life) -> Fields {
     let mut f = Fields::default();
     let (power, pool) = power(c.class);
     f.u64(OBJECT_FIELD_GUID, c.guid)
@@ -165,14 +195,59 @@ pub fn fields(c: &CharacterRecord, is_self: bool) -> Fields {
     if is_self {
         f.u64(PLAYER_FIELD_INV_SLOT_MAINHAND, PHANTOM_WEAPON | c.guid);
     }
+    if life != Life::Alive {
+        life_fields(&mut f, life, 100);
+    }
     f
 }
 
-/// The `SMSG_UPDATE_OBJECT` that creates `c` at `living`; `is_self` marks the receiver's own body.
-pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool) -> Packet {
+/// The fields that tell `life` apart: health (`max` when alive), the ghost flags and aura. Every
+/// one is written in each state, so a values update of them alone undoes the last state.
+fn life_fields(f: &mut Fields, life: Life, max: u32) -> &mut Fields {
+    let ghost = life == Life::Ghost;
+    let health = match life {
+        Life::Alive => max,
+        Life::Dead => 0,
+        // vmangos `BuildPlayerRepop`: a released spirit stands on 1 health.
+        Life::Ghost => 1,
+    };
+    let flags = PLAYER_FLAGS_FFA_PVP | if ghost { PLAYER_FLAGS_GHOST } else { 0 };
+    f.u32(UNIT_FIELD_HEALTH, health)
+        .u32(UNIT_FIELD_MAXHEALTH, max)
+        .u32(
+            UNIT_FIELD_AURA + GHOST_SLOT,
+            if ghost { GHOST_AURA } else { 0 },
+        )
+        // Eight 4-bit slots per word, four 1-byte levels per word; slot 32 starts each word.
+        .u32(
+            UNIT_FIELD_AURAFLAGS + GHOST_SLOT / 8,
+            if ghost { GHOST_AURA_FLAGS } else { 0 },
+        )
+        .u32(UNIT_FIELD_AURALEVELS + GHOST_SLOT / 4, u32::from(ghost))
+        .u32(
+            UNIT_FIELD_BYTES_1,
+            if ghost { UNIT_BYTE1_FLAG_GHOST } else { 0 },
+        )
+        .u32(PLAYER_FLAGS, flags)
+        .u32(
+            PLAYER_FIELD_BYTES,
+            if life == Life::Dead { RELEASE_TIMER } else { 0 },
+        )
+}
+
+/// The values update that shows `guid` passing into `life`, with `max` health.
+pub fn life_change(guid: u64, life: Life, max: u32) -> Packet {
+    let mut f = Fields::default();
+    life_fields(&mut f, life, max);
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(guid, &f))
+}
+
+/// The `SMSG_UPDATE_OBJECT` that creates `c` at `living` in `life`; `is_self` marks the
+/// receiver's own body.
+pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: Life) -> Packet {
     Packet::new(
         opcode::SMSG_UPDATE_OBJECT,
-        update::create_player(c.guid, is_self, living, &fields(c, is_self)),
+        update::create_player(c.guid, is_self, living, &fields(c, is_self, life)),
     )
 }
 
@@ -184,7 +259,7 @@ pub fn login_packets(c: &CharacterRecord) -> Vec<Packet> {
         spells::initial_spells(class(c)),
         spells::action_buttons(class(c)),
         packets::login_set_time_speed(),
-        create_packet(c, &spawn_living(), true),
+        create_packet(c, &spawn_living(), true, Life::Alive),
     ]
 }
 

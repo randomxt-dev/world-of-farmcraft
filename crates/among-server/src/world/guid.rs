@@ -8,6 +8,8 @@ use among_rules::{CreatureId, TaskId};
 const HIGH_UNIT: u64 = 0xF130;
 /// `HIGHGUID_GAMEOBJECT`.
 const HIGH_GAMEOBJECT: u64 = 0xF110;
+/// `HIGHGUID_CORPSE` (vmangos `ObjectGuid.h`).
+const HIGH_CORPSE: u64 = 0xF101;
 
 /// Gameobject entries are task steps: `task * STEPS + step + 1`, so entry 0 is never used.
 const STEPS: u64 = 16;
@@ -23,6 +25,11 @@ fn make_low(high: u64, entry: u64, low: u64) -> u64 {
 
 fn split(guid: u64, high: u64) -> Option<u64> {
     (guid >> 48 == high).then_some(guid >> 24 & 0xFF_FFFF)
+}
+
+/// The corpse of the player `owner`: a player leaves at most one, so its low word is theirs.
+pub fn corpse(owner: u64) -> u64 {
+    HIGH_CORPSE << 48 | owner & 0xFFFF_FFFF
 }
 
 /// The creature at spawn point `id`; its entry is `id + 1`.

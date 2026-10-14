@@ -735,3 +735,53 @@ fn a_kill_fells_the_victim_who_releases_into_a_ghost_beside_a_reportable_corpse(
         _ => None,
     });
 }
+
+/// The cooldowns of `packet` if it starts this client's own, as the client keeps them.
+fn own_cooldowns(packet: &ServerPacket, me: u64) -> Option<Vec<(u32, u32)>> {
+    match packet {
+        ServerPacket::SpellCooldownList { caster, cooldowns } if *caster == me => {
+            Some(cooldowns.clone())
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn each_client_is_sent_its_own_cooldowns_at_the_start_and_after_a_kill() {
+    let settings = Settings {
+        min_players: 4,
+        initial_kill_cooldown: Duration::ZERO,
+        ..Settings::default()
+    };
+    let host = start_server_with(4, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=4 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    players[0].0.cast_spell(18946, None).unwrap();
+    let roles: Vec<Role> = (players.iter_mut())
+        .map(|(s, _)| {
+            wait_notice(s, |n| match n {
+                Notice::Role { role, .. } => Some(*role),
+                _ => None,
+            })
+        })
+        .collect();
+    // The horn cools down for everyone from the start, on their own guid.
+    for (session, me) in &mut players {
+        let me = *me;
+        let cds = wait_for(session, |p| own_cooldowns(p, me));
+        assert!(cds.contains(&(18946, 15_000)), "{cds:?}");
+    }
+    // The impostor's Kill sweeps 25 s after the strike (four players, so the game goes on).
+    let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
+    let victim = players[(imp + 1) % 4].1;
+    let me = players[imp].1;
+    players[imp].0.cast_spell(15692, Some(victim)).unwrap();
+    let cds = wait_for(&mut players[imp].0, |p| {
+        own_cooldowns(p, me).filter(|c| c.iter().any(|&(s, _)| s == 15692))
+    });
+    assert!(cds.contains(&(15692, 25_000)), "{cds:?}");
+}

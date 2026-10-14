@@ -188,7 +188,13 @@ impl GameHost {
             Err(r) => {
                 tracing::debug!("game: {guid} cast {} refused: {r}", cast.spell);
                 map.send(guid, spells::cast_failed(cast.spell, spells::FAILED_SILENT));
-                map.send(guid, spells::notification(&sentence(r)));
+                let why = match (r, inner.cooldown_left(player, cast.spell)) {
+                    (Reject::OnCooldown, Some(left)) => {
+                        format!("Ready in {} s", left.as_secs_f32().ceil())
+                    }
+                    _ => sentence(r),
+                };
+                map.send(guid, spells::notification(&why));
             }
             Ok(_) => match inner.shown.get(&player) {
                 Some(&shown) if shown == cast.spell => {}
@@ -731,6 +737,19 @@ impl Inner {
                 self.map.send(g, template);
             }
         }
+    }
+
+    /// How long until `player` may press `spell` again, for a button that cools down.
+    fn cooldown_left(&self, player: PlayerId, spell: u32) -> Option<Duration> {
+        let p = self.game.player(player)?;
+        let left = match spell {
+            spells::KILL => p.kill_cooldown,
+            spells::EMERGENCY => self.game.emergency_cooldown(),
+            spells::SABOTAGE => self.game.sabotage_cooldown(),
+            s if s == spells::class_spell(p.class) => p.spell_cooldown,
+            _ => return None,
+        };
+        (!left.is_zero()).then_some(left)
     }
 
     /// The player's character name, as chat shows it.
@@ -2315,6 +2334,19 @@ mod tests {
         assert!(received(&mut inboxes[reporter as usize - 1])
             .iter()
             .any(|p| matches!(p, ServerPacket::GossipComplete)));
+    }
+
+    #[test]
+    fn a_button_pressed_while_cooling_down_says_when_it_is_ready() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        cast(&host, imp, spells::KILL, Target::Unit(crew[0]));
+        host.tick(Duration::from_millis(500));
+        drain(&mut inboxes);
+        cast(&host, imp, spells::KILL, Target::Unit(crew[1]));
+        assert!(received(&mut inboxes[imp as usize - 1])
+            .iter()
+            .any(|p| matches!(p,
+            ServerPacket::Notification { text } if text == "Ready in 25 s")));
     }
 
     #[test]

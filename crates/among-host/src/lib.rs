@@ -3,6 +3,7 @@
 //! cookie, and a request carrying neither gets 403.
 
 use std::net::{IpAddr, UdpSocket};
+use std::path::PathBuf;
 
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -81,9 +82,51 @@ pub fn tailscale_name() -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
+/// The quick tunnel's public address in a `cloudflared` log line, when the line announces it
+/// (`|  https://<words>.trycloudflare.com  |`); the `api.` host it registers with is not it.
+pub fn tunnel_url(line: &str) -> Option<&str> {
+    let start = line.find("https://")?;
+    let url = line[start..].split_whitespace().next()?;
+    (url.ends_with(".trycloudflare.com") && !url.starts_with("https://api.")).then_some(url)
+}
+
+/// Where `cloudflared` is: on the PATH, else where its Windows installer (winget
+/// `Cloudflare.cloudflared`) puts it.
+pub fn cloudflared() -> Option<PathBuf> {
+    let on_path = std::process::Command::new("cloudflared")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if on_path {
+        return Some(PathBuf::from("cloudflared"));
+    }
+    ["ProgramFiles(x86)", "ProgramFiles"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|dir| {
+            PathBuf::from(dir)
+                .join("cloudflared")
+                .join("cloudflared.exe")
+        })
+        .find(|exe| exe.is_file())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tunnel_url_is_found_in_cloudflareds_banner_and_nowhere_else() {
+        let banner =
+            "2026-10-14T23:14:50Z INF |  https://supervision-provider.trycloudflare.com  |";
+        assert_eq!(
+            tunnel_url(banner),
+            Some("https://supervision-provider.trycloudflare.com")
+        );
+        let api = "failed to request quick Tunnel: Post \"https://api.trycloudflare.com/tunnel\"";
+        assert_eq!(tunnel_url(api), None);
+        assert_eq!(tunnel_url("INF Registered tunnel connection"), None);
+    }
 
     #[test]
     fn query_and_cookie_values_are_found_by_name() {

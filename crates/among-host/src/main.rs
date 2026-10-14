@@ -26,6 +26,10 @@ struct Args {
     /// The browser build (default: `www` beside the exe, else `web-build.ps1`'s output).
     #[arg(long)]
     www: Option<PathBuf>,
+    /// Also open a Cloudflare quick tunnel (`cloudflared`, no account) to the page and print its
+    /// https link for friends; it closes with the host.
+    #[arg(long)]
+    tunnel: bool,
     #[command(flatten)]
     server: ServerArgs,
 }
@@ -74,12 +78,51 @@ async fn main() -> Result<()> {
     let web_port = listener.local_addr()?.port();
 
     print_invite(&code, web_port);
+    // Kept for the host's lifetime: dropping the child closes the tunnel.
+    let _tunnel = if args.tunnel {
+        Some(open_tunnel(web_port, code.clone())?)
+    } else {
+        None
+    };
     tokio::try_join!(server.serve(), async {
         axum::serve(listener, web)
             .await
             .context("serving the web page")
     })?;
     Ok(())
+}
+
+/// Start `cloudflared` on the page and print the friends' link once it announces its address;
+/// its errors are printed too, since a blocked tunnel otherwise fails silently.
+fn open_tunnel(web_port: u16, code: String) -> Result<tokio::process::Child> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let exe = among_host::cloudflared().context(
+        "--tunnel needs cloudflared: install it with `winget install Cloudflare.cloudflared`",
+    )?;
+    let mut child = tokio::process::Command::new(exe)
+        .args(["tunnel", "--no-autoupdate", "--url"])
+        .arg(format!("http://127.0.0.1:{web_port}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("starting cloudflared")?;
+    let stderr = child.stderr.take().context("cloudflared's log")?;
+    println!("Opening a Cloudflare tunnel...");
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(url) = among_host::tunnel_url(&line) {
+                println!();
+                println!("Friends: {url}/?lobby={code}");
+                println!();
+            } else if line.contains(" ERR ") || line.contains("failed to") {
+                eprintln!("cloudflared: {line}");
+            }
+        }
+    });
+    Ok(child)
 }
 
 /// The exe's folder, where a release keeps `www/` and `benilla-config/`.

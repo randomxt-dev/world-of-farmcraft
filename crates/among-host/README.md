@@ -37,13 +37,16 @@ it gets a 403.
 The world renders with WebGPU, which browsers allow only over https or on localhost, so friends
 need an https link to your PC. Either:
 
-- **Cloudflare** (no account): install `cloudflared`, then in a second window
+- **Cloudflare** (no account): install `cloudflared` once
+  (`winget install Cloudflare.cloudflared`), then start the host with `--tunnel`:
   ```powershell
   cd D:\AmongAzeroth
-  cloudflared tunnel --url http://localhost:8090
+  cargo run --release -p among-host -- --tunnel
   ```
-  It prints an `https://<random words>.trycloudflare.com` address; send it with
-  `/?lobby=CODE` on the end. The address changes each time you start the tunnel.
+  It prints `Friends: https://<random words>.trycloudflare.com/?lobby=CODE`; send that. The
+  address changes each time, and the tunnel closes with the host. If your internet provider
+  filters `trycloudflare.com` (GlobalConnect's SafeSurf does), set Windows' DNS to Cloudflare's
+  `1.1.1.1` first.
 - **Tailscale**: `tailscale funnel --bg 8090`, then send the
   `https://<your-pc>.<tailnet>.ts.net/?lobby=CODE` link `among-host` prints.
 

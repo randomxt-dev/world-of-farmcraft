@@ -19,7 +19,7 @@ wenilla-host = { path = "../wenilla-host" }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 # The versions wenilla-host serves with.
 axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util"] }
 # `tailscale status --json`, for the invite's HTTPS name.
 serde_json = "1"
 tracing = "0.1"

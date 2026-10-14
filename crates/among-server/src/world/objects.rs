@@ -69,6 +69,16 @@ pub fn create_node(guid: u64, entry: u32, node: &NodeLook, at: [f32; 3], facing:
 /// `SMSG_GAMEOBJECT_QUERY_RESPONSE`: `entry`'s template (type, display, name, four empty names,
 /// 24 data words with the lock in `data[0]`), or the lone `entry | 0x8000_0000` for a miss.
 pub fn query_response(entry: u32, node: Option<&NodeLook>) -> Packet {
+    template(entry, node, true)
+}
+
+/// The template a ghost is sent for `node`: the same object with no lock, so a right-click uses
+/// it (`CMSG_GAMEOBJ_USE`) instead of casting an opener, which the client refuses the dead.
+pub fn ghost_template(entry: u32, node: &NodeLook) -> Packet {
+    template(entry, Some(node), false)
+}
+
+fn template(entry: u32, node: Option<&NodeLook>, locked: bool) -> Packet {
     let mut b = Body::default();
     match node {
         None => {
@@ -76,6 +86,7 @@ pub fn query_response(entry: u32, node: Option<&NodeLook>) -> Packet {
         }
         Some(node) => {
             let (type_id, lock) = kind(node);
+            let lock = if locked { lock } else { 0 };
             b.u32(entry)
                 .u32(type_id)
                 .u32(node.display)

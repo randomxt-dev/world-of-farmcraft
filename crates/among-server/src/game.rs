@@ -581,6 +581,7 @@ impl Inner {
         }
         let [run, swim] = death::GHOST_SPEEDS;
         self.force_moves(g, was == Life::Dead, true, run, swim);
+        self.send_node_templates(g, Life::Ghost);
         let change = player::life_change(g, Life::Ghost, self.max_health(player));
         self.map.set_life(g, Life::Ghost, change);
         self.fallen.insert(player, (Life::Ghost, Duration::ZERO));
@@ -595,6 +596,9 @@ impl Inner {
         let g = player.0;
         let [run, swim] = death::LIVING_SPEEDS;
         self.force_moves(g, was == Life::Dead, false, run, swim);
+        if was == Life::Ghost {
+            self.send_node_templates(g, Life::Alive);
+        }
         let change = player::life_change(g, Life::Alive, self.max_health(player));
         self.map.set_life(g, Life::Alive, change);
         // The next refresh tells everyone the health the rules hold.
@@ -613,6 +617,26 @@ impl Inner {
         self.map.send(g, death::force_swim_speed(g, next(), swim));
         self.map.set_run_speed(g, run);
         self.map.set_swim_speed(g, swim);
+    }
+
+    /// Every task node's template as `life` sees it, replacing what `g`'s client cached: a ghost's
+    /// nodes have no lock, a living player's their herb or mining lock again.
+    fn send_node_templates(&self, g: u64, life: Life) {
+        for (t, def) in self.game.layout().tasks.iter().enumerate() {
+            for step in 0..def.steps.len() {
+                let task = TaskId(t);
+                let (Some(node), true) = (self.look.node(task, step), guid::fits(def.steps.len()))
+                else {
+                    continue;
+                };
+                let entry = guid::node_entry(task, step);
+                let template = match life {
+                    Life::Ghost => objects::ghost_template(entry, node),
+                    _ => objects::query_response(entry, Some(node)),
+                };
+                self.map.send(g, template);
+            }
+        }
     }
 
     /// The player's character name, as chat shows it.
@@ -2050,6 +2074,80 @@ mod tests {
                 "{lines:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_ghost_crewmate_works_a_herb_by_right_click_unseen_by_the_living() {
+        let settings = Settings {
+            common_tasks: 2,
+            min_players: 4,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 4);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let (ghost, living) = (crew[0], crew[1]);
+        cast(&host, imp, spells::KILL, Target::Unit(ghost));
+        drain(&mut inboxes);
+        host.release_spirit(ghost);
+
+        // The ghost's client is told every node has no lock, so a right-click is a plain use.
+        let seen = received(&mut inboxes[ghost as usize - 1]);
+        let locks: Vec<i32> = (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::GameObjectQueryResponse { info: Some(t), .. } => Some(t.data[0]),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !locks.is_empty() && locks.iter().all(|&l| l == 0),
+            "{locks:?}"
+        );
+
+        // It gathers a herb: the cast bar shows to itself, not to the living.
+        let (task, nodes) = (placeholder_layout().tasks.iter().enumerate())
+            .find_map(|(i, t)| match &t.steps[0].action {
+                StepAction::Gather { nodes, .. } => Some((TaskId(i), nodes.clone())),
+                _ => None,
+            })
+            .unwrap();
+        host.moved(ghost, nodes[0]);
+        drain(&mut inboxes);
+        host.use_object(ghost, guid::node(task, 0, 0));
+        let bar = |seen: &[ServerPacket]| {
+            seen.iter()
+                .any(|p| matches!(p, ServerPacket::SpellStart(s) if s.caster == ghost))
+        };
+        assert!(
+            bar(&received(&mut inboxes[ghost as usize - 1])),
+            "the ghost casts"
+        );
+        assert!(
+            !bar(&received(&mut inboxes[living as usize - 1])),
+            "unseen by the living"
+        );
+        host.tick(Duration::from_secs(6));
+        let picked = (host
+            .lock()
+            .game
+            .player(PlayerId(ghost))
+            .unwrap()
+            .tasks
+            .iter())
+        .find(|t| t.task == task)
+        .unwrap()
+        .picked;
+        assert_eq!(picked, 1, "the herb counts");
+
+        // Back in the lobby its client gets the locks back.
+        host.tick(Duration::from_secs(30));
+        host.request(imp, Request::Kill);
+        assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
+        drain(&mut inboxes);
+        host.request(1, Request::Lobby);
+        let seen = received(&mut inboxes[ghost as usize - 1]);
+        assert!(seen.iter().any(|p| matches!(p,
+            ServerPacket::GameObjectQueryResponse { info: Some(t), .. } if t.data[0] != 0)));
     }
 
     #[test]

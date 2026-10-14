@@ -601,10 +601,11 @@ fn wait_system_line(session: &mut WorldSession) -> String {
     })
 }
 
-/// The next chat line of type `kind` `session` is sent: its sender and text.
+/// The next chat line of type `kind` `session` is sent, the HUD's addon traffic aside: its
+/// sender and text.
 fn wait_chat(session: &mut WorldSession, kind: u8) -> (u64, String) {
     wait_for(session, |p| match p {
-        ServerPacket::MessageChat(m) if m.chat_type == kind => {
+        ServerPacket::MessageChat(m) if m.chat_type == kind && !m.is_addon() => {
             Some((m.sender_guid, m.text.clone()))
         }
         _ => None,
@@ -612,30 +613,55 @@ fn wait_chat(session: &mut WorldSession, kind: u8) -> (u64, String) {
 }
 
 #[test]
-fn say_and_whisper_reach_other_players_as_in_wow() {
-    let host = start_server_with(2, Settings::default());
-    let (mut a, a_guid) = enter(&host, "among1", "secret1");
-    let (mut b, b_guid) = enter(&host, "among2", "secret2");
-    a.send_chat("hello crew").unwrap();
-    assert_eq!(wait_chat(&mut b, 0x00), (a_guid, "hello crew".into()));
+fn say_works_party_only_before_the_game_and_whispers_never() {
+    let settings = Settings {
+        min_players: 3,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    let mut players: Vec<(WorldSession, u64)> = (1..=3)
+        .map(|i| enter(&host, &format!("among{i}"), &format!("secret{i}")))
+        .collect();
+    let a_guid = players[0].1;
+    players[0].0.send_chat("hello crew").unwrap();
     assert_eq!(
-        wait_chat(&mut a, 0x00),
-        (a_guid, "hello crew".into()),
-        "the speaker sees it too"
+        wait_chat(&mut players[1].0, 0x00),
+        (a_guid, "hello crew".into())
     );
-    a.send_chat_kind(0x06, Some("among2"), "psst").unwrap();
-    assert_eq!(wait_chat(&mut b, 0x06), (a_guid, "psst".into()));
+    // In the lobby the party is everyone.
+    players[0].0.send_chat_kind(0x01, None, "ready?").unwrap();
     assert_eq!(
-        wait_chat(&mut a, 0x07),
-        (b_guid, "psst".into()),
-        "the whisper's echo"
+        wait_chat(&mut players[2].0, 0x01),
+        (a_guid, "ready?".into())
     );
-    a.send_chat_kind(0x06, Some("Nobody"), "hi").unwrap();
-    let missing = wait_for(&mut a, |p| match p {
-        ServerPacket::ChatPlayerNotFound { name } => Some(name.clone()),
+    players[0]
+        .0
+        .send_chat_kind(0x06, Some("among2"), "psst")
+        .unwrap();
+    let refusal = wait_for(&mut players[0].0, |p| match p {
+        ServerPacket::MessageChat(m) if m.chat_type == 0x0A && m.text.contains("whispers") => {
+            Some(m.text.clone())
+        }
         _ => None,
     });
-    assert_eq!(missing, "Nobody");
+    assert_eq!(refusal, "There are no whispers in Among Azeroth.");
+    // Once the game runs, party chat waits for a meeting.
+    let button = among_server::world::guid::Fixture::Button.guid();
+    players[0].0.gameobj_use(button).unwrap();
+    for (session, _) in &mut players {
+        wait_notice(session, |n| matches!(n, Notice::Role { .. }).then_some(()));
+    }
+    players[1]
+        .0
+        .send_chat_kind(0x01, None, "it was red")
+        .unwrap();
+    let refusal = wait_for(&mut players[1].0, |p| match p {
+        ServerPacket::MessageChat(m) if m.chat_type == 0x0A && m.text.starts_with("Party") => {
+            Some(m.text.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(refusal, "Party chat opens in the lobby and at meetings.");
 }
 
 #[test]

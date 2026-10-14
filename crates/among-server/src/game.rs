@@ -244,6 +244,14 @@ impl GameHost {
         }
     }
 
+    /// Whether party chat is open: before a game and at meetings, when the crew may talk.
+    pub fn party_open(&self) -> bool {
+        matches!(
+            self.lock().game.phase(),
+            among_rules::Phase::Lobby | among_rules::Phase::Meeting(_)
+        )
+    }
+
     /// Whether a match is running (anything but the lobby).
     pub fn in_game(&self) -> bool {
         *self.lock().game.phase() != among_rules::Phase::Lobby

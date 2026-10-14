@@ -14,7 +14,7 @@ pub fn line(
 ) -> Option<String> {
     Some(match notice {
         Notice::Host(Some(host)) if *host == reader => {
-            "You host this game: sound the horn (Lion Horn on your action bar) to start it.".into()
+            "You host this game: right-click the Emergency Button to start it.".into()
         }
         Notice::Host(Some(host)) => format!("{} hosts this game.", name(*host)),
         Notice::Host(None) => return None,
@@ -153,14 +153,16 @@ pub fn line(
             let names: Vec<String> = impostors.iter().map(|&p| name(p)).collect();
             let host = game.host().map_or("The host".into(), name);
             format!(
-                "{who}: {why}. The impostors were {}. {host} can sound the horn to return to \
-                 the lobby.",
+                "{who}: {why}. The impostors were {}. {host} can right-click the Emergency \
+                 Button to return to the lobby.",
                 names.join(", ")
             )
         }
         Notice::Lobby => {
             let host = game.host().map_or("The host".into(), name);
-            format!("Back in the lobby. {host} sounds the horn to start the next game.")
+            format!(
+                "Back in the lobby. {host} right-clicks the Emergency Button to start the next game."
+            )
         }
         // The crew's total, told to everyone as it grows; zero is the start's, not news.
         Notice::TaskBar { done, total } if *done > 0 => {

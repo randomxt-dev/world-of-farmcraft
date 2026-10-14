@@ -311,21 +311,6 @@ impl Map {
         }
     }
 
-    /// The in-world player named `name`, ignoring case as the client's `/w` does.
-    pub fn find(&self, name: &str) -> Option<u64> {
-        let world = self.lock();
-        (world.occupants.iter())
-            .find(|(_, o)| o.character.name.eq_ignore_ascii_case(name))
-            .map(|(&guid, _)| guid)
-    }
-
-    /// Whether `listener` hears what `speaker` says: the dead are heard only by the dead.
-    pub fn hears(&self, listener: u64, speaker: u64) -> bool {
-        let world = self.lock();
-        let life = |g| world.occupants.get(&g).map_or(Life::Alive, |o| o.life);
-        hears(life(listener), life(speaker))
-    }
-
     /// How many players are in the world.
     pub fn population(&self) -> usize {
         self.lock().occupants.len()

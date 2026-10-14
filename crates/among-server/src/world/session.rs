@@ -295,7 +295,9 @@ impl Session {
                     (Some(me), None) if chat.text.starts_with('.') => {
                         self.dot_command(me.guid, &chat.text)?
                     }
-                    (Some(me), None) => super::chat::relay(&self.map, me.guid, &chat),
+                    (Some(me), None) => {
+                        super::chat::relay(&self.map, me.guid, &chat, self.host.party_open())
+                    }
                     _ => tracing::debug!(
                         "world: {} said {:?} out of the world",
                         self.account,

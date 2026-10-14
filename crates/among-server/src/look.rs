@@ -2,7 +2,7 @@
 //! crafting station), the spell its cast shows, and each creature's model. The rules know only
 //! positions and durations; this is the WoW dressing the server puts on them.
 
-use among_rules::{Layout, StepAction, TaskId};
+use among_rules::{Layout, SabotageKind, StepAction, TaskId};
 
 /// What a task step is worked at.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,6 +38,45 @@ pub const COPPER_VEIN: u32 = 310;
 pub const FORGE: u32 = 233;
 pub const ANVIL: u32 = 273;
 pub const CAMPFIRE: u32 = 192;
+
+// `GameObjectDisplayInfo.dbc` ids of the match's fixtures, all in the 1.12.1 install.
+/// `World\Goober\G_ButtonBigRed.mdx`.
+pub const BIG_RED_BUTTON: u32 = 339;
+/// `World\Kalimdor\Barrens\PassiveDoodads\LampPosts\BarrensLampPost01.mdx`.
+pub const LAMP_POST: u32 = 365;
+/// `World\Goober\G_GnomeTerminal.mdx`.
+pub const GNOME_TERMINAL: u32 = 2091;
+/// `World\Goober\G_LeverMetal.mdx`.
+pub const METAL_LEVER: u32 = 295;
+/// `WORLD\GENERIC\GNOME\ACTIVEDOODADS\GNOMEMACHINE\GNOMEMACHINE.MDX`.
+pub const GNOME_MACHINE: u32 = 231;
+/// `World\Generic\PassiveDoodads\ParticleEmitters\AuraPurpleVeryTall.mdx`: a tall column of
+/// light, seen from far off.
+pub const PURPLE_AURA: u32 = 2234;
+
+/// The emergency button: a right-click is the horn's press.
+pub fn button() -> NodeLook {
+    NodeLook::station("Emergency Button", BIG_RED_BUTTON, 0)
+}
+
+/// A sabotage's station: a right-click fixes it, or holds it for the reactor.
+pub fn station(kind: SabotageKind) -> NodeLook {
+    match kind {
+        SabotageKind::Lights => NodeLook::station("Lamp Post", LAMP_POST, 0),
+        SabotageKind::Comms => NodeLook::station("Signal Terminal", GNOME_TERMINAL, 0),
+        SabotageKind::Oxygen => NodeLook::station("Air Valve", METAL_LEVER, 0),
+        SabotageKind::Reactor => NodeLook::station("Arcane Reactor", GNOME_MACHINE, 0),
+    }
+}
+
+/// The column over a station still to fix while its sabotage runs; a right-click on it is one on
+/// the station beneath.
+pub fn beacon(kind: SabotageKind) -> NodeLook {
+    let mut look = station(kind);
+    look.name = format!("Sabotaged {}", look.name);
+    look.display = PURPLE_AURA;
+    look
+}
 
 /// The nodes a layout file may name for a step, by `node = "<name>"`.
 pub const NODE_NAMES: [&str; 7] = [

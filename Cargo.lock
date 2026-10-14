@@ -169,6 +169,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "among-server"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "benilla-protocol",
+ "benilla-srp",
+ "clap",
+ "num-bigint",
+ "rand 0.8.6",
+ "sha1 0.10.6",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "android-activity"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

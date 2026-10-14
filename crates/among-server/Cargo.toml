@@ -1,0 +1,24 @@
+[package]
+name = "among-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "A minimal WoW 1.12.1 realmd + world server that hosts an Among Azeroth lobby"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sha1.workspace = true
+# The client half of the wire: opcodes, the wire helpers, the SRP6 constants and the header cipher.
+benilla-protocol = { path = "../benilla-protocol" }
+benilla-srp = { path = "../benilla-srp" }
+num-bigint = "0.4.6"
+rand = "0.8.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

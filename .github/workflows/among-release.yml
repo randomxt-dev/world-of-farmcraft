@@ -1,0 +1,49 @@
+# Among Azeroth's Windows release, on an `among-v*` tag: the player build of the launcher, the host,
+# and the browser build it serves, zipped with the guide. No game data: players bring their own
+# 1.12.1 install, and the host streams the browser players' files from its own.
+name: Among Azeroth release
+
+on:
+  push:
+    tags: ["among-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup toolchain install && rustc -V
+      - name: Browser toolchain
+        shell: powershell
+        run: .\crates\among-web\web-setup.ps1
+      - name: Browser build
+        shell: powershell
+        run: .\crates\among-web\web-build.ps1
+      - name: Launcher (player build) and host
+        run: |
+          cargo build --release -p among-azeroth --no-default-features
+          cargo build --release -p among-host
+      - name: Zip
+        shell: powershell
+        run: |
+          $stage = 'AmongAzeroth'
+          New-Item -ItemType Directory $stage | Out-Null
+          Copy-Item target\release\among-azeroth.exe, target\release\among-host.exe $stage
+          Copy-Item -Recurse target\among-web\dist (Join-Path $stage 'www')
+          Copy-Item crates\among-host\README.md, LICENSE-MIT, LICENSE-APACHE $stage
+          Compress-Archive -Path $stage -DestinationPath AmongAzeroth-windows-x64.zip
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$env:TAG" AmongAzeroth-windows-x64.zip --title "Among Azeroth $env:TAG" --notes-file crates/among-host/README.md

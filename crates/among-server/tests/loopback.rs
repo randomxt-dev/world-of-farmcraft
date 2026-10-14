@@ -589,6 +589,43 @@ fn wait_system_line(session: &mut WorldSession) -> String {
     })
 }
 
+/// The next chat line of type `kind` `session` is sent: its sender and text.
+fn wait_chat(session: &mut WorldSession, kind: u8) -> (u64, String) {
+    wait_for(session, |p| match p {
+        ServerPacket::MessageChat(m) if m.chat_type == kind => {
+            Some((m.sender_guid, m.text.clone()))
+        }
+        _ => None,
+    })
+}
+
+#[test]
+fn say_and_whisper_reach_other_players_as_in_wow() {
+    let host = start_server_with(2, Settings::default());
+    let (mut a, a_guid) = enter(&host, "among1", "secret1");
+    let (mut b, b_guid) = enter(&host, "among2", "secret2");
+    a.send_chat("hello crew").unwrap();
+    assert_eq!(wait_chat(&mut b, 0x00), (a_guid, "hello crew".into()));
+    assert_eq!(
+        wait_chat(&mut a, 0x00),
+        (a_guid, "hello crew".into()),
+        "the speaker sees it too"
+    );
+    a.send_chat_kind(0x06, Some("among2"), "psst").unwrap();
+    assert_eq!(wait_chat(&mut b, 0x06), (a_guid, "psst".into()));
+    assert_eq!(
+        wait_chat(&mut a, 0x07),
+        (b_guid, "psst".into()),
+        "the whisper's echo"
+    );
+    a.send_chat_kind(0x06, Some("Nobody"), "hi").unwrap();
+    let missing = wait_for(&mut a, |p| match p {
+        ServerPacket::ChatPlayerNotFound { name } => Some(name.clone()),
+        _ => None,
+    });
+    assert_eq!(missing, "Nobody");
+}
+
 #[test]
 fn typing_mark_in_chat_records_where_you_stand() {
     let marks = temp_marks("survey");

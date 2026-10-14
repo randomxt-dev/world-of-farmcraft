@@ -295,7 +295,12 @@ impl Session {
                     (Some(me), None) if chat.text.starts_with('.') => {
                         self.dot_command(me.guid, &chat.text)?
                     }
-                    _ => tracing::debug!("world: {} said {:?}, ignored", self.account, chat.text),
+                    (Some(me), None) => super::chat::relay(&self.map, me.guid, &chat),
+                    _ => tracing::debug!(
+                        "world: {} said {:?} out of the world",
+                        self.account,
+                        chat.text
+                    ),
                 }
             }
             other => {

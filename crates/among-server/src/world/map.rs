@@ -30,6 +30,16 @@ fn sees(viewer: Life, subject: Life) -> bool {
     subject != Life::Ghost || viewer == Life::Ghost
 }
 
+/// Whether a listener in `listener`'s state hears a speaker in `speaker`'s: the living are heard
+/// by all, the dead (fallen or ghost) only by the dead, as in Among Us.
+fn hears(listener: Life, speaker: Life) -> bool {
+    speaker == Life::Alive || listener != Life::Alive
+}
+
+fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
 impl Occupant {
     fn create(&self) -> Packet {
         player::create_packet(&self.character, &self.living, false, self.life)
@@ -285,8 +295,66 @@ impl Map {
             .map(|o| o.character.clone())
     }
 
+    /// Queue a chat line `speaker` said for everyone who hears it: within `range` yards of them
+    /// (`None`: anywhere), and a dead speaker only by the dead.
+    pub fn say(&self, speaker: u64, range: Option<f32>, packet: &Packet) {
+        let world = self.lock();
+        let Some(me) = world.occupants.get(&speaker) else {
+            return;
+        };
+        let (from, life) = (me.living.position, me.life);
+        for o in world.occupants.values() {
+            let near = range.is_none_or(|r| distance(from, o.living.position) <= r);
+            if near && hears(o.life, life) {
+                let _ = o.outbox.send(packet.clone());
+            }
+        }
+    }
+
+    /// The in-world player named `name`, ignoring case as the client's `/w` does.
+    pub fn find(&self, name: &str) -> Option<u64> {
+        let world = self.lock();
+        (world.occupants.iter())
+            .find(|(_, o)| o.character.name.eq_ignore_ascii_case(name))
+            .map(|(&guid, _)| guid)
+    }
+
+    /// Whether `listener` hears what `speaker` says: the dead are heard only by the dead.
+    pub fn hears(&self, listener: u64, speaker: u64) -> bool {
+        let world = self.lock();
+        let life = |g| world.occupants.get(&g).map_or(Life::Alive, |o| o.life);
+        hears(life(listener), life(speaker))
+    }
+
     /// How many players are in the world.
     pub fn population(&self) -> usize {
         self.lock().occupants.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dead_are_heard_only_by_the_dead() {
+        for listener in [Life::Alive, Life::Dead, Life::Ghost] {
+            assert!(
+                hears(listener, Life::Alive),
+                "the living reach {listener:?}"
+            );
+        }
+        for speaker in [Life::Dead, Life::Ghost] {
+            assert!(
+                !hears(Life::Alive, speaker),
+                "{speaker:?} is not heard by the living"
+            );
+            assert!(hears(Life::Ghost, speaker) && hears(Life::Dead, speaker));
+        }
+    }
+
+    #[test]
+    fn distance_is_3d() {
+        assert_eq!(distance([0.0, 0.0, 0.0], [3.0, 4.0, 12.0]), 13.0);
     }
 }

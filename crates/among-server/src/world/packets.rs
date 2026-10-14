@@ -206,6 +206,8 @@ pub fn force_run_speed(guid: u64, counter: u32, speed: f32) -> Packet {
 pub struct ClientChat {
     pub chat_type: u32,
     pub language: u32,
+    /// The whisper's addressee or the channel's name.
+    pub target: Option<String>,
     pub text: String,
 }
 
@@ -214,13 +216,15 @@ impl ClientChat {
         let mut cur = body;
         let chat_type = read_u32_le(&mut cur)?;
         let language = read_u32_le(&mut cur)?;
-        if matches!(chat_type, 0x6 | 0xE) {
-            read_cstring(&mut cur)?;
-        }
+        let target = match chat_type {
+            0x6 | 0xE => Some(read_cstring(&mut cur)?),
+            _ => None,
+        };
         let text = read_cstring(&mut cur)?;
         Ok(Self {
             chat_type,
             language,
+            target,
             text,
         })
     }

@@ -853,6 +853,8 @@ impl Game {
             self.out.push(Event::TaskCompleted { player, task });
             self.push_task_bar();
             self.check_win();
+        } else if !self.players[&player].alive && self.is_slay_step(task, step) {
+            self.advance(player, task);
         }
     }
 
@@ -872,7 +874,35 @@ impl Game {
         });
         self.release_stations(victim);
         self.out.push(Event::Killed { killer, victim, at });
-        self.check_win();
+        if !self.check_win() {
+            self.pass_slay_steps(victim);
+        }
+    }
+
+    /// A ghost cannot fight, so each Slay step a ghost crewmate stands at is passed: their tasks
+    /// can still be finished, as a ghost's are in Among Us.
+    fn pass_slay_steps(&mut self, player: PlayerId) {
+        let p = &self.players[&player];
+        if p.alive || !p.is_crewmate() {
+            return;
+        }
+        let at_slay: Vec<TaskId> = (p.tasks.iter())
+            .filter(|t| self.is_slay_step(t.task, t.step))
+            .map(|t| t.task)
+            .collect();
+        for task in at_slay {
+            if self.phase != Phase::Playing {
+                return;
+            }
+            self.advance(player, task);
+        }
+    }
+
+    fn is_slay_step(&self, task: TaskId, step: usize) -> bool {
+        matches!(
+            self.layout.tasks[task.0].steps.get(step).map(|s| &s.action),
+            Some(StepAction::Slay { .. })
+        )
     }
 
     fn leave(&mut self, player: PlayerId) {
@@ -995,11 +1025,17 @@ impl Game {
         };
     }
 
-    fn end_ejection(&mut self) {
+    fn end_ejection(&mut self, ejected: Option<PlayerId>) {
         self.out.push(Event::MeetingEnded);
         self.phase = Phase::Playing;
         if self.check_win() {
             return;
+        }
+        if let Some(ejected) = ejected {
+            self.pass_slay_steps(ejected);
+            if self.phase != Phase::Playing {
+                return;
+            }
         }
         let cooldown = self.settings.kill_cooldown;
         for p in self.players.values_mut().filter(|p| p.is_impostor()) {
@@ -1044,13 +1080,14 @@ impl Game {
                         MeetingStage::Voting => self.close_voting(),
                     }
                 }
-                Phase::Ejecting { remaining, .. } => {
+                Phase::Ejecting { remaining, ejected } => {
                     if dt < *remaining {
                         *remaining -= dt;
                         return;
                     }
                     dt -= *remaining;
-                    self.end_ejection();
+                    let ejected = *ejected;
+                    self.end_ejection(ejected);
                 }
                 Phase::Playing => {
                     self.emergency_cooldown = self.emergency_cooldown.saturating_sub(dt);

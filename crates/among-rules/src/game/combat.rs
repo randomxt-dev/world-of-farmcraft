@@ -446,7 +446,9 @@ impl Game {
         self.interrupt(victim);
         self.leave_combat(victim);
         self.release_stations(victim);
-        self.check_win();
+        if !self.check_win() {
+            self.pass_slay_steps(victim);
+        }
     }
 
     /// Living players out of combat (not attacking, no creature on them) regain health.

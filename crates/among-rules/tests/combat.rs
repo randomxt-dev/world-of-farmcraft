@@ -501,3 +501,82 @@ fn ghosts_neither_fight_nor_draw_aggro() {
     );
     assert_eq!(run(&mut g, 2.0), []);
 }
+
+#[test]
+fn a_ghost_passes_the_slay_steps_it_can_no_longer_fight() {
+    // Every long task's second step is a Slay step, after an instant one.
+    let mut layout = combat_layout();
+    for t in layout.tasks.iter_mut().filter(|t| t.kind == TaskKind::Long) {
+        t.steps[1].action = StepAction::Slay {
+            creatures: vec![WOLF, OTHER_WOLF],
+            count: 2,
+        };
+    }
+    let mut g = Game::new(instant(), layout);
+    for i in 1..=5 {
+        ok(
+            &mut g,
+            Command::Join {
+                player: id(i),
+                class: Class::Warrior,
+            },
+        );
+    }
+    ok(&mut g, Command::Start { by: id(1), seed: 2 });
+    let (imp, ghost) = (impostors(&g)[0], crew(&g)[0]);
+    put(&mut g, imp, BUTTON);
+    put(&mut g, ghost, BUTTON);
+    let kind = |g: &Game, task: TaskId| g.layout().tasks[task.0].kind;
+    let shorts: Vec<TaskId> = (g.player(ghost).unwrap().tasks.iter())
+        .map(|t| t.task)
+        .filter(|&t| kind(&g, t) == TaskKind::Short)
+        .collect();
+    assert!(!shorts.is_empty());
+
+    // Killed standing at a Slay step: it is passed at once.
+    let events = ok(
+        &mut g,
+        Command::Kill {
+            killer: imp,
+            victim: ghost,
+        },
+    );
+    for task in &shorts {
+        assert!(
+            events.contains(&Event::TaskCompleted {
+                player: ghost,
+                task: *task
+            }),
+            "{events:?}"
+        );
+    }
+
+    // A ghost finishing a step onto a Slay step passes that one too.
+    let long = (g.player(ghost).unwrap().tasks.iter())
+        .map(|t| t.task)
+        .find(|&t| kind(&g, t) == TaskKind::Long)
+        .unwrap();
+    let first = g.layout().tasks[long.0].steps[0].at;
+    put(&mut g, ghost, first);
+    let events = ok(
+        &mut g,
+        Command::UseTask {
+            player: ghost,
+            task: long,
+        },
+    );
+    assert!(
+        events.contains(&Event::TaskCompleted {
+            player: ghost,
+            task: long
+        }),
+        "{events:?}"
+    );
+
+    // A living crewmate still has to fight theirs.
+    let living = crew(&g)[1];
+    let theirs = (g.player(living).unwrap().tasks.iter())
+        .find(|t| kind(&g, t.task) == TaskKind::Short)
+        .unwrap();
+    assert_eq!(theirs.step, 0);
+}

@@ -3,6 +3,8 @@
 
 pub mod abilities;
 pub mod ability_text;
+pub mod lua_hooks;
+pub mod quest_watch;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 
@@ -11,6 +13,9 @@ pub struct AmongAzerothPlugins;
 
 impl PluginGroup for AmongAzerothPlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(ability_text::AbilityTextPlugin)
+        PluginGroupBuilder::start::<Self>()
+            .add(lua_hooks::LuaHooksPlugin)
+            .add(ability_text::AbilityTextPlugin)
+            .add(quest_watch::QuestWatchPlugin)
     }
 }

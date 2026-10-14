@@ -6,6 +6,7 @@ use among_server::world::spells;
 use benilla_ui::script::{ActionSlot, SpellBookState, SpellSlotView, SpellTooltipView, UiScript};
 
 use super::*;
+use crate::lua_hooks::HookedSession;
 
 /// A Bevy app with the client's VM as the launcher has it, and our plugin.
 fn app() -> App {

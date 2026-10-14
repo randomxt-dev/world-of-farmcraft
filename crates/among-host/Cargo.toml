@@ -1,0 +1,29 @@
+[package]
+name = "among-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "Host an Among Azeroth lobby: the game server, the browser page and its game data, behind the lobby code"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+among-server = { path = "../among-server" }
+# wenilla's browser host as a library: `/data` from the MPQs, the `/ws` relay, the static page.
+wenilla-host = { path = "../wenilla-host" }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+# The versions wenilla-host serves with.
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+# `tailscale status --json`, for the invite's HTTPS name.
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

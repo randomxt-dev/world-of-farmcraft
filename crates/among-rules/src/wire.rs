@@ -179,6 +179,7 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
             task,
             picked,
             count,
+            ..
         } => vec![(
             To::Player(*player),
             Notice::Gather {

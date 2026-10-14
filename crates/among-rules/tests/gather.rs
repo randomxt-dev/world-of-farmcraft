@@ -43,6 +43,7 @@ fn each_node_counts_once_and_the_count_finishes_the_step() {
             Event::GatherProgress {
                 player: c,
                 task,
+                node: 0,
                 picked: 1,
                 count: 3
             },
@@ -58,6 +59,7 @@ fn each_node_counts_once_and_the_count_finishes_the_step() {
     assert!(events.contains(&Event::GatherProgress {
         player: c,
         task,
+        node: 3,
         picked: 3,
         count: 3
     }));
@@ -116,4 +118,53 @@ fn an_impostor_gathers_for_show() {
     assert_eq!(events, [Event::CastFinished { player: imp }]);
     // Nothing spent either: the same node fakes again.
     ok(&mut g, Command::UseTask { player: imp, task });
+}
+
+#[test]
+fn a_chosen_node_is_the_one_gathered() {
+    let (mut g, _, crew, task) = meadow_game();
+    let c = crew[0];
+    // Halfway between MEADOW[0] and MEADOW[1], 5 yd from each: both in reach.
+    put(&mut g, c, [5.0, 700.0, 0.0]);
+    let gather = |node| Command::GatherNode {
+        player: c,
+        task,
+        node,
+    };
+    ok(&mut g, gather(1));
+    assert_eq!(g.player(c).unwrap().casting.unwrap().node, Some(1));
+    let events = tick(&mut g, 2.0);
+    assert!(
+        events.contains(&Event::GatherProgress {
+            player: c,
+            task,
+            node: 1,
+            picked: 1,
+            count: 3
+        }),
+        "{events:?}"
+    );
+    // That node is spent for this player; one out of reach, or not on the step, is refused.
+    assert_eq!(rejected(&mut g, gather(1)), Reject::AlreadyGathered);
+    assert_eq!(rejected(&mut g, gather(2)), Reject::OutOfRange);
+    assert_eq!(rejected(&mut g, gather(4)), Reject::InvalidTarget);
+    // Use still finds the other one in reach.
+    ok(&mut g, Command::UseTask { player: c, task });
+    assert_eq!(g.player(c).unwrap().casting.unwrap().node, Some(0));
+}
+
+#[test]
+fn a_chosen_node_needs_a_gather_step() {
+    let (mut g, _, crew, _) = meadow_game();
+    let c = crew[0];
+    let other = (g.player(c).unwrap().tasks.iter())
+        .map(|t| t.task)
+        .find(|t| g.layout().tasks[t.0].kind != TaskKind::Common)
+        .unwrap();
+    let cmd = Command::GatherNode {
+        player: c,
+        task: other,
+        node: 0,
+    };
+    assert_eq!(rejected(&mut g, cmd), Reject::InvalidTarget);
 }

@@ -97,6 +97,13 @@ pub enum Command {
         player: PlayerId,
         task: TaskId,
     },
+    /// Gather one chosen node of `task`'s current Gather step (a right-click on it), where
+    /// [`Command::UseTask`] takes the nearest.
+    GatherNode {
+        player: PlayerId,
+        task: TaskId,
+        node: usize,
+    },
     Kill {
         killer: PlayerId,
         victim: PlayerId,
@@ -206,6 +213,8 @@ pub enum Event {
     GatherProgress {
         player: PlayerId,
         task: TaskId,
+        /// The node just spent for this player, an index into the step's nodes.
+        node: usize,
         picked: u32,
         count: u32,
     },
@@ -400,6 +409,8 @@ pub enum Reject {
     AlreadyCasting,
     /// A Slay step is done by fighting, not by Use.
     NotAUseStep,
+    /// This node of a Gather step is already spent for the player.
+    AlreadyGathered,
 }
 
 impl fmt::Display for Reject {
@@ -430,6 +441,7 @@ impl fmt::Display for Reject {
             Reject::AlreadyVoted => "already voted",
             Reject::AlreadyCasting => "already busy",
             Reject::NotAUseStep => "fight it instead",
+            Reject::AlreadyGathered => "already gathered here",
         })
     }
 }

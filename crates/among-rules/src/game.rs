@@ -16,7 +16,7 @@ use crate::protocol::{
 use crate::rng::SplitMix64;
 use crate::settings::{
     distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
-    StepAction, TaskKind,
+    StepAction, TaskKind, TaskStep,
 };
 
 /// One player's standing in the game.
@@ -424,24 +424,7 @@ impl Game {
                 Ok(())
             }
             Command::UseTask { player, task } => {
-                self.playing()?;
-                let p = self.connected(player)?;
-                // Ghost crewmates still work; a ghost impostor has no one left to fool.
-                if !p.alive && p.is_impostor() {
-                    return Err(Reject::Dead);
-                }
-                if p.casting.is_some() || p.spell_cast.is_some() {
-                    return Err(Reject::AlreadyCasting);
-                }
-                let t = p
-                    .tasks
-                    .iter()
-                    .find(|t| t.task == task)
-                    .ok_or(Reject::TaskNotAssigned)?;
-                let step = self.layout.tasks[task.0]
-                    .steps
-                    .get(t.step)
-                    .ok_or(Reject::TaskDone)?;
+                let (p, t, step) = self.workable_step(player, task)?;
                 match &step.action {
                     StepAction::Slay { .. } => Err(Reject::NotAUseStep),
                     StepAction::Gather { nodes, .. } => (self.gather_node(p.position, t, nodes))
@@ -451,6 +434,19 @@ impl Game {
                         self.in_reach(p.position, step.at, self.settings.use_distance)
                     }
                 }
+            }
+            Command::GatherNode { player, task, node } => {
+                let (p, t, step) = self.workable_step(player, task)?;
+                let StepAction::Gather { nodes, .. } = &step.action else {
+                    return Err(Reject::InvalidTarget);
+                };
+                let at = *(nodes.get(node))
+                    .filter(|_| node < 64)
+                    .ok_or(Reject::InvalidTarget)?;
+                if t.picked & 1 << node != 0 {
+                    return Err(Reject::AlreadyGathered);
+                }
+                self.in_reach(p.position, at, self.settings.use_distance)
             }
             Command::Kill { killer, victim } => {
                 self.playing()?;
@@ -587,6 +583,14 @@ impl Game {
                 self.release_out_of_reach(player);
             }
             Command::UseTask { player, task } => self.use_task(player, task),
+            Command::GatherNode { player, task, node } => {
+                let time = match &self.layout.tasks[task.0].steps[self.step_of(player, task)].action
+                {
+                    StepAction::Gather { cast, .. } => *cast,
+                    _ => return,
+                };
+                self.start_step_cast(player, task, time, Some(node));
+            }
             Command::Kill { killer, victim } => self.kill(killer, victim),
             Command::Report { player, body } => {
                 self.start_meeting(player, MeetingReason::Report { body })
@@ -707,11 +711,22 @@ impl Game {
             }
             StepAction::Slay { .. } => return,
         };
+        self.start_step_cast(player, task, time, node);
+    }
+
+    /// Cast `time` at `task`'s current step (at `node` of a Gather step), or finish it at once.
+    fn start_step_cast(
+        &mut self,
+        player: PlayerId,
+        task: TaskId,
+        time: Duration,
+        node: Option<usize>,
+    ) {
         if time.is_zero() {
             self.finish_step_cast(player, task, node);
             return;
         }
-        let from = p.position;
+        let from = self.players[&player].position;
         self.seat(player).casting = Some(Casting {
             task,
             remaining: time,
@@ -719,6 +734,14 @@ impl Game {
             node,
         });
         self.out.push(Event::CastStarted { player, task, time });
+    }
+
+    /// The step of `task` that `player` is on; the task is assigned (validated).
+    fn step_of(&self, player: PlayerId, task: TaskId) -> usize {
+        (self.players[&player].tasks.iter())
+            .find(|t| t.task == task)
+            .expect("validated task")
+            .step
     }
 
     /// The nearest node of a Gather step `t` has not picked yet, within reach of `from`.
@@ -756,6 +779,7 @@ impl Game {
         self.out.push(Event::GatherProgress {
             player,
             task,
+            node,
             picked,
             count,
         });
@@ -1250,6 +1274,28 @@ impl Game {
             .get(&id)
             .filter(|p| p.connected)
             .ok_or(Reject::UnknownPlayer)
+    }
+
+    /// The player, their task and its current step, if `player` may work at it now.
+    fn workable_step(
+        &self,
+        player: PlayerId,
+        task: TaskId,
+    ) -> Result<(&Player, &PlayerTask, &TaskStep), Reject> {
+        self.playing()?;
+        let p = self.connected(player)?;
+        // Ghost crewmates still work; a ghost impostor has no one left to fool.
+        if !p.alive && p.is_impostor() {
+            return Err(Reject::Dead);
+        }
+        if p.casting.is_some() || p.spell_cast.is_some() {
+            return Err(Reject::AlreadyCasting);
+        }
+        let t = (p.tasks.iter())
+            .find(|t| t.task == task)
+            .ok_or(Reject::TaskNotAssigned)?;
+        let step = (self.layout.tasks[task.0].steps.get(t.step)).ok_or(Reject::TaskDone)?;
+        Ok((p, t, step))
     }
 
     fn in_reach(&self, from: Position, to: Position, range: f32) -> Result<(), Reject> {

@@ -55,7 +55,7 @@ fn random_command(rng: &mut Rng, g: &Game, spots: &[Position]) -> Command {
         [x + rng.below(7) as f32 - 3.0, y, z]
     };
     let wolf = CreatureId(rng.below(2));
-    match rng.below(23) {
+    match rng.below(24) {
         0 => Command::Join {
             player: p,
             class: rng.pick(&Class::ALL),
@@ -116,6 +116,11 @@ fn random_command(rng: &mut Rng, g: &Game, spots: &[Position]) -> Command {
         },
         16 => Command::ReleaseFix { player: p },
         17 => Command::ReturnToLobby { by: p },
+        21 => Command::GatherNode {
+            player: p,
+            task: TaskId(rng.below(8)),
+            node: rng.below(5),
+        },
         _ => Command::Tick {
             dt: Duration::from_millis(rng.below(20_000) as u64),
         },
@@ -285,7 +290,7 @@ fn random_streams_keep_the_invariants() {
     // Every kind but Configure, which the stream never sends.
     assert_eq!(
         by_kind.len(),
-        17,
+        18,
         "a command kind was never accepted: {by_kind:?}"
     );
     assert!(accepted > 100_000, "only {accepted} commands accepted");

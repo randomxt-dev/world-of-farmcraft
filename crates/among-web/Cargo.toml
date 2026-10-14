@@ -1,0 +1,30 @@
+[package]
+name = "among-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "Among Azeroth in the browser: wenilla's wasm entry with our plugins added"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# The browser GPU API, as wenilla's own entry: WebGPU draws the world, WebGL2 only the glue screens.
+webgl2 = ["benilla-app/webgl2"]
+webgpu = ["benilla-app/webgpu"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# `default-features = false` keeps the dev instruments out of the page, as wenilla's entry does.
+benilla-app = { path = "../benilla-app", default-features = false }
+among-azeroth = { path = "../among-azeroth", default-features = false }
+# Pinned to the wasm-bindgen CLI upstream's `scripts/web-build.sh` runs; a mismatch breaks the glue.
+wasm-bindgen = "=0.2.122"
+console_error_panic_hook = "0.1"
+
+[build-dependencies]
+benilla-buildstamp = { path = "../benilla-buildstamp" }

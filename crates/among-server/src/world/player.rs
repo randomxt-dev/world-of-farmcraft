@@ -4,6 +4,7 @@
 use among_rules::Class;
 use benilla_protocol::messages::opcode;
 
+use super::items;
 use super::packets::{self, Location};
 use super::socket::Packet;
 use super::spells;
@@ -67,8 +68,11 @@ const PLAYER_FLAGS: u16 = 190;
 const PLAYER_BYTES: u16 = 193;
 const PLAYER_BYTES_2: u16 = 194;
 const PLAYER_BYTES_3: u16 = 195;
-/// `PLAYER_FIELD_INV_SLOT_HEAD`, then two words per equipment slot; slot 15 is the main hand.
-const PLAYER_FIELD_INV_SLOT_MAINHAND: u16 = 486 + 2 * 15;
+/// `PLAYER_VISIBLE_ITEM_1_0`, the worn entry everyone sees; each slot is 12 words.
+const PLAYER_VISIBLE_ITEM_1_0: u16 = 260;
+const VISIBLE_ITEM_STRIDE: u16 = 12;
+/// `PLAYER_FIELD_INV_SLOT_HEAD`, then two words (an item guid) per equipment slot.
+const PLAYER_FIELD_INV_SLOT_HEAD: u16 = 486;
 const PLAYER_NEXT_LEVEL_XP: u16 = 717;
 const PLAYER_FIELD_BYTES: u16 = 1222;
 
@@ -95,9 +99,10 @@ const RELEASE_TIMER: u32 = 0x08;
 const UNIT_BYTE1_FLAG_GHOST: u32 = 0x01 << 24;
 /// `AURA_STATE_JUDGEMENT` (5) as its `UNIT_FIELD_AURASTATE` bit: Judgement greys out without it.
 const AURASTATE_JUDGEMENT: u32 = 1 << (5 - 1);
-/// An item guid (`HIGHGUID_ITEM` 0x4000) the client is never sent: a nonzero main-hand slot is
-/// all its melee-weapon check reads, so Kill and the melee strikes are castable bare-handed.
-const PHANTOM_WEAPON: u64 = 0x4000_0000_0000_0000;
+/// The slot of an item guid the client is never sent, held in the main hand of a character
+/// whose race and class start with no weapon: the client's weapon check passes an item it cannot
+/// resolve, so Kill and the melee strikes stay castable.
+const PHANTOM_SLOT: u8 = 0xFF;
 
 /// The race's `CreatureDisplayInfo` id for `gender` (`ChrRaces.dbc` male/female display).
 pub fn display_id(race: u8, gender: u8) -> u32 {
@@ -192,8 +197,22 @@ pub fn fields(c: &CharacterRecord, is_self: bool, life: Life) -> Fields {
         )
         .u32(PLAYER_BYTES_3, c.gender.into())
         .u32(PLAYER_NEXT_LEVEL_XP, 400);
-    if is_self {
-        f.u64(PLAYER_FIELD_INV_SLOT_MAINHAND, PHANTOM_WEAPON | c.guid);
+    let gear = items::starting_gear(c.race, c.class, c.guid);
+    for w in &gear {
+        let slot = u16::from(w.slot);
+        f.u32(
+            PLAYER_VISIBLE_ITEM_1_0 + VISIBLE_ITEM_STRIDE * slot,
+            w.item.entry,
+        );
+        if is_self {
+            f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * slot, w.guid);
+        }
+    }
+    if is_self && !gear.iter().any(|w| w.slot == items::MAINHAND) {
+        f.u64(
+            PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(items::MAINHAND),
+            items::item_guid(c.guid, PHANTOM_SLOT),
+        );
     }
     if life != Life::Alive {
         life_fields(&mut f, life, 100);
@@ -243,12 +262,21 @@ pub fn life_change(guid: u64, life: Life, max: u32) -> Packet {
 }
 
 /// The `SMSG_UPDATE_OBJECT` that creates `c` at `living` in `life`; `is_self` marks the
-/// receiver's own body.
+/// receiver's own body, which comes after its worn items as vmangos builds it.
 pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: Life) -> Packet {
-    Packet::new(
-        opcode::SMSG_UPDATE_OBJECT,
-        update::create_player(c.guid, is_self, living, &fields(c, is_self, life)),
-    )
+    let mut blocks = Vec::new();
+    if is_self {
+        for w in items::starting_gear(c.race, c.class, c.guid) {
+            blocks.push(items::create_block(&w, c.guid));
+        }
+    }
+    blocks.push(update::create_player(
+        c.guid,
+        is_self,
+        living,
+        &fields(c, is_self, life),
+    ));
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::join(&blocks))
 }
 
 /// What `CMSG_PLAYER_LOGIN` answers, in vmangos's order: the world to load, the spell book and

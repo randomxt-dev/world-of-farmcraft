@@ -93,6 +93,11 @@ impl Map {
         self.lock().keys().copied().collect()
     }
 
+    /// Where `guid` last reported standing.
+    pub fn pose(&self, guid: u64) -> Option<Living> {
+        self.lock().get(&guid).map(|o| o.living)
+    }
+
     /// The character behind an in-world guid, for name queries.
     pub fn character(&self, guid: u64) -> Option<CharacterRecord> {
         self.lock().get(&guid).map(|o| o.character.clone())

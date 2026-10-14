@@ -1,7 +1,9 @@
 //! Server packet builders. Each layout is the one `benilla-protocol`'s `parse_server` reads, and
 //! the tests parse every builder's bytes back through it.
 
-use benilla_protocol::messages::{opcode, AUTH_OK, CHAT_MSG_PARTY, LANGUAGE_ADDON};
+use benilla_protocol::messages::{
+    opcode, AUTH_OK, CHAT_MSG_PARTY, CHAT_MSG_SYSTEM, LANGUAGE_ADDON,
+};
 use benilla_protocol::wire::{read_cstring, read_u32_le};
 
 use super::socket::Packet;
@@ -164,6 +166,22 @@ pub fn addon_message(sender: u64, prefix: &str, payload: &str) -> Packet {
     )
 }
 
+/// `SMSG_MESSAGECHAT` as a system line (`CHAT_MSG_SYSTEM`, the shape GM command replies take):
+/// one sender guid (0), universal language, the text.
+pub fn system_message(text: &str) -> Packet {
+    Packet::new(
+        opcode::SMSG_MESSAGECHAT,
+        Body::default()
+            .u8(CHAT_MSG_SYSTEM)
+            .u32(0)
+            .u64(0)
+            .u32(text.len() as u32 + 1)
+            .cstring(text)
+            .u8(0)
+            .done(),
+    )
+}
+
 /// A client's `CMSG_MESSAGECHAT`: `u32` type and language, the target or channel name for a
 /// whisper (6) or channel (14) line, then the text (vmangos `Server/Packets/Chat.cpp:3-12`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,6 +307,16 @@ mod tests {
         assert!(m.is_addon());
         assert_eq!((m.chat_type, m.sender_guid), (CHAT_MSG_PARTY, 7));
         assert_eq!(m.text, "AMONG\trole crew");
+    }
+
+    #[test]
+    fn a_system_line_reaches_the_client_as_one() {
+        let ServerPacket::MessageChat(m) = parse(&system_message("Marked gate")) else {
+            panic!("not a chat line");
+        };
+        assert_eq!((m.chat_type, m.sender_guid), (CHAT_MSG_SYSTEM, 0));
+        assert_eq!(m.text, "Marked gate");
+        assert!(!m.is_addon());
     }
 
     /// The client's own builders, read back: an addon line, and a whisper with its target name.

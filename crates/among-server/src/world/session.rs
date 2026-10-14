@@ -18,11 +18,18 @@ use super::socket::{self, Outbox, Packet};
 use crate::accounts::{Accounts, CharacterRecord, CHAR_CREATE_ERROR};
 use crate::game::GameHost;
 use crate::srp::world_proof;
+use crate::survey::{Mark, Survey};
 
 /// `CHAR_DELETE_FAILED` (vmangos `SharedDefines.h`).
 const CHAR_DELETE_FAILED: u8 = 0x3A;
 
-pub async fn run(stream: TcpStream, accounts: Accounts, map: Map, host: GameHost) -> Result<()> {
+pub async fn run(
+    stream: TcpStream,
+    accounts: Accounts,
+    map: Map,
+    host: GameHost,
+    survey: Survey,
+) -> Result<()> {
     stream.set_nodelay(true)?;
     let (mut r, mut w) = stream.into_split();
 
@@ -70,6 +77,7 @@ pub async fn run(stream: TcpStream, accounts: Accounts, map: Map, host: GameHost
         accounts,
         map,
         host,
+        survey,
         outbox: tx,
         in_world: None,
     };
@@ -106,6 +114,7 @@ struct Session {
     accounts: Accounts,
     map: Map,
     host: GameHost,
+    survey: Survey,
     outbox: Outbox,
     /// The character in the world, once `CMSG_PLAYER_LOGIN` seated it.
     in_world: Option<CharacterRecord>,
@@ -223,6 +232,9 @@ impl Session {
                         Some(request) => self.host.request(me.guid, request),
                         None => self.host.unknown_request(me.guid, payload),
                     },
+                    (Some(me), None) if chat.text.starts_with('.') => {
+                        self.dot_command(me.guid, &chat.text)?
+                    }
                     _ => tracing::debug!("world: {} said {:?}, ignored", self.account, chat.text),
                 }
             }
@@ -234,6 +246,24 @@ impl Session {
                     body.len()
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// A `.` command typed in chat: the survey's, answered as system lines.
+    fn dot_command(&self, guid: u64, text: &str) -> Result<()> {
+        let Some(pose) = self.map.pose(guid) else {
+            return Ok(());
+        };
+        // One map for now: everyone stands on the spawn's map.
+        let here = Mark {
+            map: player::SPAWN.map,
+            at: pose.position,
+            facing: pose.orientation,
+        };
+        for line in self.survey.command(text, here).unwrap_or_default() {
+            tracing::info!("survey: {line}");
+            self.send(packets::system_message(&line))?;
         }
         Ok(())
     }

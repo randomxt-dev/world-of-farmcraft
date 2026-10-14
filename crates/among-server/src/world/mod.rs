@@ -14,6 +14,7 @@ use tokio::net::TcpListener;
 
 use crate::accounts::Accounts;
 use crate::game::GameHost;
+use crate::survey::Survey;
 
 pub use map::Map;
 pub use socket::Packet;
@@ -24,6 +25,7 @@ pub async fn serve(
     accounts: Accounts,
     map: Map,
     host: GameHost,
+    survey: Survey,
 ) -> Result<()> {
     loop {
         let (stream, peer) = listener
@@ -33,8 +35,9 @@ pub async fn serve(
         let accounts = accounts.clone();
         let map = map.clone();
         let host = host.clone();
+        let survey = survey.clone();
         tokio::spawn(async move {
-            match session::run(stream, accounts, map, host).await {
+            match session::run(stream, accounts, map, host, survey).await {
                 Ok(()) => tracing::info!("world {peer}: closed"),
                 Err(e) => tracing::info!("world {peer}: {e:#}"),
             }

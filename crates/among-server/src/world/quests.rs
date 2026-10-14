@@ -139,13 +139,15 @@ fn step_text(
 }
 
 /// Task `task`'s quest: one line per step, or one "Steps done" line past four steps; a Gather
-/// step counts the holder's `need`.
+/// step counts the holder's `need`. An impostor's copy is marked fake (`cover`), as Among Us
+/// heads their list "Fake Tasks": it never progresses, and only they see their log.
 pub fn task_text(
     task: TaskId,
     def: &TaskDef,
     look: &Look,
     creatures: &[CreatureDef],
     need: Need,
+    cover: bool,
 ) -> QuestText {
     let (phrases, mut lines): (Vec<String>, Vec<Line>) = (def.steps.iter().enumerate())
         .map(|(i, s)| step_text(task, i, &s.action, look, creatures, need(i)))
@@ -163,12 +165,21 @@ pub fn task_text(
     }
     objectives.push('.');
     QuestText {
-        title: def.name.clone(),
+        title: if cover {
+            format!("{} (fake)", def.name)
+        } else {
+            def.name.clone()
+        },
         level: TASK_LEVEL,
         objectives,
-        details: "One of your tasks. Every task a crewmate finishes fills the crew's bar, \
-                  and a full bar wins the game."
-            .into(),
+        details: if cover {
+            "Your cover as an impostor: fake it where the crew can see you. It never progresses \
+             and does not fill the crew's bar."
+        } else {
+            "One of your tasks. Every task a crewmate finishes fills the crew's bar, and a full \
+             bar wins the game."
+        }
+        .into(),
         lines,
     }
 }
@@ -385,7 +396,7 @@ mod tests {
     #[test]
     fn a_task_template_reads_back_with_a_counted_line_per_step() {
         let (def, look, creatures) = three_steps();
-        let text = task_text(TaskId(0), &def, &look, &creatures, &|_| 0);
+        let text = task_text(TaskId(0), &def, &look, &creatures, &|_| 0, false);
         let t = parse_template(&template(task_quest(TaskId(0)), 12, &text));
         assert_eq!(t.quest_id, 90_001);
         assert_eq!(t.title, "Feed the Crew");
@@ -430,6 +441,7 @@ mod tests {
             &Look::plain(&Layout::default()),
             &[],
             &|_| 0,
+            false,
         );
         let t = parse_template(&template(task_quest(TaskId(2)), 12, &text));
         assert_eq!(t.objectives[0].text, "Steps done");

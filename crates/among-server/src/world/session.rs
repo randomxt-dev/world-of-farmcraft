@@ -272,7 +272,8 @@ impl Session {
                 }
             }
             opcode::CMSG_QUEST_QUERY => {
-                if let Some(template) = self.host.quest_query(read_u32_le(&mut cur)?) {
+                let me = self.in_world.as_ref().map_or(0, |me| me.guid);
+                if let Some(template) = self.host.quest_query(me, read_u32_le(&mut cur)?) {
                     self.send(template)?;
                 }
             }

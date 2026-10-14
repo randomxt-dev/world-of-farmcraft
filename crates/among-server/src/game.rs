@@ -378,7 +378,7 @@ impl GameHost {
 
     /// The answer to `CMSG_QUEST_QUERY`: a task's quest or the crew's, else none, as vmangos
     /// answers an unknown id with silence.
-    pub fn quest_query(&self, quest_id: u32) -> Option<Packet> {
+    pub fn quest_query(&self, guid: u64, quest_id: u32) -> Option<Packet> {
         let inner = self.lock();
         let layout = inner.game.layout();
         let text = if quest_id == quests::CREW_QUEST {
@@ -387,7 +387,8 @@ impl GameHost {
             let task = quests::quest_task(quest_id)?;
             let def = layout.tasks.get(task.0)?;
             let need = |step| inner.game.gather_need(task, step);
-            quests::task_text(task, def, &inner.look, &layout.creatures, &need)
+            let cover = (inner.game.player(PlayerId(guid))).is_some_and(|p| p.is_impostor());
+            quests::task_text(task, def, &inner.look, &layout.creatures, &need, cover)
         };
         Some(quests::template(quest_id, player::SPAWN.zone, &text))
     }
@@ -1373,16 +1374,19 @@ impl Inner {
             .filter_map(|t| {
                 let def = layout.tasks.get(t.task.0)?;
                 let need = |step| self.game.gather_need(t.task, step);
-                let text = quests::task_text(t.task, def, &self.look, &layout.creatures, &need);
+                let cover = p.is_impostor();
+                let text =
+                    quests::task_text(t.task, def, &self.look, &layout.creatures, &need, cover);
                 Some((quests::task_quest(t.task), text))
             })
             .collect();
         let told = self.quest_logs.entry(player).or_default();
         for (quest, text) in texts {
-            if told.texts.get(&quest) != Some(&text.objectives) {
+            let said = format!("{}\n{}", text.title, text.objectives);
+            if told.texts.get(&quest) != Some(&said) {
                 let template = quests::template(quest, player::SPAWN.zone, &text);
                 self.map.send(player.0, template);
-                told.texts.insert(quest, text.objectives);
+                told.texts.insert(quest, said);
             }
         }
         if now[0].0 == quests::CREW_QUEST && told.crew_total != Some(total) {
@@ -2994,12 +2998,26 @@ mod tests {
             _ => panic!("not a whole quest template"),
         };
         let name = placeholder_layout().tasks[1].name.clone();
-        let t = parse(host.quest_query(quests::task_quest(TaskId(1))).unwrap());
+        let t = parse(host.quest_query(1, quests::task_quest(TaskId(1))).unwrap());
         assert_eq!(t.title, name);
         assert_eq!(t.zone_or_sort, player::SPAWN.zone as i32);
-        let crew = parse(host.quest_query(quests::CREW_QUEST).unwrap());
+        let crew = parse(host.quest_query(1, quests::CREW_QUEST).unwrap());
         assert_eq!(crew.title, "Crew Tasks");
-        assert!(host.quest_query(quests::task_quest(TaskId(99))).is_none());
-        assert!(host.quest_query(1).is_none());
+        assert!(host
+            .quest_query(1, quests::task_quest(TaskId(99)))
+            .is_none());
+        assert!(host.quest_query(1, 1).is_none());
+        // In a game the impostor's copy is marked fake; a crewmate's is not.
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let task = quests::task_quest(TaskId(1));
+        let fake = parse(host.quest_query(imp, task).unwrap());
+        assert_eq!(fake.title, format!("{name} (fake)"));
+        assert!(
+            fake.details.starts_with("Your cover as an impostor"),
+            "{}",
+            fake.details
+        );
+        assert_eq!(parse(host.quest_query(crew[0], task).unwrap()).title, name);
     }
 }

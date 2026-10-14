@@ -1,7 +1,8 @@
 //! Server packet builders. Each layout is the one `benilla-protocol`'s `parse_server` reads, and
 //! the tests parse every builder's bytes back through it.
 
-use benilla_protocol::messages::{opcode, AUTH_OK};
+use benilla_protocol::messages::{opcode, AUTH_OK, CHAT_MSG_PARTY, LANGUAGE_ADDON};
+use benilla_protocol::wire::{read_cstring, read_u32_le};
 
 use super::socket::Packet;
 use super::wire::Body;
@@ -144,6 +145,57 @@ pub fn name_query_response(c: &CharacterRecord) -> Packet {
     )
 }
 
+/// SMSG_MESSAGECHAT on the party lane in LANG_ADDON, text prefix, a TAB, payload. The party
+/// shape names the sender twice (vmangos BuildChatPacket); the client holds an addon line until
+/// the sender's name resolves, so sender must be a guid the name query answers.
+pub fn addon_message(sender: u64, prefix: &str, payload: &str) -> Packet {
+    let text = format!("{prefix}\t{payload}");
+    Packet::new(
+        opcode::SMSG_MESSAGECHAT,
+        Body::default()
+            .u8(CHAT_MSG_PARTY)
+            .u32(LANGUAGE_ADDON)
+            .u64(sender)
+            .u64(sender)
+            .u32(text.len() as u32 + 1)
+            .cstring(&text)
+            .u8(0)
+            .done(),
+    )
+}
+
+/// A client's CMSG_MESSAGECHAT: u32 type and language, the target or channel name for a
+/// whisper (6) or channel (14) line, then the text (vmangos Server/Packets/Chat.cpp:3-12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientChat {
+    pub chat_type: u32,
+    pub language: u32,
+    pub text: String,
+}
+
+impl ClientChat {
+    pub fn read(body: &[u8]) -> std::io::Result<Self> {
+        let mut cur = body;
+        let chat_type = read_u32_le(&mut cur)?;
+        let language = read_u32_le(&mut cur)?;
+        if matches!(chat_type, 0x6 | 0xE) {
+            read_cstring(&mut cur)?;
+        }
+        let text = read_cstring(&mut cur)?;
+        Ok(Self {
+            chat_type,
+            language,
+            text,
+        })
+    }
+
+    /// The payload of an addon line under prefix, if this is one.
+    pub fn addon_payload(&self, prefix: &str) -> Option<&str> {
+        let (p, payload) = self.text.split_once('\t')?;
+        (self.language == LANGUAGE_ADDON && p == prefix).then_some(payload)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +279,29 @@ mod tests {
             (guid, name.as_str(), race, gender, class),
             (7, "Among1", 1, 1, 1)
         );
+    }
+
+    #[test]
+    fn an_addon_message_reaches_the_client_as_addon_traffic() {
+        let ServerPacket::MessageChat(m) = parse(&addon_message(7, "AMONG", "role crew")) else {
+            panic!("not a chat line");
+        };
+        assert!(m.is_addon());
+        assert_eq!((m.chat_type, m.sender_guid), (CHAT_MSG_PARTY, 7));
+        assert_eq!(m.text, "AMONG\trole crew");
+    }
+
+    /// The client's own builders, read back: an addon line, and a whisper with its target name.
+    #[test]
+    fn client_chat_reads_what_the_client_sends() {
+        use benilla_protocol::messages::{messagechat, messagechat_whisper, CHAT_TYPE_PARTY};
+        let addon =
+            ClientChat::read(&messagechat(CHAT_TYPE_PARTY, LANGUAGE_ADDON, "AMONG\tkill")).unwrap();
+        assert_eq!(addon.addon_payload("AMONG"), Some("kill"));
+        assert_eq!(addon.addon_payload("OTHER"), None);
+        let whisper = ClientChat::read(&messagechat_whisper(7, "Bob", "hi")).unwrap();
+        assert_eq!((whisper.chat_type, whisper.text.as_str()), (6, "hi"));
+        assert_eq!(whisper.addon_payload("AMONG"), None, "not addon language");
     }
 
     /// The self create decodes into a placed, living, displayed player with base speeds.

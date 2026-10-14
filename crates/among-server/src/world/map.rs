@@ -81,6 +81,18 @@ impl Map {
         }
     }
 
+    /// Queue packet for guid, if it is in the world.
+    pub fn send(&self, guid: u64, packet: Packet) {
+        if let Some(o) = self.lock().get(&guid) {
+            let _ = o.outbox.send(packet);
+        }
+    }
+
+    /// Every guid in the world.
+    pub fn guids(&self) -> Vec<u64> {
+        self.lock().keys().copied().collect()
+    }
+
     /// The character behind an in-world guid, for name queries.
     pub fn character(&self, guid: u64) -> Option<CharacterRecord> {
         self.lock().get(&guid).map(|o| o.character.clone())

@@ -9,17 +9,20 @@ use rand::RngCore;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
+use among_rules::wire::{self, Request};
+
 use super::map::Map;
 use super::packets;
 use super::player;
 use super::socket::{self, Outbox, Packet};
 use crate::accounts::{Accounts, CharacterRecord, CHAR_CREATE_ERROR};
+use crate::game::GameHost;
 use crate::srp::world_proof;
 
 /// `CHAR_DELETE_FAILED` (vmangos `SharedDefines.h`).
 const CHAR_DELETE_FAILED: u8 = 0x3A;
 
-pub async fn run(stream: TcpStream, accounts: Accounts, map: Map) -> Result<()> {
+pub async fn run(stream: TcpStream, accounts: Accounts, map: Map, host: GameHost) -> Result<()> {
     stream.set_nodelay(true)?;
     let (mut r, mut w) = stream.into_split();
 
@@ -66,6 +69,7 @@ pub async fn run(stream: TcpStream, accounts: Accounts, map: Map) -> Result<()> 
         account,
         accounts,
         map,
+        host,
         outbox: tx,
         in_world: None,
     };
@@ -101,6 +105,7 @@ struct Session {
     account: String,
     accounts: Accounts,
     map: Map,
+    host: GameHost,
     outbox: Outbox,
     /// The character in the world, once `CMSG_PLAYER_LOGIN` seated it.
     in_world: Option<CharacterRecord>,
@@ -170,6 +175,7 @@ impl Session {
                     self.outbox.clone(),
                     player::spawn_living(),
                 );
+                self.host.join(character.guid);
                 self.in_world = Some(character);
             }
             opcode::CMSG_PING => {
@@ -203,8 +209,21 @@ impl Session {
             }
             op if player::is_client_move(op) => {
                 if let Some(me) = &self.in_world {
-                    self.map
-                        .relay_move(me.guid, op, body, player::read_pose(body));
+                    let pose = player::read_pose(body);
+                    self.map.relay_move(me.guid, op, body, pose);
+                    if let Some(pose) = pose {
+                        self.host.moved(me.guid, pose.position);
+                    }
+                }
+            }
+            opcode::CMSG_MESSAGECHAT => {
+                let chat = packets::ClientChat::read(body)?;
+                match (&self.in_world, chat.addon_payload(wire::PREFIX)) {
+                    (Some(me), Some(payload)) => match Request::decode(payload) {
+                        Some(request) => self.host.request(me.guid, request),
+                        None => self.host.unknown_request(me.guid, payload),
+                    },
+                    _ => tracing::debug!("world: {} said {:?}, ignored", self.account, chat.text),
                 }
             }
             other => {
@@ -221,6 +240,7 @@ impl Session {
 
     fn leave_world(&mut self) {
         if let Some(me) = self.in_world.take() {
+            self.host.leave(me.guid);
             self.map.leave(me.guid);
             tracing::info!("world: {} left the world", me.name);
         }

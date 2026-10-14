@@ -17,6 +17,8 @@ sha1.workspace = true
 # The client half of the wire: opcodes, the wire helpers, the SRP6 constants and the header cipher.
 benilla-protocol = { path = "../benilla-protocol" }
 benilla-srp = { path = "../benilla-srp" }
+# The game itself: rules, targets, and the addon-message vocabulary the HUD speaks.
+among-rules = { path = "../among-rules" }
 num-bigint = "0.4.6"
 rand = "0.8.6"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }

@@ -20,6 +20,12 @@ struct Args {
     /// An account as NAME:PASSWORD; repeat for more players.
     #[arg(long = "account", value_name = "NAME:PASSWORD", required = true)]
     accounts: Vec<String>,
+    /// Fewest players the host may start with (the rules never allow fewer than 3).
+    #[arg(long, default_value_t = 4)]
+    min_players: usize,
+    /// Impostors asked for; the player count caps it.
+    #[arg(long, default_value_t = 2)]
+    impostors: usize,
 }
 
 #[tokio::main]
@@ -43,6 +49,12 @@ async fn main() -> Result<()> {
             auth_port: args.auth_port,
             world_port: args.world_port,
             realm_name: args.realm_name,
+            settings: among_rules::Settings {
+                min_players: args.min_players,
+                impostors: args.impostors,
+                ..among_rules::Settings::default()
+            },
+            ..ServerConfig::default()
         },
         accounts,
     )

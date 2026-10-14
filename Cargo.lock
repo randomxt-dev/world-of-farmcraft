@@ -176,6 +176,7 @@ version = "0.2.0"
 name = "among-server"
 version = "0.2.0"
 dependencies = [
+ "among-rules",
  "anyhow",
  "benilla-protocol",
  "benilla-srp",

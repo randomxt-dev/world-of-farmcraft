@@ -13,13 +13,18 @@ use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 
 use crate::accounts::Accounts;
+use crate::game::GameHost;
 
 pub use map::Map;
 pub use socket::Packet;
 
-/// Accept world connections forever; every session shares one [`Map`].
-pub async fn serve(listener: TcpListener, accounts: Accounts) -> Result<()> {
-    let map = Map::default();
+/// Accept world connections forever; every session shares one [`Map`] and one match.
+pub async fn serve(
+    listener: TcpListener,
+    accounts: Accounts,
+    map: Map,
+    host: GameHost,
+) -> Result<()> {
     loop {
         let (stream, peer) = listener
             .accept()
@@ -27,8 +32,9 @@ pub async fn serve(listener: TcpListener, accounts: Accounts) -> Result<()> {
             .context("accepting a world session")?;
         let accounts = accounts.clone();
         let map = map.clone();
+        let host = host.clone();
         tokio::spawn(async move {
-            match session::run(stream, accounts, map).await {
+            match session::run(stream, accounts, map, host).await {
                 Ok(()) => tracing::info!("world {peer}: closed"),
                 Err(e) => tracing::info!("world {peer}: {e:#}"),
             }

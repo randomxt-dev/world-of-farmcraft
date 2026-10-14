@@ -3,16 +3,22 @@
 //! client logs in to it unchanged, so movement, camera and controls stay regular WoW.
 
 pub mod accounts;
+pub mod game;
 pub mod realmd;
 pub mod srp;
 pub mod world;
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::net::TcpListener;
 
 pub use accounts::Accounts;
+pub use game::GameHost;
+
+/// How often the game clock advances: kill and sabotage cooldowns, meeting timers, deadlines.
+const TICK: Duration = Duration::from_millis(100);
 
 /// Where the server listens and what it advertises.
 #[derive(Clone, Debug)]
@@ -23,6 +29,9 @@ pub struct ServerConfig {
     pub auth_port: u16,
     pub world_port: u16,
     pub realm_name: String,
+    /// The match's rules and the map's task, button and station spots.
+    pub settings: among_rules::Settings,
+    pub layout: among_rules::Layout,
 }
 
 impl Default for ServerConfig {
@@ -32,6 +41,8 @@ impl Default for ServerConfig {
             auth_port: benilla_protocol::AUTH_PORT,
             world_port: benilla_protocol::WORLD_PORT,
             realm_name: "Among Azeroth".into(),
+            settings: among_rules::Settings::default(),
+            layout: game::placeholder_layout(),
         }
     }
 }
@@ -42,6 +53,8 @@ pub struct Server {
     world: TcpListener,
     realm_name: String,
     accounts: Accounts,
+    settings: among_rules::Settings,
+    layout: among_rules::Layout,
 }
 
 impl Server {
@@ -62,6 +75,8 @@ impl Server {
             world,
             realm_name: config.realm_name.clone(),
             accounts,
+            settings: config.settings.clone(),
+            layout: config.layout.clone(),
         })
     }
 
@@ -89,9 +104,21 @@ impl Server {
             name: self.realm_name,
             world_port: self.world.local_addr()?.port(),
         };
+        let map = world::Map::default();
+        let host = GameHost::new(self.settings, self.layout, map.clone());
+        let clock = host.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(TICK);
+            let mut last = tokio::time::Instant::now();
+            loop {
+                let now = every.tick().await;
+                clock.tick(now - last);
+                last = now;
+            }
+        });
         tokio::try_join!(
             realmd::serve(self.auth, self.accounts.clone(), realm),
-            world::serve(self.world, self.accounts),
+            world::serve(self.world, self.accounts, map, host),
         )?;
         Ok(())
     }

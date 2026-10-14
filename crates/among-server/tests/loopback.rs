@@ -1,20 +1,32 @@
 //! The server against `benilla-protocol`'s own client, over real sockets: logon, roster, world
-//! entry, and one player's movement reaching the other. No game data needed.
+//! entry, one player's movement reaching the other, and a game driven by HUD button presses. No
+//! game data needed.
 
 use std::time::{Duration, Instant};
 
+use among_rules::wire::{self, Notice, Request};
+use among_rules::{Role, Settings};
 use among_server::{Accounts, Server, ServerConfig};
-use benilla_protocol::messages::{opcode, Object, ServerPacket};
+use benilla_protocol::messages::{opcode, Object, ServerPacket, CHAT_TYPE_PARTY};
 use benilla_protocol::WorldSession;
 
 /// Start a server on free ports with two accounts; returns realmd's `host:port`.
 fn start_server() -> String {
+    start_server_with(2, Settings::default())
+}
+
+/// Start a server on free ports with accounts `among1..=n` (password `secretN`).
+fn start_server_with(n: u32, settings: Settings) -> String {
     let accounts = Accounts::default();
-    accounts.register("among1", "secret1").unwrap();
-    accounts.register("among2", "secret2").unwrap();
+    for i in 1..=n {
+        accounts
+            .register(&format!("among{i}"), &format!("secret{i}"))
+            .unwrap();
+    }
     let config = ServerConfig {
         auth_port: 0,
         world_port: 0,
+        settings,
         ..ServerConfig::default()
     };
     let (tx, rx) = std::sync::mpsc::channel();
@@ -124,4 +136,89 @@ fn a_wrong_password_is_refused_at_logon() {
         .downcast_ref::<benilla_protocol::AuthReject>()
         .expect("a typed refusal");
     assert_eq!(reject.code, 0x04);
+}
+
+/// Press a HUD button the way the HUD will: an addon line on the party lane.
+fn press(session: &mut WorldSession, request: Request) {
+    let text = format!("{}\t{}", wire::PREFIX, request.encode());
+    session
+        .send_addon_message(CHAT_TYPE_PARTY, None, &text)
+        .unwrap();
+}
+
+/// The next Among Azeroth notice `want` accepts, skipping everything else.
+fn wait_notice<T>(session: &mut WorldSession, mut want: impl FnMut(&Notice) -> Option<T>) -> T {
+    wait_for(session, |p| {
+        let ServerPacket::MessageChat(m) = p else {
+            return None;
+        };
+        let payload = m.text.strip_prefix(wire::PREFIX)?.strip_prefix('\t')?;
+        assert!(m.is_addon(), "{m:?}");
+        want(&Notice::decode(payload).expect(payload))
+    })
+}
+
+#[test]
+fn three_clients_start_a_game_by_button_and_a_kill_press_lands() {
+    let settings = Settings {
+        min_players: 3,
+        initial_kill_cooldown: Duration::ZERO,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    // One at a time, each told the host before the next logs in, so "first" is unambiguous.
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=3 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        let told = wait_notice(&mut session, |n| match n {
+            Notice::Host(h) => Some(*h),
+            _ => None,
+        });
+        let first = players.first().map_or(guid, |(_, g)| *g);
+        assert_eq!(
+            told,
+            Some(among_rules::PlayerId(first)),
+            "the first in hosts"
+        );
+        players.push((session, guid));
+    }
+
+    press(&mut players[0].0, Request::Start);
+    let roles: Vec<Role> = (players.iter_mut())
+        .map(|(s, _)| {
+            wait_notice(s, |n| match n {
+                Notice::Role { role, .. } => Some(*role),
+                _ => None,
+            })
+        })
+        .collect();
+    assert_eq!(roles.iter().filter(|r| **r == Role::Impostor).count(), 1);
+    let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
+
+    // Everyone stands on the spawn: the impostor's Kill lights up, and the press lands.
+    wait_notice(&mut players[imp].0, |n| match n {
+        Notice::Actions(a) if a.kill => Some(()),
+        _ => None,
+    });
+    press(&mut players[imp].0, Request::Kill);
+    // Each crewmate hears either its own death or, first, the game ending (1 crew vs 1 impostor).
+    let told_dead = (0..3)
+        .filter(|&i| i != imp)
+        .filter(|&i| {
+            wait_notice(&mut players[i].0, |n| match n {
+                Notice::Dead => Some(true),
+                Notice::Over { .. } => Some(false),
+                _ => None,
+            })
+        })
+        .count();
+    assert_eq!(told_dead, 1, "exactly one victim is told");
+    let (winner, impostors) = wait_notice(&mut players[imp].0, |n| match n {
+        Notice::Over {
+            winner, impostors, ..
+        } => Some((*winner, impostors.clone())),
+        _ => None,
+    });
+    assert_eq!(winner, among_rules::Team::Impostors);
+    assert_eq!(impostors, [among_rules::PlayerId(players[imp].1)]);
 }

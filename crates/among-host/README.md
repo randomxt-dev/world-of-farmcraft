@@ -8,36 +8,44 @@ their own WoW 1.12.1 client.
 You need an English 1.12.1 (build 5875) WoW install. The browser players are streamed its game
 files, one at a time, from your PC. Nothing from it is ever offered as a download.
 
-From a release zip:
+From a release zip, in the folder you unzipped it to:
 
 ```powershell
+cd C:\path\to\AmongAzeroth
 .\among-host.exe
 ```
 
-From the repo (`WoW` junction at the root, browser build made once with
-`crates\among-web\web-setup.ps1` then `crates\among-web\web-build.ps1`):
+From the repo (`WoW` junction at the root; the browser build made once with
+`crates\among-web\web-setup.ps1`, then `crates\among-web\web-build.ps1` after each change):
 
 ```powershell
+cd D:\AmongAzeroth
 cargo run --release -p among-host
 ```
 
 It starts the game server and the web page, then prints a **lobby code** and the invite links.
 Everyone logs in with any account name and the lobby code as the password. The first player in
-is the lobby host and starts the game with the Emergency button once 4 are in
-(`--min-players`, `--impostors` and the rest are `among-server`'s options).
+is the lobby host: once 4 are in (`--min-players`), they right-click the emergency button in the
+abbey hall to start. The rest of `among-server`'s options (`--impostors`, `--layout`, ...) work
+here too.
 
 The page and its game files need the lobby code: the invite link carries it, and anyone without
 it gets a 403.
 
 ## Friends in the browser (Chrome or Edge)
 
-The world renders with WebGPU, which browsers allow only over https or on localhost. The easy
-https is [Tailscale](https://tailscale.com), free for this:
+The world renders with WebGPU, which browsers allow only over https or on localhost, so friends
+need an https link to your PC. Either:
 
-- Your tailnet only: invite your friends to it, then `tailscale serve --bg 8090`.
-- Anyone with the link: `tailscale funnel --bg 8090`.
-
-Then send them the `https://<your-pc>.<tailnet>.ts.net/?lobby=CODE` link `among-host` prints.
+- **Cloudflare** (no account): install `cloudflared`, then in a second window
+  ```powershell
+  cd D:\AmongAzeroth
+  cloudflared tunnel --url http://localhost:8090
+  ```
+  It prints an `https://<random words>.trycloudflare.com` address; send it with
+  `/?lobby=CODE` on the end. The address changes each time you start the tunnel.
+- **Tailscale**: `tailscale funnel --bg 8090`, then send the
+  `https://<your-pc>.<tailnet>.ts.net/?lobby=CODE` link `among-host` prints.
 
 ## Friends with the native launcher
 
@@ -46,9 +54,16 @@ folder, checks it holds the game's MPQs, and remembers it; nothing is copied or 
 At the login screen, set the Realmlist to the host:
 
 - Same network: the LAN address `among-host` prints.
-- Tailscale: the host's `100.x.y.z` address (`tailscale ip -4` on the host).
-- Over the internet with port forwarding: forward TCP 3724 and 8085 to the host, and start it
-  with `--advertise <public IP or name>` so the realm list hands out the public address.
+- Over the internet: forward TCP 3724 and 8085 to the host, and start it with
+  `--advertise <public IP or name>` so the realm list hands out the public address. A
+  Cloudflare quick tunnel carries only the web page, not these two ports.
+
+## Playing
+
+Tasks, sabotage fixes and meetings are right-clicks on the world's own objects: a task's herb,
+vein or station, a sabotage's station (or the purple column over it), and the emergency button.
+The action bar holds only Attack, your class spell, Report and Skip Vote, plus Kill and Sabotage
+for the impostors.
 
 ## Options
 

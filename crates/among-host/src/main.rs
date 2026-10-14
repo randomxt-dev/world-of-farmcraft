@@ -114,15 +114,17 @@ fn print_invite(code: &str, web_port: u16) {
     println!();
     println!("Browser (Chrome or Edge). The world needs WebGPU, which needs https or localhost:");
     println!("  this PC:  http://localhost:{web_port}/?lobby={code}");
+    println!("  friends need an https link, either of:");
+    println!("    Cloudflare: run `cloudflared tunnel --url http://localhost:{web_port}` and send");
+    println!(
+        "                the https://....trycloudflare.com address it prints + /?lobby={code}"
+    );
     match among_host::tailscale_name() {
         Some(name) => {
-            println!("  friends:  https://{name}/?lobby={code}");
-            println!("            after `tailscale serve --bg {web_port}` (your tailnet only)");
-            println!("            or `tailscale funnel --bg {web_port}` (anyone with the link)");
+            println!("    Tailscale:  https://{name}/?lobby={code}");
+            println!("                after `tailscale funnel --bg {web_port}`");
         }
-        None => println!(
-            "  friends:  install Tailscale, then `tailscale serve --bg {web_port}` for https"
-        ),
+        None => println!("    Tailscale:  `tailscale funnel --bg {web_port}`, then its https link"),
     }
     println!();
     match among_host::lan_ip() {

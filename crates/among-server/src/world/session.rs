@@ -216,6 +216,17 @@ impl Session {
                     }
                 }
             }
+            opcode::CMSG_CAST_SPELL => {
+                if let Some(me) = &self.in_world {
+                    let cast = super::spells::CastRequest::read(body)?;
+                    self.host.cast(me.guid, cast);
+                }
+            }
+            opcode::CMSG_GAMEOBJ_USE => {
+                if let Some(me) = &self.in_world {
+                    self.host.use_object(me.guid, read_u64_le(&mut cur)?);
+                }
+            }
             opcode::CMSG_MESSAGECHAT => {
                 let chat = packets::ClientChat::read(body)?;
                 match (&self.in_world, chat.addon_payload(wire::PREFIX)) {

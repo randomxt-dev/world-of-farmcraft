@@ -1,14 +1,20 @@
-//! `SMSG_UPDATE_OBJECT` bodies: the create block a player is spawned with, as
-//! `benilla-protocol`'s `update_object` reads it.
+//! `SMSG_UPDATE_OBJECT` bodies: the create blocks players, creatures and gameobjects are spawned
+//! with, and the values update that changes a descriptor, as `benilla-protocol`'s
+//! `update_object` reads them.
 
 use std::collections::BTreeMap;
 
 use super::wire::Body;
 
+/// `UPDATETYPE_VALUES`: a descriptor change.
+const UPDATETYPE_VALUES: u8 = 0;
+/// `UPDATETYPE_CREATE_OBJECT`, the create vmangos sends for an object coming into view.
+const UPDATETYPE_CREATE_OBJECT: u8 = 2;
 /// `UPDATETYPE_CREATE_OBJECT2`, the create vmangos sends for players.
 const UPDATETYPE_CREATE_OBJECT2: u8 = 3;
-/// `TYPEID_PLAYER`.
+const TYPEID_UNIT: u8 = 3;
 const TYPEID_PLAYER: u8 = 4;
+const TYPEID_GAMEOBJECT: u8 = 5;
 
 /// The movement block's update flags (vmangos `ObjectDefines.h`).
 pub const UPDATEFLAG_SELF: u8 = 0x01;
@@ -71,16 +77,74 @@ pub const BASE_SPEEDS: [f32; 6] = [2.5, 7.0, 4.5, 4.722_222, 2.5, std::f32::cons
 
 /// One `CREATE_OBJECT2` of a player with a `LIVING` block, wrapped as a whole update body.
 pub fn create_player(guid: u64, is_self: bool, living: &Living, fields: &Fields) -> Vec<u8> {
+    // vmangos's player flags: `0x71` for the receiver's own body, `0x70` for anyone else's.
+    let self_flag = if is_self { UPDATEFLAG_SELF } else { 0 };
+    create_living(
+        UPDATETYPE_CREATE_OBJECT2,
+        guid,
+        TYPEID_PLAYER,
+        self_flag,
+        living,
+        fields,
+    )
+}
+
+/// One `CREATE_OBJECT` of a creature with a `LIVING` block (vmangos's `0x70`).
+pub fn create_creature(guid: u64, living: &Living, fields: &Fields) -> Vec<u8> {
+    create_living(
+        UPDATETYPE_CREATE_OBJECT,
+        guid,
+        TYPEID_UNIT,
+        0,
+        living,
+        fields,
+    )
+}
+
+/// One `CREATE_OBJECT` of a gameobject standing at `position` facing `orientation` (vmangos's
+/// `UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION`).
+pub fn create_gameobject(
+    guid: u64,
+    position: [f32; 3],
+    orientation: f32,
+    fields: &Fields,
+) -> Vec<u8> {
     let mut b = Body::default();
     b.u32(1).u8(0); // one object, no transport
-    b.u8(UPDATETYPE_CREATE_OBJECT2)
+    b.u8(UPDATETYPE_CREATE_OBJECT)
         .packed_guid(guid)
-        .u8(TYPEID_PLAYER);
-    // vmangos's player flags: `0x71` for the receiver's own body, `0x70` for anyone else's.
-    let flags = UPDATEFLAG_ALL
-        | UPDATEFLAG_LIVING
-        | UPDATEFLAG_HAS_POSITION
-        | if is_self { UPDATEFLAG_SELF } else { 0 };
+        .u8(TYPEID_GAMEOBJECT)
+        .u8(UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION)
+        .f32(position[0])
+        .f32(position[1])
+        .f32(position[2])
+        .f32(orientation)
+        .u32(1); // UPDATEFLAG_ALL's word
+    fields.write(&mut b);
+    b.done()
+}
+
+/// One `VALUES` update: `fields` changed on `guid`.
+pub fn values(guid: u64, fields: &Fields) -> Vec<u8> {
+    let mut b = Body::default();
+    b.u32(1).u8(0);
+    b.u8(UPDATETYPE_VALUES).packed_guid(guid);
+    fields.write(&mut b);
+    b.done()
+}
+
+fn create_living(
+    update_type: u8,
+    guid: u64,
+    type_id: u8,
+    extra_flags: u8,
+    living: &Living,
+    fields: &Fields,
+) -> Vec<u8> {
+    let mut b = Body::default();
+    b.u32(1).u8(0); // one object, no transport
+    b.u8(update_type).packed_guid(guid).u8(type_id);
+    let flags = UPDATEFLAG_ALL | UPDATEFLAG_LIVING | UPDATEFLAG_HAS_POSITION | extra_flags;
     b.u8(flags)
         .u32(living.movement_flags)
         .u32(living.time)

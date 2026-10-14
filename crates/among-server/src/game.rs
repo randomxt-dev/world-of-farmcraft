@@ -1,5 +1,6 @@
-//! The match the world hosts: among-rules' [`Game`], fed by world entry, movement, the clock and
-//! the HUD's addon requests, its notices sent back as addon messages under [`wire::PREFIX`].
+//! The match the world hosts: among-rules' [`Game`], fed by world entry, movement, the clock, the
+//! action bar's casts and the HUD's addon requests. Notices go back as addon messages under
+//! [`wire::PREFIX`]; casts, kills and cooldowns go back as WoW's own spell packets.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -7,12 +8,17 @@ use std::time::Duration;
 
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
-    Actions, Class, Command, Game, Layout, PlayerId, Position, Reject, SabotageDef, SabotageKind,
-    Settings, TaskDef, TaskKind, TaskStep,
+    Actions, Class, Command, Event, Game, Layout, Phase, PlayerId, Position, Reject, SabotageDef,
+    SabotageKind, Settings, TaskDef, TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
-use crate::world::{packets, player, Map};
+use crate::look::Look;
+use crate::world::spells::{self, CastRequest, Target};
+use crate::world::{guid, packets, player, Map};
+
+/// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
+const WITNESS_RANGE: f32 = 25.0;
 
 /// The one match; cheap to clone. Lock order: the host, then the map.
 #[derive(Clone)]
@@ -20,17 +26,36 @@ pub struct GameHost(Arc<Mutex<Inner>>);
 
 struct Inner {
     game: Game,
+    look: Look,
     map: Map,
     /// The buttons each player was last told are live.
     actions: HashMap<PlayerId, Actions>,
+    /// Each cast on show, by caster: its spell and target, for the launch or the break.
+    casts: HashMap<PlayerId, (u32, Target)>,
+    /// The spell each caster's command was shown as, during one cast's apply.
+    shown: HashMap<PlayerId, u32>,
+    /// Each player's cooldowns as they stood at the last refresh, by spell.
+    cooldowns: HashMap<PlayerId, Vec<(u32, Duration)>>,
 }
 
 impl GameHost {
-    pub fn new(settings: Settings, layout: Layout, map: Map) -> Self {
+    /// A match on `layout`, dressed by `look`; a look that does not fit the layout is replaced
+    /// by a plain one.
+    pub fn new(settings: Settings, layout: Layout, look: Look, map: Map) -> Self {
+        let look = if look.covers(&layout) {
+            look
+        } else {
+            tracing::warn!("game: the look does not fit the layout; using a plain one");
+            Look::plain(&layout)
+        };
         Self(Arc::new(Mutex::new(Inner {
             game: Game::new(settings, layout),
+            look,
             map,
             actions: HashMap::new(),
+            casts: HashMap::new(),
+            shown: HashMap::new(),
+            cooldowns: HashMap::new(),
         })))
     }
 
@@ -55,10 +80,11 @@ impl GameHost {
     /// A character left the world.
     pub fn leave(&self, guid: u64) {
         let mut inner = self.lock();
-        let _ = inner.apply(Command::Leave {
-            player: PlayerId(guid),
-        });
-        inner.actions.remove(&PlayerId(guid));
+        let player = PlayerId(guid);
+        let _ = inner.apply(Command::Leave { player });
+        inner.actions.remove(&player);
+        inner.cooldowns.remove(&player);
+        inner.casts.remove(&player);
     }
 
     /// A character moved; spectators outside the game are ignored.
@@ -91,23 +117,235 @@ impl GameHost {
         );
     }
 
+    /// A `CMSG_CAST_SPELL`: an action-bar button, the class spell, or a gathering cast at a
+    /// node. Every cast is answered, or the client's in-flight guard holds the bar for seconds:
+    /// a refusal is a silent cast failure plus the rule's reason as red error text; an accepted
+    /// press is shown by the events it caused, or as an instant cast of the pressed spell.
+    pub fn cast(&self, guid: u64, cast: CastRequest) {
+        let mut inner = self.lock();
+        let player = PlayerId(guid);
+        inner.shown.clear();
+        let result = inner
+            .cast_command(player, cast)
+            .and_then(|cmd| inner.apply(cmd));
+        let map = inner.map.clone();
+        match result {
+            Err(r) => {
+                tracing::debug!("game: {guid} cast {} refused: {r}", cast.spell);
+                map.send(guid, spells::cast_failed(cast.spell, spells::FAILED_SILENT));
+                map.send(guid, spells::notification(&sentence(r)));
+            }
+            Ok(_) => match inner.shown.get(&player) {
+                Some(&shown) if shown == cast.spell => {}
+                // Shown as another spell (a task's gathering cast): free the pressed one.
+                Some(_) => map.send(guid, spells::cast_ok(cast.spell)),
+                None => {
+                    map.send(guid, spells::spell_start(guid, cast.spell, 0, cast.target));
+                    map.send(guid, spells::spell_go(guid, cast.spell, cast.target));
+                }
+            },
+        }
+    }
+
+    /// A `CMSG_GAMEOBJ_USE` on a node with no lock: work its task step.
+    pub fn use_object(&self, guid: u64, object: u64) {
+        let mut inner = self.lock();
+        let player = PlayerId(guid);
+        let result = inner
+            .node_command(player, object)
+            .and_then(|cmd| inner.apply(cmd));
+        if let Err(r) = result {
+            tracing::debug!("game: {guid} use of {object:#x} refused: {r}");
+            inner.map.send(guid, spells::notification(&sentence(r)));
+        }
+    }
+
     pub fn tick(&self, dt: Duration) {
         let _ = self.lock().apply(Command::Tick { dt });
     }
 }
 
+/// A refusal as red error text: "Too far away".
+fn sentence(r: Reject) -> String {
+    let text = r.to_string();
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => text,
+    }
+}
+
 impl Inner {
-    /// Apply `cmd`, send what its events tell whom, then any changed buttons.
-    fn apply(&mut self, cmd: Command) -> Result<(), Reject> {
+    /// Apply `cmd`, send what its events tell whom and show them in the world, then any changed
+    /// buttons and cooldowns.
+    fn apply(&mut self, cmd: Command) -> Result<Vec<Event>, Reject> {
         let events = self.game.apply(cmd)?;
         for event in &events {
             tracing::debug!("game: {event:?}");
             for (to, notice) in wire::notices(event, &self.game) {
                 self.notify(to, &notice);
             }
+            self.show(event);
         }
         self.refresh_actions();
-        Ok(())
+        self.refresh_cooldowns();
+        Ok(events)
+    }
+
+    /// The world's side of an event: cast bars, launches and breaks, and kill strikes.
+    fn show(&mut self, event: &Event) {
+        match *event {
+            Event::CastStarted { player, task, time } => {
+                let step = (self.game.player(player))
+                    .and_then(|p| p.tasks.iter().find(|t| t.task == task))
+                    .map_or(0, |t| t.step);
+                let spell = self.look.node(task, step).map_or(spells::USE, |n| n.spell);
+                let target = Target::GameObject(guid::node(task, step));
+                self.start_cast(player, spell, time, target);
+            }
+            Event::SpellCastStarted {
+                player,
+                creature,
+                time,
+            } => {
+                let spell = self.class_spell(player);
+                let target = Target::Unit(guid::creature(creature));
+                self.start_cast(player, spell, time, target);
+            }
+            Event::CastFinished { player } => {
+                if let Some((spell, target)) = self.casts.remove(&player) {
+                    self.map
+                        .broadcast(&spells::spell_go(player.0, spell, target));
+                }
+            }
+            Event::CastInterrupted { player } | Event::SpellCastInterrupted { player } => {
+                if let Some((spell, _)) = self.casts.remove(&player) {
+                    self.map
+                        .broadcast(&spells::spell_failed_other(player.0, spell));
+                }
+            }
+            Event::SpellHit {
+                player, creature, ..
+            } => {
+                let target = Target::Unit(guid::creature(creature));
+                let spell = match self.casts.remove(&player) {
+                    Some((spell, _)) => spell,
+                    None => {
+                        let spell = self.class_spell(player);
+                        let start = spells::spell_start(player.0, spell, 0, target);
+                        self.map.broadcast(&start);
+                        spell
+                    }
+                };
+                self.map
+                    .broadcast(&spells::spell_go(player.0, spell, target));
+                self.shown.insert(player, spell);
+            }
+            Event::Killed { killer, victim, at } => {
+                let target = Target::Unit(victim.0);
+                let start = spells::spell_start(killer.0, spells::KILL, 0, target);
+                let go = spells::spell_go(killer.0, spells::KILL, target);
+                for witness in self.witnesses(at, &[killer, victim]) {
+                    self.map.send(witness.0, start.clone());
+                    self.map.send(witness.0, go.clone());
+                }
+                self.shown.insert(killer, spells::KILL);
+            }
+            _ => {}
+        }
+    }
+
+    /// Show `player`'s cast of `spell` to everyone: a bar of `time`, at `target`.
+    fn start_cast(&mut self, player: PlayerId, spell: u32, time: Duration, target: Target) {
+        let ms = time.as_millis().min(u32::MAX.into()) as u32;
+        self.map
+            .broadcast(&spells::spell_start(player.0, spell, ms, target));
+        self.casts.insert(player, (spell, target));
+        self.shown.insert(player, spell);
+    }
+
+    fn class_spell(&self, player: PlayerId) -> u32 {
+        let class = self.game.player(player).map_or(Class::Warrior, |p| p.class);
+        spells::class_spell(class)
+    }
+
+    /// `always`, then every other connected player within [`WITNESS_RANGE`] of `at`.
+    fn witnesses(&self, at: Position, always: &[PlayerId]) -> Vec<PlayerId> {
+        let mut out = always.to_vec();
+        out.extend(
+            (self.game.players())
+                .filter(|(id, p)| {
+                    p.connected
+                        && !always.contains(id)
+                        && among_rules::within(p.position, at, WITNESS_RANGE)
+                })
+                .map(|(id, _)| id),
+        );
+        out
+    }
+
+    /// What a cast means: the button it is, the class spell at a creature, or work at a node.
+    fn cast_command(&self, player: PlayerId, cast: CastRequest) -> Result<Command, Reject> {
+        let g = &self.game;
+        if let Target::GameObject(object) = cast.target {
+            return self.node_command(player, object);
+        }
+        let request = match cast.spell {
+            // Kill strikes the player the client aimed at, if it aimed at one.
+            spells::KILL => match cast.target {
+                Target::Unit(victim) if g.player(PlayerId(victim)).is_some() => {
+                    return Ok(Command::Kill {
+                        killer: player,
+                        victim: PlayerId(victim),
+                    })
+                }
+                _ => Request::Kill,
+            },
+            spells::USE => Request::Use,
+            spells::REPORT => Request::Report,
+            spells::FIX => Request::Fix,
+            spells::SKIP_VOTE => Request::Vote(Vote::Skip),
+            spells::SABOTAGE => match g.sabotage_target(player) {
+                Some(kind) => Request::Sabotage(kind),
+                None => return Err(no_sabotage(g, player)),
+            },
+            // The horn starts the game from the lobby and goes back to it after one.
+            spells::EMERGENCY => match g.phase() {
+                Phase::Lobby => Request::Start,
+                Phase::GameOver { .. } => Request::Lobby,
+                _ => Request::Emergency,
+            },
+            spell if spell == self.class_spell(player) => {
+                return match cast.target {
+                    Target::Unit(unit) => guid::creature_id(unit)
+                        .map(|creature| Command::CastSpell { player, creature })
+                        .ok_or(Reject::InvalidTarget),
+                    _ => Err(Reject::InvalidTarget),
+                };
+            }
+            _ => return Err(Reject::InvalidTarget),
+        };
+        self.command(player, request)
+    }
+
+    /// Work at a task node: the step it stands for, if that is the player's current step.
+    fn node_command(&self, player: PlayerId, object: u64) -> Result<Command, Reject> {
+        let (task, step) = guid::node_step(object).ok_or(Reject::InvalidTarget)?;
+        let cmd = Command::UseTask { player, task };
+        let current = (self.game.player(player))
+            .and_then(|p| p.tasks.iter().find(|t| t.task == task))
+            .map(|t| t.step);
+        match current {
+            Some(s) if s == step => Ok(cmd),
+            // Past this node's step: done here.
+            Some(s) if s > step => Err(Reject::TaskDone),
+            // Validation names the rule in the way: phase, death, not your task.
+            _ => Err(self
+                .game
+                .validate(&cmd)
+                .err()
+                .unwrap_or(Reject::TaskNotAssigned)),
+        }
     }
 
     /// The command a press means now. Kill, report, use and fix aim at the nearest legal target;
@@ -181,6 +419,46 @@ impl Inner {
         }
     }
 
+    /// Start the cooldown sweep of every button whose cooldown began since the last refresh:
+    /// kill, sabotage, emergency and the class spell. A client's sweep can grow but not shrink,
+    /// so only a cooldown that rose is sent.
+    fn refresh_cooldowns(&mut self) {
+        let playing = *self.game.phase() == Phase::Playing;
+        let g = &self.game;
+        let now: Vec<(PlayerId, Vec<(u32, Duration)>)> = (g.players())
+            .filter(|(_, p)| p.connected)
+            .map(|(id, p)| {
+                let mut cds = vec![(spells::class_spell(p.class), p.spell_cooldown)];
+                if playing {
+                    cds.push((spells::EMERGENCY, g.emergency_cooldown()));
+                    if p.is_impostor() {
+                        cds.push((spells::KILL, p.kill_cooldown));
+                        if g.sabotage().is_none() {
+                            cds.push((spells::SABOTAGE, g.sabotage_cooldown()));
+                        }
+                    }
+                }
+                (id, cds)
+            })
+            .collect();
+        for (id, cds) in now {
+            let before = self.cooldowns.get(&id);
+            let rose: Vec<(u32, u32)> = (cds.iter())
+                .filter(|(spell, d)| {
+                    let was = (before.into_iter().flatten())
+                        .find(|(s, _)| s == spell)
+                        .map_or(Duration::ZERO, |(_, d)| *d);
+                    *d > was
+                })
+                .map(|&(spell, d)| (spell, d.as_millis().min(u32::MAX.into()) as u32))
+                .collect();
+            if !rose.is_empty() {
+                self.map.send(id.0, spells::spell_cooldown(id.0, &rose));
+            }
+            self.cooldowns.insert(id, cds);
+        }
+    }
+
     /// Each recipient gets the line under its own guid, which its name query always answers.
     fn notify(&self, to: To, notice: &Notice) {
         let payload = notice.encode();
@@ -193,6 +471,14 @@ impl Inner {
             To::All => self.map.guids().into_iter().for_each(send),
         }
     }
+}
+
+/// Why a Sabotage press found nothing to sabotage: the rule a sabotage of any kind meets first.
+fn no_sabotage(g: &Game, player: PlayerId) -> Reject {
+    let kind = (g.layout().sabotages.first()).map_or(SabotageKind::Lights, |s| s.kind);
+    g.validate(&Command::Sabotage { player, kind })
+        .err()
+        .unwrap_or(Reject::NoSuchSabotage)
 }
 
 /// Why a Use press found no task step. Phase and player rules refuse every task alike; past them
@@ -219,49 +505,98 @@ fn no_task(g: &Game, player: PlayerId) -> Reject {
 /// Stand-in spots around Northshire Abbey's steps until the map is surveyed: the button on the
 /// spawn, tasks and stations 8-25 yd out at the spawn's height.
 pub fn placeholder_layout() -> Layout {
+    placeholder().0
+}
+
+/// How [`placeholder_layout`] looks: herbs, a copper vein and crafting stations.
+pub fn placeholder_look() -> Look {
+    placeholder().1
+}
+
+fn placeholder() -> (Layout, Look) {
+    use crate::look::{self, NodeLook};
     let [x, y, z] = player::SPAWN.position;
     let at = |dx: f32, dy: f32| [x + dx, y + dy, z];
-    let cast = |dx: f32, dy: f32| TaskStep::cast(at(dx, dy), 3.0);
-    let task = |name: &str, kind, steps: Vec<TaskStep>| TaskDef {
-        name: name.into(),
-        kind,
-        steps,
+    // Gathering takes 5 s, as Herb Gathering and the kneeling "Opening" do; crafting 3 s.
+    let herb = |dx, dy, name, display| {
+        (
+            TaskStep::cast(at(dx, dy), 5.0),
+            NodeLook::herb(name, display),
+        )
     };
+    let vein = |dx, dy| {
+        let node = NodeLook::kneel("Copper Vein", look::COPPER_VEIN);
+        (TaskStep::cast(at(dx, dy), 5.0), node)
+    };
+    let craft = |dx, dy, name, display, spell| {
+        let node = NodeLook::station(name, display, spell);
+        (TaskStep::cast(at(dx, dy), 3.0), node)
+    };
+    // Each task's name, kind, and steps with the node each is worked at.
+    type Steps = Vec<(TaskStep, NodeLook)>;
+    let tasks: Vec<(&str, TaskKind, Steps)> = vec![
+        (
+            "Pick Peacebloom",
+            TaskKind::Common,
+            vec![herb(10.0, 0.0, "Peacebloom", look::PEACEBLOOM)],
+        ),
+        (
+            "Roast Boar Meat",
+            TaskKind::Common,
+            vec![craft(-10.0, 0.0, "Campfire", look::CAMPFIRE, 2540)],
+        ),
+        (
+            "Mine and smelt Copper",
+            TaskKind::Long,
+            vec![
+                vein(20.0, 10.0),
+                craft(20.0, -10.0, "Forge", look::FORGE, 2657),
+            ],
+        ),
+        (
+            "Gather and roast Earthroot",
+            TaskKind::Long,
+            vec![
+                herb(-20.0, 10.0, "Earthroot", look::EARTHROOT),
+                craft(-20.0, -10.0, "Campfire", look::CAMPFIRE, 2538),
+            ],
+        ),
+        (
+            "Pick Silverleaf",
+            TaskKind::Short,
+            vec![herb(0.0, 10.0, "Silverleaf", look::SILVERLEAF)],
+        ),
+        (
+            "Pick Earthroot",
+            TaskKind::Short,
+            vec![herb(0.0, -10.0, "Earthroot", look::EARTHROOT)],
+        ),
+        (
+            "Mine a Copper Vein",
+            TaskKind::Short,
+            vec![vein(10.0, 15.0)],
+        ),
+        (
+            "Hammer Copper Bracers",
+            TaskKind::Short,
+            vec![craft(-10.0, -15.0, "Anvil", look::ANVIL, 2663)],
+        ),
+    ];
     let sabotage = |kind, stations, deadline| SabotageDef {
         kind,
         stations,
         deadline,
     };
     let critical = Some(Duration::from_secs(30));
-    Layout {
+    let layout = Layout {
         emergency_button: at(0.0, 0.0),
-        // Gathering and crafting, each a cast of a few seconds; long tasks gather then craft.
-        tasks: vec![
-            task("Pick Peacebloom", TaskKind::Common, vec![cast(10.0, 0.0)]),
-            task("Cook a Rabbit", TaskKind::Common, vec![cast(-10.0, 0.0)]),
-            task(
-                "Mine and smelt Copper",
-                TaskKind::Long,
-                vec![cast(20.0, 10.0), cast(20.0, -10.0)],
-            ),
-            task(
-                "Weave a Linen Bandage",
-                TaskKind::Long,
-                vec![cast(-20.0, 10.0), cast(-20.0, -10.0)],
-            ),
-            task("Pick Silverleaf", TaskKind::Short, vec![cast(0.0, 10.0)]),
-            task("Pick Earthroot", TaskKind::Short, vec![cast(0.0, -10.0)]),
-            task(
-                "Mine a Copper Vein",
-                TaskKind::Short,
-                vec![cast(10.0, 15.0)],
-            ),
-            task(
-                "Sharpen at the anvil",
-                TaskKind::Short,
-                vec![cast(-10.0, -15.0)],
-            ),
-        ],
+        tasks: (tasks.iter())
+            .map(|(name, kind, steps)| TaskDef {
+                name: (*name).into(),
+                kind: *kind,
+                steps: steps.iter().map(|(s, _)| s.clone()).collect(),
+            })
+            .collect(),
         sabotages: vec![
             sabotage(SabotageKind::Lights, vec![at(8.0, 8.0)], None),
             sabotage(SabotageKind::Comms, vec![at(-8.0, 8.0)], None),
@@ -278,7 +613,14 @@ pub fn placeholder_layout() -> Layout {
         ],
         // No monsters until the server can show them (creature create and combat packets).
         creatures: Vec::new(),
-    }
+    };
+    let look = Look {
+        steps: (tasks.into_iter())
+            .map(|(_, _, steps)| steps.into_iter().map(|(_, n)| Some(n)).collect())
+            .collect(),
+        creatures: Vec::new(),
+    };
+    (layout, look)
 }
 
 #[cfg(test)]
@@ -293,7 +635,12 @@ mod tests {
     /// receiver is that player's outbox.
     fn hosted(settings: Settings, n: u64) -> (GameHost, Vec<UnboundedReceiver<Packet>>) {
         let map = Map::default();
-        let host = GameHost::new(settings, placeholder_layout(), map.clone());
+        let host = GameHost::new(
+            settings,
+            placeholder_layout(),
+            placeholder_look(),
+            map.clone(),
+        );
         let mut inboxes = Vec::new();
         for guid in 1..=n {
             let (tx, rx) = unbounded_channel();
@@ -338,6 +685,181 @@ mod tests {
             initial_kill_cooldown: Duration::ZERO,
             ..Settings::default()
         }
+    }
+
+    /// Every packet waiting in `inbox`, as the client reads it.
+    fn received(inbox: &mut UnboundedReceiver<Packet>) -> Vec<ServerPacket> {
+        let mut out = Vec::new();
+        while let Ok(p) = inbox.try_recv() {
+            let (packet, tail) = parse_server_with_tail(p.opcode, &p.body).expect("parses");
+            assert_eq!(tail, 0, "{:#06x} left bytes unread", p.opcode);
+            out.push(packet);
+        }
+        out
+    }
+
+    fn drain(inboxes: &mut [UnboundedReceiver<Packet>]) {
+        inboxes.iter_mut().for_each(|i| drop(received(i)));
+    }
+
+    /// A cast of `spell` at `target` from `guid`.
+    fn cast(host: &GameHost, guid: u64, spell: u32, target: Target) {
+        host.cast(guid, CastRequest { spell, target });
+    }
+
+    /// The started game's impostor and crewmates.
+    fn roles(host: &GameHost) -> (u64, Vec<u64>) {
+        let inner = host.lock();
+        let imp = (inner.game.players())
+            .find(|(_, p)| p.is_impostor())
+            .unwrap()
+            .0
+             .0;
+        let crew = (inner.game.players())
+            .filter(|(_, p)| p.is_crewmate())
+            .map(|(id, _)| id.0)
+            .collect();
+        (imp, crew)
+    }
+
+    fn launches(seen: &[ServerPacket], spell: u32) -> Vec<u64> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::SpellGo(go) if go.spell_id == spell => Some(go.caster),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_horn_starts_the_game_from_the_lobby() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        drain(&mut inboxes);
+        cast(&host, 2, spells::EMERGENCY, Target::Caster);
+        let seen = received(&mut inboxes[1]);
+        assert!(seen.iter().any(|p| matches!(
+            p,
+            ServerPacket::CastResult {
+                spell_id: spells::EMERGENCY,
+                outcome: benilla_protocol::messages::CastOutcome::Failed { reason: 0x17, .. }
+            }
+        )));
+        assert!(seen.iter().any(|p| matches!(p,
+            ServerPacket::Notification { text } if text == "Only the host can do that")));
+        cast(&host, 1, spells::EMERGENCY, Target::Caster);
+        assert!(matches!(host.lock().game.phase(), Phase::Playing));
+        let seen = received(&mut inboxes[0]);
+        assert_eq!(
+            launches(&seen, spells::EMERGENCY),
+            [1],
+            "the press is answered"
+        );
+    }
+
+    #[test]
+    fn a_kill_cast_strikes_the_aimed_crewmate_before_witnesses_only() {
+        let (host, mut inboxes) = hosted(
+            Settings {
+                min_players: 4,
+                ..quick()
+            },
+            4,
+        );
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        // One crewmate walks off out of sight; a crewmate's Kill is refused with the reason.
+        let far = crew[2];
+        host.moved(far, [-8900.0, -132.0, 83.5]);
+        drain(&mut inboxes);
+        cast(&host, crew[0], spells::KILL, Target::Unit(crew[1]));
+        assert!(received(&mut inboxes[crew[0] as usize - 1])
+            .iter()
+            .any(|p| matches!(p,
+            ServerPacket::Notification { text } if text == "Only impostors can do that")));
+
+        cast(&host, imp, spells::KILL, Target::Unit(crew[1]));
+        assert!(!host.lock().game.player(PlayerId(crew[1])).unwrap().alive);
+        for g in [imp, crew[0], crew[1]] {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            assert_eq!(launches(&seen, spells::KILL), [imp], "{g} sees the strike");
+            if g == imp {
+                // The kill cooldown starts its sweep on the button.
+                assert!(seen.iter().any(|p| matches!(p,
+                    ServerPacket::SpellCooldownList { caster, cooldowns }
+                        if *caster == imp && cooldowns.contains(&(spells::KILL, 25_000)))));
+            }
+        }
+        let seen = received(&mut inboxes[far as usize - 1]);
+        assert!(
+            launches(&seen, spells::KILL).is_empty(),
+            "too far to witness"
+        );
+    }
+
+    #[test]
+    fn a_task_cast_shows_its_gathering_spell_to_everyone_and_breaks_on_a_step() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.request(1, Request::Start);
+        let (task, at, node) = {
+            let inner = host.lock();
+            let p = inner.game.player(PlayerId(2)).unwrap();
+            let t = p.tasks[0];
+            let at = inner.game.layout().tasks[t.task.0].steps[t.step].at;
+            (t.task, at, inner.look.node(t.task, t.step).unwrap().clone())
+        };
+        host.moved(2, at);
+        drain(&mut inboxes);
+        // Use from the bar: shown as the node's own cast, the Use press freed.
+        cast(&host, 2, spells::USE, Target::Caster);
+        let mine = received(&mut inboxes[1]);
+        assert!(mine.iter().any(|p| matches!(
+            p,
+            ServerPacket::CastResult {
+                spell_id: spells::USE,
+                outcome: benilla_protocol::messages::CastOutcome::Ok
+            }
+        )));
+        for seen in [mine, received(&mut inboxes[0])] {
+            let start = seen.iter().find_map(|p| match p {
+                ServerPacket::SpellStart(s) => Some(s.clone()),
+                _ => None,
+            });
+            let start = start.expect("a cast bar");
+            assert_eq!((start.caster, start.spell_id), (2, node.spell));
+            assert_eq!(start.targets.go_target, Some(guid::node(task, 0)));
+            assert!(start.cast_time_ms >= 3000);
+        }
+        // A step breaks it for everyone.
+        host.moved(2, [at[0] + 1.0, at[1], at[2]]);
+        for inbox in &mut inboxes {
+            assert!(
+                received(inbox).iter().any(|p| matches!(p,
+                ServerPacket::SpellFailedOther { caster: 2, spell_id } if *spell_id == node.spell))
+            );
+        }
+        // Right-clicking the node casts at it; the cast runs out and launches for everyone.
+        host.moved(2, at);
+        cast(
+            &host,
+            2,
+            node.spell,
+            Target::GameObject(guid::node(task, 0)),
+        );
+        host.tick(Duration::from_secs(6));
+        for inbox in &mut inboxes {
+            assert_eq!(launches(&received(inbox), node.spell), [2]);
+        }
+        // The node of a later step, or someone else's task, is refused with the reason.
+        cast(
+            &host,
+            2,
+            node.spell,
+            Target::GameObject(guid::node(task, 0)),
+        );
+        let seen = received(&mut inboxes[1]);
+        assert!(seen
+            .iter()
+            .any(|p| matches!(p, ServerPacket::Notification { .. })));
     }
 
     #[test]

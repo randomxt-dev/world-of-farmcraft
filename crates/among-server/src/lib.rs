@@ -4,6 +4,7 @@
 
 pub mod accounts;
 pub mod game;
+pub mod look;
 pub mod realmd;
 pub mod srp;
 pub mod world;
@@ -32,6 +33,8 @@ pub struct ServerConfig {
     /// The match's rules and the map's task, button and station spots.
     pub settings: among_rules::Settings,
     pub layout: among_rules::Layout,
+    /// How the layout's spots look in the world.
+    pub look: look::Look,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +46,7 @@ impl Default for ServerConfig {
             realm_name: "Among Azeroth".into(),
             settings: among_rules::Settings::default(),
             layout: game::placeholder_layout(),
+            look: game::placeholder_look(),
         }
     }
 }
@@ -55,6 +59,7 @@ pub struct Server {
     accounts: Accounts,
     settings: among_rules::Settings,
     layout: among_rules::Layout,
+    look: look::Look,
 }
 
 impl Server {
@@ -77,6 +82,7 @@ impl Server {
             accounts,
             settings: config.settings.clone(),
             layout: config.layout.clone(),
+            look: config.look.clone(),
         })
     }
 
@@ -105,7 +111,7 @@ impl Server {
             world_port: self.world.local_addr()?.port(),
         };
         let map = world::Map::default();
-        let host = GameHost::new(self.settings, self.layout, map.clone());
+        let host = GameHost::new(self.settings, self.layout, self.look, map.clone());
         let clock = host.clone();
         tokio::spawn(async move {
             let mut every = tokio::time::interval(TICK);

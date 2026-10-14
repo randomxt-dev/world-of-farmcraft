@@ -143,6 +143,15 @@ pub fn cast_failed(spell: u32, reason: u8) -> Packet {
     )
 }
 
+/// `SMSG_CAST_RESULT` accepting the caster's `spell`: frees the client's in-flight guard for it
+/// when the cast is shown as another spell.
+pub fn cast_ok(spell: u32) -> Packet {
+    Packet::new(
+        opcode::SMSG_CAST_RESULT,
+        Body::default().u32(spell).u8(0).done(),
+    )
+}
+
 /// `SMSG_SPELL_START`: `caster` began `spell`, a bar of `cast_ms` (0 for an instant).
 pub fn spell_start(caster: u64, spell: u32, cast_ms: u32, target: Target) -> Packet {
     let mut b = Body::default();

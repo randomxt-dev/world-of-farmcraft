@@ -233,3 +233,61 @@ fn three_clients_start_a_game_by_button_and_a_kill_press_lands() {
     assert_eq!(winner, among_rules::Team::Impostors);
     assert_eq!(impostors, [among_rules::PlayerId(players[imp].1)]);
 }
+
+#[test]
+fn the_action_bar_starts_a_game_and_kills_by_casting() {
+    let settings = Settings {
+        min_players: 3,
+        initial_kill_cooldown: Duration::ZERO,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=3 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    // The host sounds the horn (Emergency) in the lobby: the game starts, the press is answered.
+    players[0].0.cast_spell(18946, None).unwrap();
+    let roles: Vec<Role> = (players.iter_mut())
+        .map(|(s, _)| {
+            wait_notice(s, |n| match n {
+                Notice::Role { role, .. } => Some(*role),
+                _ => None,
+            })
+        })
+        .collect();
+    // The game's events come first, then the answer to the press.
+    let answered = wait_for(&mut players[0].0, |p| match p {
+        ServerPacket::SpellGo(go) if go.spell_id == 18946 => Some(go.caster),
+        _ => None,
+    });
+    assert_eq!(answered, players[0].1);
+    let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
+    let victim = (0..3).find(|&i| i != imp).unwrap();
+    let victim_guid = players[victim].1;
+
+    // A crewmate's Kill is refused silently, the reason as red text.
+    let crew = (0..3).find(|&i| i != imp && i != victim).unwrap();
+    players[crew]
+        .0
+        .cast_spell(15692, Some(victim_guid))
+        .unwrap();
+    let why = wait_for(&mut players[crew].0, |p| match p {
+        ServerPacket::Notification { text } => Some(text.clone()),
+        _ => None,
+    });
+    assert_eq!(why, "Only impostors can do that");
+
+    // The impostor casts Kill at the victim; the victim is told it died, then sees the strike.
+    players[imp].0.cast_spell(15692, Some(victim_guid)).unwrap();
+    wait_notice(&mut players[victim].0, |n| {
+        (*n == Notice::Dead).then_some(())
+    });
+    let (caster, hits) = wait_for(&mut players[victim].0, |p| match p {
+        ServerPacket::SpellGo(go) if go.spell_id == 15692 => Some((go.caster, go.hits.clone())),
+        _ => None,
+    });
+    assert_eq!((caster, hits), (players[imp].1, vec![victim_guid]));
+}

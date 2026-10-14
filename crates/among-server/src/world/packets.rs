@@ -407,7 +407,11 @@ mod tests {
         else {
             panic!("the body last, got {events:?}");
         };
-        assert_eq!(worn.len(), 5, "the warrior's five worn items first");
+        assert_eq!(
+            worn.len(),
+            6,
+            "the warrior's five worn items and the pick first"
+        );
         assert!(worn
             .iter()
             .all(|e| matches!(e, SessionEvent::ItemCreate { .. })));
@@ -497,9 +501,19 @@ mod tests {
                 };
                 assert_eq!(
                     worn.len(),
-                    gear.len(),
-                    "{race}/{class}: one create per item"
+                    gear.len() + 1,
+                    "{race}/{class}: one create per item, the pick last"
                 );
+                // The Mining Pick in the backpack's first slot, carried but not shown.
+                let pick = items::carried(c.guid)[0];
+                let Some(SessionEvent::ItemCreate { guid, fields, .. }) = worn.last() else {
+                    panic!("{race}/{class}: no pick");
+                };
+                assert_eq!(
+                    (*guid, fields.object_entry()),
+                    (pick.guid, Some(items::MINING_PICK))
+                );
+                assert_eq!(me.player_pack_slot(0), Some(pick.guid), "backpack slot 1");
                 for (w, e) in gear.iter().zip(worn) {
                     let SessionEvent::ItemCreate { guid, fields, .. } = e else {
                         panic!("{race}/{class}: not an item create: {e:?}");

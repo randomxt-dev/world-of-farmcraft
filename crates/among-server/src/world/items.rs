@@ -3,7 +3,8 @@
 //! client asks for. The data is vmangos's world database (`playercreateinfo_item` and
 //! `item_template`, newest row at patch 10 or below) from the `db_latest` release
 //! `db-4641790.zip` of https://github.com/vmangos/core. Bag items (food, water, the Hearthstone,
-//! quivers, pouches, ammo) are left out: only what is worn.
+//! quivers, pouches, ammo) are left out: only what is worn, plus the Mining Pick every player carries
+//! so the client lets them cast Mining (its Totem is a pick in the bags, not one worn).
 
 use benilla_protocol::messages::opcode;
 
@@ -140,6 +141,7 @@ pub const TEMPLATES: &[ItemTemplate] = templates! {
     6139, "Novice's Robe", 4, 1, 12684, 0, 4, 1, 20, 1, 1, 1, 0, 0.0, 0, 0.0, 0.0, 3, 0, 7, 0, 35;
     6140, "Apprentice's Robe", 4, 1, 12649, 0, 4, 1, 20, 1, 1, 1, 0, 0.0, 0, 0.0, 0.0, 3, 0, 7, 0, 35;
     6144, "Neophyte's Robe", 4, 1, 12680, 0, 5, 1, 20, 1, 1, 1, 0, 0.0, 0, 0.0, 0.0, 3, 0, 7, 0, 35;
+    2901, "Mining Pick", 2, 14, 6568, 1, 81, 16, 21, 4, 1, 1, 2000, 0.0, 0, 2.0, 4.0, 0, 0, 1, 0, 0;
     12282, "Worn Battleaxe", 2, 1, 22291, 1, 43, 8, 17, 2, 1, 1, 2900, 0.0, 0, 3.0, 5.0, 0, 0, 1, 1, 25;
 };
 
@@ -227,7 +229,8 @@ pub fn equip_slot(inventory_type: u8) -> Option<u8> {
     })
 }
 
-/// One worn item: its slot, its object guid, its template and its stack count.
+/// One item the player holds, worn or in the backpack: its slot, its object guid, its template
+/// and its stack count.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Worn {
     pub slot: u8,
@@ -243,6 +246,24 @@ const HIGH_ITEM: u64 = 0x4000;
 /// slot make it unique.
 pub fn item_guid(owner: u64, slot: u8) -> u64 {
     HIGH_ITEM << 48 | (owner & 0xFFFF_FFFF) << 8 | u64::from(slot)
+}
+
+/// `item_template` 2901, Mining's Totem.
+pub const MINING_PICK: u32 = 2901;
+/// `INVENTORY_SLOT_ITEM_START`: the backpack's first slot.
+pub const BACKPACK: u8 = 23;
+
+/// What every player carries in the backpack: the Mining Pick, in its first slot.
+pub fn carried(owner: u64) -> Vec<Worn> {
+    template(MINING_PICK)
+        .map(|item| Worn {
+            slot: BACKPACK,
+            guid: item_guid(owner, BACKPACK),
+            item,
+            count: 1,
+        })
+        .into_iter()
+        .collect()
 }
 
 /// What a `race` `class` player starts wearing, by slot; nothing for a pair 1.12 does not allow.

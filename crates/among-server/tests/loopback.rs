@@ -399,16 +399,28 @@ fn self_create_with_items(
 fn a_client_wears_its_starting_gear_and_learns_each_item() {
     let host = start_server();
     let (mut one, one_guid) = enter(&host, "among1", "secret1");
-    // A fresh account's human warrior: the recruit kit, the items ahead of the body.
+    // A fresh account's human warrior: the recruit kit and the Mining Pick, ahead of the body.
     let (items, me) = wait_for(&mut one, |p| self_create_with_items(p, one_guid));
     let entries: Vec<Option<u32>> = items.iter().map(|(_, e)| *e).collect();
     assert_eq!(
         entries,
-        [Some(38), Some(39), Some(40), Some(25), Some(2362)]
+        [
+            Some(38),
+            Some(39),
+            Some(40),
+            Some(25),
+            Some(2362),
+            Some(2901)
+        ]
     );
     for (slot, (guid, _)) in [3u8, 6, 7, 15, 16].into_iter().zip(&items) {
         assert_eq!(me.player_inv_slot(slot), Some(*guid), "slot {slot}");
     }
+    assert_eq!(
+        me.player_pack_slot(0),
+        Some(items[5].0),
+        "the pick in the backpack"
+    );
     assert_eq!(me.player_visible_item_entry(15), Some(25));
 
     // The character sheet asks for each template; the sword comes back whole.

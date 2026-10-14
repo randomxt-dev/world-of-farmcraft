@@ -194,7 +194,7 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
                 (StepAction::Slay { .. }, Some(_)) => {
                     bail!("{what}: a slay step is fought, not worked at a node")
                 }
-                (_, None) => Some(NodeLook::kneel(&t.name, look::COPPER_VEIN)),
+                (_, None) => Some(NodeLook::mine(&t.name, look::COPPER_VEIN)),
                 (_, Some(name)) => Some(look::named(name).ok_or_else(|| {
                     anyhow!(
                         "{what}: node {name:?} is not one of {}",
@@ -477,8 +477,8 @@ mod tests {
             NodeLook::herb("Peacebloom", crate::look::PEACEBLOOM)
         );
         assert_eq!(node(1, 0).kind, NodeKind::Station);
-        // No node named: a kneeling spot at a copper vein, as a plain look has.
-        assert_eq!(node(1, 1).kind, NodeKind::Kneel);
+        // No node named: a copper vein to mine, as a plain look has.
+        assert_eq!(node(1, 1).kind, NodeKind::Mine);
         let wrong = text.replace("\"forge\"", "\"furnace\"");
         let e = format!(
             "{:#}",

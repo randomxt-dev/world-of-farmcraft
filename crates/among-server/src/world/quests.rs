@@ -105,6 +105,7 @@ fn step_text(
         (StepAction::Cast(_), Some(n)) => {
             let (verb, done) = match node.map(|n| n.kind) {
                 Some(NodeKind::Herb) => ("pick", "picked"),
+                Some(NodeKind::Mine) => ("mine", "mined"),
                 Some(NodeKind::Station) => ("use", "used"),
                 _ => ("work", "worked"),
             };

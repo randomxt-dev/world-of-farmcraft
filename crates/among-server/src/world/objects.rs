@@ -30,14 +30,14 @@ const TYPE_CHEST: u32 = 3;
 const TYPE_GOOBER: u32 = 10;
 /// `Lock.dbc` 29: Herbalism (lock type 2), skill 0, which Herb Gathering opens.
 const LOCK_HERB: i32 = 29;
-/// `Lock.dbc` 43: lock type 13, skill 0, which the "Opening" kneel cast opens.
-const LOCK_KNEEL: i32 = 43;
+/// `Lock.dbc` 38: Copper Vein's, Mining (lock type 3), skill 0, which Mining opens with a pick.
+const LOCK_MINE: i32 = 38;
 
 /// The node's `GAMEOBJECT_TYPE` and the lock in its `data[0]`.
 fn kind(node: &NodeLook) -> (u32, i32) {
     match node.kind {
         NodeKind::Herb => (TYPE_CHEST, LOCK_HERB),
-        NodeKind::Kneel => (TYPE_CHEST, LOCK_KNEEL),
+        NodeKind::Mine => (TYPE_CHEST, LOCK_MINE),
         NodeKind::Station => (TYPE_GOOBER, 0),
     }
 }
@@ -148,6 +148,20 @@ mod tests {
         assert_eq!((entry, info.type_id, info.display_id), (34, 3, 269));
         assert_eq!(info.name, "Peacebloom");
         assert_eq!(info.data[0], 29, "Herbalism's lock");
+
+        let vein = NodeLook::mine("Copper Vein", 310);
+        let ServerPacket::GameObjectQueryResponse { info, .. } =
+            parse(&query_response(36, Some(&vein)))
+        else {
+            panic!("not a template");
+        };
+        let info = info.expect("found");
+        assert_eq!(
+            (info.type_id, info.data[0]),
+            (3, 38),
+            "Copper Vein's Mining lock"
+        );
+        assert_eq!(vein.spell, crate::look::MINING, "the pickaxe swing");
 
         let station = NodeLook::station("Forge", 233, 2657);
         let ServerPacket::GameObjectQueryResponse { info, .. } =

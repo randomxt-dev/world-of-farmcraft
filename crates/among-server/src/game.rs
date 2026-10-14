@@ -1426,7 +1426,7 @@ fn placeholder() -> (Layout, Look) {
     use among_rules::{CreatureDef, StepAction};
     let [x, y, z] = player::SPAWN.position;
     let at = |dx: f32, dy: f32| [x + dx, y + dy, z];
-    // Gathering takes 5 s, as Herb Gathering and the kneeling "Opening" do; crafting 3 s.
+    // Gathering and mining take 5 s, as Herb Gathering does; crafting 3 s.
     let herb = |dx, dy, name, display| {
         (
             TaskStep::cast(at(dx, dy), 5.0),
@@ -1434,7 +1434,7 @@ fn placeholder() -> (Layout, Look) {
         )
     };
     let vein = |dx, dy| {
-        let node = NodeLook::kneel("Copper Vein", look::COPPER_VEIN);
+        let node = NodeLook::mine("Copper Vein", look::COPPER_VEIN);
         (TaskStep::cast(at(dx, dy), 5.0), node)
     };
     let craft = |dx, dy, name, display, spell| {

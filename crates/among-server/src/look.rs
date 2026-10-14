@@ -19,16 +19,16 @@ pub struct NodeLook {
 pub enum NodeKind {
     /// Picked with Herb Gathering, as a herb node is.
     Herb,
-    /// Worked kneeling, as a lock with no skill is opened: veins and other spots with no tool.
-    Kneel,
+    /// Mined with Mining and a Mining Pick, as an ore vein is.
+    Mine,
     /// Used at a crafting station; the server shows the craft's cast.
     Station,
 }
 
 /// Herb Gathering, 5 s in `Spell.dbc`.
 pub const HERB_GATHERING: u32 = 2366;
-/// "Opening" kneel cast (`Lock.dbc` 43, no skill), 5 s.
-pub const KNEEL: u32 = 6478;
+/// Mining: the pickaxe swing (`SpellVisualKit` 166, anim 62, the pick model at the hand).
+pub const MINING: u32 = 2575;
 
 // `GameObjectDisplayInfo.dbc` ids of nodes and stations.
 pub const PEACEBLOOM: u32 = 269;
@@ -95,7 +95,7 @@ pub fn named(name: &str) -> Option<NodeLook> {
         "peacebloom" => NodeLook::herb("Peacebloom", PEACEBLOOM),
         "silverleaf" => NodeLook::herb("Silverleaf", SILVERLEAF),
         "earthroot" => NodeLook::herb("Earthroot", EARTHROOT),
-        "copper" => NodeLook::kneel("Copper Vein", COPPER_VEIN),
+        "copper" => NodeLook::mine("Copper Vein", COPPER_VEIN),
         // Roasted Boar Meat, Smelt Copper and Copper Bracers: the crafts each station shows.
         "campfire" => NodeLook::station("Campfire", CAMPFIRE, 2540),
         "forge" => NodeLook::station("Forge", FORGE, 2657),
@@ -140,7 +140,7 @@ impl Look {
 }
 
 impl Look {
-    /// Every cast step a kneeling spot at a copper vein, every creature a wolf: a look that fits
+    /// Every cast step a copper vein to mine, every creature a wolf: a look that fits
     /// any layout.
     pub fn plain(layout: &Layout) -> Self {
         Self {
@@ -150,7 +150,7 @@ impl Look {
                         .map(|s| match s.action {
                             StepAction::Slay { .. } => None,
                             StepAction::Cast(_) | StepAction::Gather { .. } => {
-                                Some(NodeLook::kneel(&t.name, COPPER_VEIN))
+                                Some(NodeLook::mine(&t.name, COPPER_VEIN))
                             }
                         })
                         .collect()
@@ -186,12 +186,12 @@ impl NodeLook {
         }
     }
 
-    pub fn kneel(name: &str, display: u32) -> Self {
+    pub fn mine(name: &str, display: u32) -> Self {
         Self {
             name: name.into(),
-            kind: NodeKind::Kneel,
+            kind: NodeKind::Mine,
             display,
-            spell: KNEEL,
+            spell: MINING,
         }
     }
 

@@ -208,6 +208,11 @@ pub fn fields(c: &CharacterRecord, is_self: bool, life: Life) -> Fields {
             f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * slot, w.guid);
         }
     }
+    if is_self {
+        for w in items::carried(c.guid) {
+            f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(w.slot), w.guid);
+        }
+    }
     if is_self && !gear.iter().any(|w| w.slot == items::MAINHAND) {
         f.u64(
             PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(items::MAINHAND),
@@ -266,8 +271,9 @@ pub fn life_change(guid: u64, life: Life, max: u32) -> Packet {
 pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: Life) -> Packet {
     let mut blocks = Vec::new();
     if is_self {
-        for w in items::starting_gear(c.race, c.class, c.guid) {
-            blocks.push(items::create_block(&w, c.guid));
+        let gear = items::starting_gear(c.race, c.class, c.guid);
+        for w in gear.iter().chain(&items::carried(c.guid)) {
+            blocks.push(items::create_block(w, c.guid));
         }
     }
     blocks.push(update::create_player(

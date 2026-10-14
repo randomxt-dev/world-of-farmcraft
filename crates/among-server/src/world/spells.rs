@@ -12,7 +12,7 @@ pub use among_spells::*;
 
 /// The spells the client opens task nodes with: it casts the first known spell whose lock type
 /// the node's lock names, so they must be in the book, though not on the bar.
-pub const OPENERS: [u32; 2] = [crate::look::HERB_GATHERING, crate::look::KNEEL];
+pub const OPENERS: [u32; 2] = [crate::look::HERB_GATHERING, crate::look::MINING];
 
 /// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns. The book
 /// is the impostor's bar, then the node openers, for everyone: the book never changes, so it
@@ -188,7 +188,7 @@ mod tests {
         else {
             panic!("not a spell book");
         };
-        assert_eq!(spell_ids, [6603, 133, 6468, 28084, 15692, 9874, 2366, 6478]);
+        assert_eq!(spell_ids, [6603, 133, 6468, 28084, 15692, 9874, 2366, 2575]);
         assert!(cooldowns.is_empty());
 
         let bar = |impostor| {

@@ -9,14 +9,15 @@ use std::time::Duration;
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
     Actions, Class, Command, CreatureId, Event, Game, Layout, MeetingReason, Phase, PlayerId,
-    Position, Reject, SabotageDef, SabotageKind, Settings, StepAction, TaskDef, TaskId, TaskKind,
-    TaskStep, Vote,
+    Position, Reject, SabotageDef, SabotageKind, Settings, Station, StepAction, TaskDef, TaskId,
+    TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
 use crate::announce;
 use crate::look::Look;
 use crate::world::creatures::{self, Shown};
+use crate::world::guid::{Fixture, FixtureTemplate};
 use crate::world::player::Life;
 use crate::world::spells::{self, CastRequest, Target};
 use crate::world::{combat, death, guid, meeting, objects, packets, player, quests, Map, Packet};
@@ -74,6 +75,8 @@ struct Inner {
     ballots: HashMap<PlayerId, Vec<Vote>>,
     /// Each player's quest log as their client was last told it.
     quest_logs: HashMap<PlayerId, quests::Told>,
+    /// The beacons standing over stations still to fix.
+    beacons: std::collections::HashSet<Fixture>,
 }
 
 impl GameHost {
@@ -87,6 +90,7 @@ impl GameHost {
             Look::plain(&layout)
         };
         spawn_nodes(&layout, &look, &map);
+        spawn_fixtures(&layout, &map);
         Self(Arc::new(Mutex::new(Inner {
             game: Game::new(settings, layout),
             look,
@@ -107,6 +111,7 @@ impl GameHost {
             starting: None,
             ballots: HashMap::new(),
             quest_logs: HashMap::new(),
+            beacons: std::collections::HashSet::new(),
         })))
     }
 
@@ -215,13 +220,16 @@ impl GameHost {
         }
     }
 
-    /// A `CMSG_GAMEOBJ_USE` on a node with no lock: work its task step, or gather that node.
+    /// A `CMSG_GAMEOBJ_USE` on an object with no lock: the emergency button, a sabotage's
+    /// station or its beacon, else a node: work its task step, or gather that node.
     pub fn use_object(&self, guid: u64, object: u64) {
         let mut inner = self.lock();
         let player = PlayerId(guid);
-        let result = inner
-            .node_command(player, object)
-            .and_then(|cmd| inner.apply(cmd));
+        let command = match Fixture::of_guid(object) {
+            Some(fixture) => inner.fixture_command(player, fixture),
+            None => inner.node_command(player, object),
+        };
+        let result = command.and_then(|cmd| inner.run(cmd));
         if let Err(r) = result {
             tracing::debug!("game: {guid} use of {object:#x} refused: {r}");
             inner.map.send(guid, spells::notification(&sentence(r)));
@@ -367,8 +375,12 @@ impl GameHost {
         Some(quests::template(quest_id, player::SPAWN.zone, &text))
     }
 
-    /// The answer to `CMSG_GAMEOBJECT_QUERY` for template `entry`: a task node's, or a miss.
+    /// The answer to `CMSG_GAMEOBJECT_QUERY` for template `entry`: a fixture's, a task node's, or
+    /// a miss.
     pub fn gameobject_query(&self, entry: u32) -> Packet {
+        if let Some(template) = FixtureTemplate::of_entry(entry) {
+            return objects::query_response(entry, Some(&fixture_look(template)));
+        }
         let inner = self.lock();
         let node = guid::entry_step(entry).and_then(|(task, step)| inner.look.node(task, step));
         objects::query_response(entry, node)
@@ -398,6 +410,30 @@ fn spawn_nodes(layout: &Layout, look: &Look, map: &Map) {
                 map.spawn(g, objects::create_node(g, entry, node, at, 0.0));
             }
         }
+    }
+}
+
+/// Put the emergency button and every sabotage's stations in the world for the whole session.
+fn spawn_fixtures(layout: &Layout, map: &Map) {
+    let place = |fixture: Fixture, at: Position| {
+        let g = fixture.guid();
+        let look = fixture_look(fixture.template());
+        let entry = fixture.template().entry();
+        map.spawn(g, objects::create_node(g, entry, &look, at, 0.0));
+    };
+    place(Fixture::Button, layout.emergency_button);
+    for def in &layout.sabotages {
+        for (n, &at) in def.stations.iter().enumerate() {
+            place(Fixture::Station(def.kind, n), at);
+        }
+    }
+}
+
+fn fixture_look(template: FixtureTemplate) -> crate::look::NodeLook {
+    match template {
+        FixtureTemplate::Button => crate::look::button(),
+        FixtureTemplate::Station(kind) => crate::look::station(kind),
+        FixtureTemplate::Beacon(kind) => crate::look::beacon(kind),
     }
 }
 
@@ -477,6 +513,7 @@ impl Inner {
         }
         self.refresh_actions();
         self.refresh_bars();
+        self.refresh_beacons();
         self.refresh_cooldowns();
         self.refresh_health();
         Ok(events)
@@ -998,12 +1035,7 @@ impl Inner {
                 Some(kind) => Request::Sabotage(kind),
                 None => return Err(no_sabotage(g, player)),
             },
-            // The horn starts the game from the lobby and goes back to it after one.
-            spells::EMERGENCY => match g.phase() {
-                Phase::Lobby => Request::Start,
-                Phase::GameOver { .. } => Request::Lobby,
-                _ => Request::Emergency,
-            },
+            spells::EMERGENCY => self.horn(),
             spell if spell == self.class_spell(player) => {
                 return match cast.target {
                     Target::Unit(unit) => guid::creature_id(unit)
@@ -1015,6 +1047,61 @@ impl Inner {
             _ => return Err(Reject::InvalidTarget),
         };
         self.command(player, request)
+    }
+
+    /// The horn and the emergency button: start the game from the lobby, go back to it after one,
+    /// and call a meeting in between.
+    fn horn(&self) -> Request {
+        match self.game.phase() {
+            Phase::Lobby => Request::Start,
+            Phase::GameOver { .. } => Request::Lobby,
+            _ => Request::Emergency,
+        }
+    }
+
+    /// A right-click on a fixture: the button is the horn; a station, or the beacon over it,
+    /// fixes (or holds) that station while its sabotage runs.
+    fn fixture_command(&self, player: PlayerId, fixture: Fixture) -> Result<Command, Reject> {
+        match fixture {
+            Fixture::Button => self.command(player, self.horn()),
+            Fixture::Station(kind, station) | Fixture::Beacon(kind, station) => {
+                match self.game.sabotage() {
+                    Some(s) if s.kind == kind => Ok(Command::Fix { player, station }),
+                    _ => Err(Reject::NoSabotage),
+                }
+            }
+        }
+    }
+
+    /// Show a beacon over each station of the running sabotage still to fix, and take down the
+    /// ones fixed or ended.
+    fn refresh_beacons(&mut self) {
+        let want: std::collections::HashSet<Fixture> = (self.game.sabotage().into_iter())
+            .flat_map(|s| {
+                (s.stations.iter().enumerate())
+                    .filter(|(_, st)| **st != Station::Fixed)
+                    .map(move |(n, _)| Fixture::Beacon(s.kind, n))
+            })
+            .collect();
+        for gone in self.beacons.difference(&want) {
+            self.map.despawn(gone.guid());
+        }
+        for &new in want.difference(&self.beacons) {
+            let Fixture::Beacon(kind, n) = new else {
+                continue;
+            };
+            let Some(at) = (self.game.layout().sabotages.iter())
+                .find(|d| d.kind == kind)
+                .and_then(|d| d.stations.get(n).copied())
+            else {
+                continue;
+            };
+            let g = new.guid();
+            let look = fixture_look(new.template());
+            let create = objects::create_node(g, new.template().entry(), &look, at, 0.0);
+            self.map.spawn(g, create);
+        }
+        self.beacons = want;
     }
 
     /// Work at a task node: the step it stands for, if that is the player's current step; at a
@@ -2015,6 +2102,100 @@ mod tests {
         host.request(1, Request::Lobby);
         assert!(created(&received(&mut inboxes[me])).contains(&node));
         assert!(created(&received(&mut inboxes[(me + 1) % 3])).is_empty());
+    }
+
+    #[test]
+    fn the_button_and_every_station_stand_in_the_world() {
+        let (host, mut inboxes) = hosted(quick(), 1);
+        let seen = created(&received(&mut inboxes[0]));
+        let layout = placeholder_layout();
+        assert!(seen.contains(&Fixture::Button.guid()));
+        for def in &layout.sabotages {
+            for n in 0..def.stations.len() {
+                assert!(
+                    seen.contains(&Fixture::Station(def.kind, n).guid()),
+                    "{def:?}"
+                );
+            }
+        }
+        let template = |t: FixtureTemplate| {
+            let p = host.gameobject_query(t.entry());
+            let (ServerPacket::GameObjectQueryResponse { info, .. }, _) =
+                parse_server_with_tail(p.opcode, &p.body).unwrap()
+            else {
+                panic!("not a template");
+            };
+            let info = info.expect("found");
+            (info.name, info.type_id, info.data[0])
+        };
+        assert_eq!(
+            template(FixtureTemplate::Button),
+            ("Emergency Button".into(), 10, 0),
+            "a lockless goober, used with a right-click"
+        );
+        assert_eq!(
+            template(FixtureTemplate::Station(SabotageKind::Reactor)).0,
+            "Arcane Reactor"
+        );
+    }
+
+    #[test]
+    fn the_button_is_the_horn() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        drain(&mut inboxes);
+        host.use_object(1, Fixture::Button.guid());
+        assert!(matches!(host.lock().game.phase(), Phase::Playing));
+        // At the button, once it cools: a meeting.
+        host.tick(quick().emergency_cooldown);
+        host.moved(2, placeholder_layout().emergency_button);
+        drain(&mut inboxes);
+        host.use_object(2, Fixture::Button.guid());
+        let said: Vec<String> = (received(&mut inboxes[1]).into_iter())
+            .filter_map(|p| match p {
+                ServerPacket::Notification { text } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(host.lock().game.phase(), Phase::Meeting(_)),
+            "{said:?}"
+        );
+    }
+
+    #[test]
+    fn a_sabotage_raises_a_beacon_over_each_station_until_it_is_fixed() {
+        let settings = Settings {
+            sabotage_cooldown: Duration::ZERO,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 3);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let lamp = placeholder_layout().sabotages[0].clone();
+        assert_eq!(lamp.kind, SabotageKind::Lights);
+        let station = Fixture::Station(SabotageKind::Lights, 0);
+        let beacon = Fixture::Beacon(SabotageKind::Lights, 0);
+        // No sabotage yet: nothing to fix.
+        host.moved(crew[0], lamp.stations[0]);
+        drain(&mut inboxes);
+        host.use_object(crew[0], station.guid());
+        assert!(received(&mut inboxes[crew[0] as usize - 1]).iter().any(
+            |p| matches!(p, ServerPacket::Notification { text } if text.contains("sabotage"))
+        ));
+
+        host.request(imp, Request::Sabotage(SabotageKind::Lights));
+        assert!(created(&received(&mut inboxes[crew[1] as usize - 1])).contains(&beacon.guid()));
+        // The beacon is the station's handle too.
+        host.use_object(crew[0], beacon.guid());
+        assert!(
+            host.lock().game.sabotage().is_none(),
+            "the lights are fixed"
+        );
+        assert!(destroyed(&received(&mut inboxes[crew[1] as usize - 1])).contains(&beacon.guid()));
+        assert!(
+            !destroyed(&received(&mut inboxes[crew[0] as usize - 1])).contains(&station.guid()),
+            "the station itself stays"
+        );
     }
 
     #[test]

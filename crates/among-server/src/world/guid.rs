@@ -2,7 +2,7 @@
 //! template entry in bits 24-47 under its high word (vmangos `ObjectGuid`), which is what the
 //! client's creature and gameobject queries ask about.
 
-use among_rules::{CreatureId, TaskId};
+use among_rules::{CreatureId, SabotageKind, TaskId};
 
 /// `HIGHGUID_UNIT`.
 const HIGH_UNIT: u64 = 0xF130;
@@ -79,6 +79,87 @@ pub fn fits(steps: usize) -> bool {
     steps as u64 <= STEPS
 }
 
+/// The fixtures every match shares: the emergency button, each sabotage's stations, and the
+/// beacon over a station still to fix. Their entries sit past every task step's
+/// (`FIXTURE_ENTRIES` is far above `tasks * STEPS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Fixture {
+    Button,
+    /// Station `n` of the sabotage `kind`, as the layout lists them.
+    Station(SabotageKind, usize),
+    Beacon(SabotageKind, usize),
+}
+
+/// A fixture's template: the button, or a kind's station or beacon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixtureTemplate {
+    Button,
+    Station(SabotageKind),
+    Beacon(SabotageKind),
+}
+
+const FIXTURE_ENTRIES: u32 = 0xF0_0000;
+const KINDS: [SabotageKind; 4] = [
+    SabotageKind::Lights,
+    SabotageKind::Comms,
+    SabotageKind::Oxygen,
+    SabotageKind::Reactor,
+];
+
+fn kind_index(kind: SabotageKind) -> u32 {
+    KINDS.iter().position(|&k| k == kind).expect("every kind") as u32
+}
+
+impl FixtureTemplate {
+    pub fn entry(self) -> u32 {
+        FIXTURE_ENTRIES
+            + match self {
+                FixtureTemplate::Button => 0,
+                FixtureTemplate::Station(k) => 0x10 + kind_index(k),
+                FixtureTemplate::Beacon(k) => 0x20 + kind_index(k),
+            }
+    }
+
+    pub fn of_entry(entry: u32) -> Option<Self> {
+        let i = entry.checked_sub(FIXTURE_ENTRIES)?;
+        let kind = |base: u32| KINDS.get(i.checked_sub(base)? as usize).copied();
+        match i {
+            0 => Some(FixtureTemplate::Button),
+            0x10..=0x13 => kind(0x10).map(FixtureTemplate::Station),
+            0x20..=0x23 => kind(0x20).map(FixtureTemplate::Beacon),
+            _ => None,
+        }
+    }
+}
+
+impl Fixture {
+    pub fn template(self) -> FixtureTemplate {
+        match self {
+            Fixture::Button => FixtureTemplate::Button,
+            Fixture::Station(k, _) => FixtureTemplate::Station(k),
+            Fixture::Beacon(k, _) => FixtureTemplate::Beacon(k),
+        }
+    }
+
+    pub fn guid(self) -> u64 {
+        let low = match self {
+            Fixture::Button => 1,
+            Fixture::Station(_, n) | Fixture::Beacon(_, n) => n as u64 + 1,
+        };
+        make_low(HIGH_GAMEOBJECT, self.template().entry().into(), low)
+    }
+
+    pub fn of_guid(guid: u64) -> Option<Self> {
+        let template = FixtureTemplate::of_entry(split(guid, HIGH_GAMEOBJECT)? as u32)?;
+        let n = ((guid & 0xFF_FFFF).checked_sub(1))? as usize;
+        Some(match template {
+            FixtureTemplate::Button => Fixture::Button,
+            FixtureTemplate::Station(k) => Fixture::Station(k, n),
+            FixtureTemplate::Beacon(k) => Fixture::Beacon(k, n),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +186,29 @@ mod tests {
         );
         assert_eq!(node_step(7), None, "a player");
         assert_eq!(entry_step(0), None);
+    }
+
+    #[test]
+    fn fixtures_map_back_and_stay_clear_of_task_nodes() {
+        let all = [
+            Fixture::Button,
+            Fixture::Station(SabotageKind::Oxygen, 1),
+            Fixture::Beacon(SabotageKind::Reactor, 0),
+        ];
+        for f in all {
+            let g = f.guid();
+            assert_eq!(Fixture::of_guid(g), Some(f));
+            assert_eq!(benilla_protocol::guid::entry(g), Some(f.template().entry()));
+            assert_eq!(
+                FixtureTemplate::of_entry(f.template().entry()),
+                Some(f.template())
+            );
+        }
+        assert_eq!(Fixture::of_guid(node(TaskId(3), 1, 0)), None);
+        assert_eq!(FixtureTemplate::of_entry(node_entry(TaskId(200), 15)), None);
+        assert_ne!(
+            Fixture::Station(SabotageKind::Oxygen, 0).guid(),
+            Fixture::Station(SabotageKind::Oxygen, 1).guid()
+        );
     }
 }

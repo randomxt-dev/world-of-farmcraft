@@ -54,7 +54,7 @@ pub struct Survey {
     marks: Arc<Mutex<BTreeMap<String, Mark>>>,
 }
 
-const USAGE: &str = "Survey: .loc, .mark <name>, .unmark <name>, .marks";
+const USAGE: &str = "Survey: .loc, .mark <name>, .unmark <name>, .marks, .speed <x>";
 
 impl Survey {
     /// The survey saved at `path`, with whatever marks it already holds.

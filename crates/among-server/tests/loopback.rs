@@ -263,3 +263,21 @@ fn typing_mark_in_chat_records_where_you_stand() {
     me.send_chat(".nonsense").unwrap();
     assert!(wait_system_line(&mut me).starts_with("Survey: .loc"));
 }
+
+#[test]
+fn typing_speed_in_chat_makes_you_run_faster() {
+    let host = start_server_full(1, Settings::default(), temp_marks("speed"));
+    let (mut me, guid) = enter(&host, "among1", "secret1");
+    me.send_chat(".speed 3").unwrap();
+    let (to, speed) = wait_for(&mut me, |p| match p {
+        ServerPacket::ForceSpeedChange { guid, speed, .. } => Some((*guid, *speed)),
+        _ => None,
+    });
+    assert_eq!((to, speed), (guid, 21.0), "3 x the 7 yd/s base run speed");
+    assert_eq!(wait_system_line(&mut me), "Run speed x3 (21.0 yd/s)");
+    me.send_chat(".speed 50").unwrap();
+    assert_eq!(
+        wait_system_line(&mut me),
+        "Usage: .speed <0.5 to 10>, 1 is normal"
+    );
+}

@@ -1,6 +1,8 @@
 //! One world connection: the auth handshake, then the roster and the world until the socket
 //! closes.
 
+use std::cell::Cell;
+
 use anyhow::{bail, Context, Result};
 use benilla_protocol::messages::{self, opcode};
 use benilla_protocol::wire::{read_cstring, read_u32_le, read_u64_le};
@@ -15,6 +17,7 @@ use super::map::Map;
 use super::packets;
 use super::player;
 use super::socket::{self, Outbox, Packet};
+use super::update;
 use crate::accounts::{Accounts, CharacterRecord, CHAR_CREATE_ERROR};
 use crate::game::GameHost;
 use crate::srp::world_proof;
@@ -80,6 +83,7 @@ pub async fn run(
         survey,
         outbox: tx,
         in_world: None,
+        speed_changes: Cell::new(0),
     };
     let result = async {
         loop {
@@ -118,6 +122,8 @@ struct Session {
     outbox: Outbox,
     /// The character in the world, once `CMSG_PLAYER_LOGIN` seated it.
     in_world: Option<CharacterRecord>,
+    /// The counter each `SMSG_FORCE_*_SPEED_CHANGE` carries, which the client's ack echoes.
+    speed_changes: Cell<u32>,
 }
 
 impl Session {
@@ -252,6 +258,10 @@ impl Session {
 
     /// A `.` command typed in chat: the survey's, answered as system lines.
     fn dot_command(&self, guid: u64, text: &str) -> Result<()> {
+        let mut words = text.split_whitespace();
+        if words.next() == Some(".speed") {
+            return self.set_speed(guid, words.next(), words.next().is_some());
+        }
         let Some(pose) = self.map.pose(guid) else {
             return Ok(());
         };
@@ -266,6 +276,28 @@ impl Session {
             self.send(packets::system_message(&line))?;
         }
         Ok(())
+    }
+
+    /// `.speed [multiplier]`: run faster for surveying, never during a game.
+    fn set_speed(&self, guid: u64, arg: Option<&str>, extra: bool) -> Result<()> {
+        let multiplier = match arg.map(str::parse::<f32>) {
+            None => Some(1.0),
+            Some(Ok(m)) if (0.5..=10.0).contains(&m) && !extra => Some(m),
+            Some(_) => None,
+        };
+        let reply = match multiplier {
+            None => "Usage: .speed <0.5 to 10>, 1 is normal".to_owned(),
+            Some(_) if self.host.in_game() => "Not during a game.".to_owned(),
+            Some(m) => {
+                let speed = update::BASE_SPEEDS[1] * m;
+                let counter = self.speed_changes.get() + 1;
+                self.speed_changes.set(counter);
+                self.send(packets::force_run_speed(guid, counter, speed))?;
+                self.map.set_run_speed(guid, speed);
+                format!("Run speed x{m} ({speed:.1} yd/s)")
+            }
+        };
+        self.send(packets::system_message(&reply))
     }
 
     fn leave_world(&mut self) {

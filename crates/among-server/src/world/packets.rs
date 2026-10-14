@@ -182,6 +182,19 @@ pub fn system_message(text: &str) -> Packet {
     )
 }
 
+/// `SMSG_FORCE_RUN_SPEED_CHANGE`: packed guid, the change counter the client's ack echoes, the
+/// new run speed in yards per second.
+pub fn force_run_speed(guid: u64, counter: u32, speed: f32) -> Packet {
+    Packet::new(
+        opcode::SMSG_FORCE_RUN_SPEED_CHANGE,
+        Body::default()
+            .packed_guid(guid)
+            .u32(counter)
+            .f32(speed)
+            .done(),
+    )
+}
+
 /// A client's `CMSG_MESSAGECHAT`: `u32` type and language, the target or channel name for a
 /// whisper (6) or channel (14) line, then the text (vmangos `Server/Packets/Chat.cpp:3-12`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,6 +320,21 @@ mod tests {
         assert!(m.is_addon());
         assert_eq!((m.chat_type, m.sender_guid), (CHAT_MSG_PARTY, 7));
         assert_eq!(m.text, "AMONG\trole crew");
+    }
+
+    #[test]
+    fn a_speed_change_reads_back_in_the_client() {
+        use benilla_protocol::messages::SpeedKind;
+        let ServerPacket::ForceSpeedChange {
+            guid,
+            kind,
+            counter,
+            speed,
+        } = parse(&force_run_speed(7, 3, 21.0))
+        else {
+            panic!("not a speed change");
+        };
+        assert_eq!((guid, kind, counter, speed), (7, SpeedKind::Run, 3, 21.0));
     }
 
     #[test]

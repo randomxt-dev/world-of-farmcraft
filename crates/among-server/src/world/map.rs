@@ -93,6 +93,13 @@ impl Map {
         self.lock().keys().copied().collect()
     }
 
+    /// Record `guid`'s run speed, which later creates of it carry.
+    pub fn set_run_speed(&self, guid: u64, speed: f32) {
+        if let Some(o) = self.lock().get_mut(&guid) {
+            o.living.speeds[1] = speed;
+        }
+    }
+
     /// Where `guid` last reported standing.
     pub fn pose(&self, guid: u64) -> Option<Living> {
         self.lock().get(&guid).map(|o| o.living)

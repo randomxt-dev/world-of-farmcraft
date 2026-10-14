@@ -4,7 +4,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::protocol::{Command, Event, PlayerId, Reject, Role, TaskId, Team, WinReason};
+use crate::protocol::{
+    Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
+    WinReason,
+};
 use crate::rng::SplitMix64;
 use crate::settings::{max_impostors, within, Layout, Position, Settings, TaskKind};
 
@@ -64,7 +67,33 @@ pub struct Body {
 pub enum Phase {
     Lobby,
     Playing,
-    GameOver { winner: Team, reason: WinReason },
+    Meeting(Meeting),
+    /// The ejection reveal; ejected is already a ghost.
+    Ejecting {
+        ejected: Option<PlayerId>,
+        remaining: Duration,
+    },
+    GameOver {
+        winner: Team,
+        reason: WinReason,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Meeting {
+    pub caller: PlayerId,
+    pub reason: MeetingReason,
+    pub stage: MeetingStage,
+    /// Until the stage ends.
+    pub remaining: Duration,
+    /// Votes cast so far, secret until the tally.
+    pub votes: BTreeMap<PlayerId, Vote>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeetingStage {
+    Discussion,
+    Voting,
 }
 
 /// The match: lobby, roles, tasks, kills, meetings, votes, sabotage and the win check.
@@ -210,6 +239,45 @@ impl Game {
                 }
                 self.in_reach(k.position, v.position, self.settings.kill_distance)
             }
+            Command::Report { player, body } => {
+                self.playing()?;
+                let p = self.alive(player)?;
+                let b = (self.bodies.iter())
+                    .find(|b| b.victim == body)
+                    .ok_or(Reject::NoSuchBody)?;
+                self.in_reach(p.position, b.position, self.settings.report_distance)
+            }
+            Command::CallEmergency { player } => {
+                self.playing()?;
+                let p = self.alive(player)?;
+                if p.emergencies_left == 0 {
+                    return Err(Reject::NoEmergencyMeetingsLeft);
+                }
+                if !self.emergency_cooldown.is_zero() {
+                    return Err(Reject::OnCooldown);
+                }
+                let button = self.layout.emergency_button;
+                self.in_reach(p.position, button, self.settings.use_distance)
+            }
+            Command::Vote { voter, vote } => {
+                let Phase::Meeting(m) = &self.phase else {
+                    return Err(Reject::WrongPhase);
+                };
+                if m.stage != MeetingStage::Voting {
+                    return Err(Reject::WrongPhase);
+                }
+                self.alive(voter)?;
+                if m.votes.contains_key(&voter) {
+                    return Err(Reject::AlreadyVoted);
+                }
+                match vote {
+                    Vote::Player(target) => self
+                        .alive(target)
+                        .map(drop)
+                        .map_err(|_| Reject::InvalidTarget),
+                    Vote::Skip => Ok(()),
+                }
+            }
             Command::ReturnToLobby { by } => {
                 if !matches!(self.phase, Phase::GameOver { .. }) {
                     return Err(Reject::WrongPhase);
@@ -243,6 +311,22 @@ impl Game {
             Command::Move { player, position } => self.seat(player).position = position,
             Command::UseTask { player, task } => self.use_task(player, task),
             Command::Kill { killer, victim } => self.kill(killer, victim),
+            Command::Report { player, body } => {
+                self.start_meeting(player, MeetingReason::Report { body })
+            }
+            Command::CallEmergency { player } => {
+                self.seat(player).emergencies_left -= 1;
+                self.start_meeting(player, MeetingReason::Emergency);
+            }
+            Command::Vote { voter, vote } => {
+                if let Phase::Meeting(m) = &mut self.phase {
+                    m.votes.insert(voter, vote);
+                }
+                self.out.push(Event::VoteCast { voter });
+                if self.everyone_voted() {
+                    self.close_voting();
+                }
+            }
             Command::ReturnToLobby { .. } => self.return_to_lobby(),
             Command::Tick { dt } => self.tick(dt),
             _ => {}
@@ -366,10 +450,110 @@ impl Game {
                 .map(|(&id, _)| id);
             self.set_host(next);
         }
-        if self.phase == Phase::Playing {
-            self.push_task_bar();
-            self.check_win();
+        if let Phase::Meeting(m) = &mut self.phase {
+            m.votes.remove(&player);
+            let returned: Vec<PlayerId> = (m.votes.iter())
+                .filter(|(_, &v)| v == Vote::Player(player))
+                .map(|(&voter, _)| voter)
+                .collect();
+            for voter in returned {
+                m.votes.remove(&voter);
+                self.out.push(Event::VoteReturned { voter });
+            }
         }
+        if self.in_progress() {
+            self.push_task_bar();
+            if !self.check_win() && self.everyone_voted() {
+                self.close_voting();
+            }
+        }
+    }
+
+    fn start_meeting(&mut self, caller: PlayerId, reason: MeetingReason) {
+        let discussion = self.settings.discussion_time;
+        self.out.push(Event::MeetingCalled {
+            caller,
+            reason,
+            discussion,
+        });
+        if !self.bodies.is_empty() {
+            self.bodies.clear();
+            self.out.push(Event::BodiesCleared);
+        }
+        self.phase = Phase::Meeting(Meeting {
+            caller,
+            reason,
+            stage: MeetingStage::Discussion,
+            remaining: discussion,
+            votes: BTreeMap::new(),
+        });
+        if discussion.is_zero() {
+            self.open_voting();
+        }
+    }
+
+    fn open_voting(&mut self) {
+        let voting = self.settings.voting_time;
+        if let Phase::Meeting(m) = &mut self.phase {
+            m.stage = MeetingStage::Voting;
+            m.remaining = voting;
+        }
+        self.out.push(Event::VotingOpened { voting });
+    }
+
+    /// Whether every living, connected player has a vote in an open ballot.
+    fn everyone_voted(&self) -> bool {
+        let Phase::Meeting(m) = &self.phase else {
+            return false;
+        };
+        m.stage == MeetingStage::Voting
+            && (self.players.iter())
+                .filter(|(_, p)| p.connected && p.alive)
+                .all(|(id, _)| m.votes.contains_key(id))
+    }
+
+    fn close_voting(&mut self) {
+        let Phase::Meeting(m) = std::mem::replace(&mut self.phase, Phase::Playing) else {
+            return;
+        };
+        let votes: Vec<(PlayerId, Vote)> = m.votes.into_iter().collect();
+        let outcome = tally(&votes);
+        self.out.push(Event::VotingClosed { votes, outcome });
+        let ejected = match outcome {
+            VoteOutcome::Ejected(player) => Some(player),
+            VoteOutcome::Tie | VoteOutcome::Skipped => None,
+        };
+        if let Some(player) = ejected {
+            let p = self.seat(player);
+            p.alive = false;
+            let impostor = p.is_impostor();
+            let left = (self.players.values())
+                .filter(|p| p.connected && p.alive && p.is_impostor())
+                .count();
+            let confirm = self.settings.confirm_ejects;
+            self.out.push(Event::Ejected {
+                player,
+                impostor: confirm.then_some(impostor),
+                impostors_left: confirm.then_some(left),
+            });
+        }
+        self.phase = Phase::Ejecting {
+            ejected,
+            remaining: self.settings.ejection_time,
+        };
+    }
+
+    fn end_ejection(&mut self) {
+        self.out.push(Event::MeetingEnded);
+        self.phase = Phase::Playing;
+        if self.check_win() {
+            return;
+        }
+        let cooldown = self.settings.kill_cooldown;
+        for p in self.players.values_mut().filter(|p| p.is_impostor()) {
+            p.kill_cooldown = cooldown;
+        }
+        self.emergency_cooldown = self.settings.emergency_cooldown;
     }
 
     fn return_to_lobby(&mut self) {
@@ -386,11 +570,37 @@ impl Game {
         self.out.push(Event::ReturnedToLobby);
     }
 
-    fn tick(&mut self, dt: Duration) {
-        if self.phase == Phase::Playing {
-            self.emergency_cooldown = self.emergency_cooldown.saturating_sub(dt);
-            for p in self.players.values_mut() {
-                p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
+    /// Runs the clock; a long dt carries through every stage boundary it crosses, in order.
+    fn tick(&mut self, mut dt: Duration) {
+        loop {
+            match &mut self.phase {
+                Phase::Meeting(m) => {
+                    if dt < m.remaining {
+                        m.remaining -= dt;
+                        return;
+                    }
+                    dt -= m.remaining;
+                    match m.stage {
+                        MeetingStage::Discussion => self.open_voting(),
+                        MeetingStage::Voting => self.close_voting(),
+                    }
+                }
+                Phase::Ejecting { remaining, .. } => {
+                    if dt < *remaining {
+                        *remaining -= dt;
+                        return;
+                    }
+                    dt -= *remaining;
+                    self.end_ejection();
+                }
+                Phase::Playing => {
+                    self.emergency_cooldown = self.emergency_cooldown.saturating_sub(dt);
+                    for p in self.players.values_mut() {
+                        p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
+                    }
+                    return;
+                }
+                Phase::Lobby | Phase::GameOver { .. } => return,
             }
         }
     }
@@ -456,6 +666,14 @@ impl Game {
         }
     }
 
+    /// Between Start and GameOver.
+    fn in_progress(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Playing | Phase::Meeting(_) | Phase::Ejecting { .. }
+        )
+    }
+
     fn playing(&self) -> Result<(), Reject> {
         match self.phase {
             Phase::Playing => Ok(()),
@@ -494,5 +712,27 @@ impl Game {
         } else {
             Err(Reject::OutOfRange)
         }
+    }
+}
+
+/// A strict plurality ejects; a shared top count (players, or a player and skip) is a tie; skip
+/// leading, or no votes at all, skips.
+fn tally(votes: &[(PlayerId, Vote)]) -> VoteOutcome {
+    let mut counts: BTreeMap<PlayerId, usize> = BTreeMap::new();
+    let mut skips = 0;
+    for &(_, vote) in votes {
+        match vote {
+            Vote::Player(target) => *counts.entry(target).or_default() += 1,
+            Vote::Skip => skips += 1,
+        }
+    }
+    let top = counts.values().copied().max().unwrap_or(0);
+    if skips > top || top == 0 {
+        return VoteOutcome::Skipped;
+    }
+    let mut leaders = counts.iter().filter(|(_, &c)| c == top).map(|(&id, _)| id);
+    match (leaders.next(), leaders.next()) {
+        (Some(only), None) if skips < top => VoteOutcome::Ejected(only),
+        _ => VoteOutcome::Tie,
     }
 }

@@ -192,6 +192,10 @@ pub enum Event {
     VoteCast {
         voter: PlayerId,
     },
+    /// A vote for a player who left is handed back; oter may vote again.
+    VoteReturned {
+        voter: PlayerId,
+    },
     VotingClosed {
         votes: Vec<(PlayerId, Vote)>,
         outcome: VoteOutcome,

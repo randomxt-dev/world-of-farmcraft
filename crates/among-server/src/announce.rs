@@ -3,7 +3,7 @@
 //! count) has no line.
 
 use among_rules::wire::Notice;
-use among_rules::{Game, PlayerId, Role, SabotageKind, Team, Vote, VoteOutcome, WinReason};
+use among_rules::{Game, PlayerId, Role, SabotageKind, TaskId, Team, Vote, VoteOutcome, WinReason};
 
 /// The line `notice` shows `reader`, if any; `name` turns a player into their character's name.
 pub fn line(
@@ -41,15 +41,18 @@ pub fn line(
             ..
         } => "You are a CREWMATE. Finish your tasks and vote the impostors out.".into(),
         Notice::Task {
+            task: id,
             name: task,
             step,
             steps,
-            ..
-        } => match *step {
-            0 => format!("Your task: {task}."),
-            s if s >= *steps => format!("Task done: {task}."),
-            s => format!("{task}: step {s} of {steps} done."),
-        },
+        } => {
+            let next = where_is(game, *id, *step);
+            match *step {
+                0 => format!("Your task: {task}, {next}."),
+                s if s >= *steps => format!("Task done: {task}."),
+                s => format!("{task}: step {s} of {steps} done; next {next}."),
+            }
+        }
         Notice::Slay { kills, count, .. } => format!("Slain: {kills} of {count}."),
         Notice::Gather { picked, count, .. } => format!("Gathered: {picked} of {count}."),
         Notice::Dead => {
@@ -195,7 +198,74 @@ pub fn headline(notice: &Notice, name: &dyn Fn(PlayerId) -> String) -> Option<St
     })
 }
 
+/// Where `task`'s step `step` is worked, from the meeting table: "75 yd west of the table".
+fn where_is(game: &Game, task: TaskId, step: usize) -> String {
+    let layout = game.layout();
+    let Some(s) = layout.tasks.get(task.0).and_then(|t| t.steps.get(step)) else {
+        return "somewhere".into();
+    };
+    let from = layout.emergency_button;
+    // WoW's world axes: +x is north, +y is west.
+    let (north, west) = (s.at[0] - from[0], s.at[1] - from[1]);
+    let yards = (north * north + west * west).sqrt().round();
+    if yards < 5.0 {
+        return "at the table".into();
+    }
+    const POINTS: [&str; 8] = [
+        "north",
+        "northwest",
+        "west",
+        "southwest",
+        "south",
+        "southeast",
+        "east",
+        "northeast",
+    ];
+    let eighth = (west.atan2(north) / std::f32::consts::FRAC_PI_4).round() as i32;
+    format!(
+        "{yards} yd {} of the table",
+        POINTS[eighth.rem_euclid(8) as usize]
+    )
+}
+
 /// `n` and the noun that fits it: "1 impostor", "2 impostors".
 fn count(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use among_rules::{Layout, Settings, TaskDef, TaskKind, TaskStep};
+
+    #[test]
+    fn a_task_spot_is_told_as_yards_and_a_compass_point_from_the_table() {
+        let spots = [
+            [0.0, 75.0, 0.0],
+            [40.0, 0.0, 3.0],
+            [-30.0, -30.0, 0.0],
+            [2.0, 1.0, 0.0],
+        ];
+        let layout = Layout {
+            emergency_button: [0.0; 3],
+            tasks: vec![TaskDef {
+                name: "Walk".into(),
+                kind: TaskKind::Short,
+                steps: spots.iter().map(|&at| TaskStep::cast(at, 1.0)).collect(),
+            }],
+            sabotages: Vec::new(),
+            creatures: Vec::new(),
+        };
+        let game = Game::new(Settings::default(), layout);
+        let told: Vec<String> = (0..4).map(|s| where_is(&game, TaskId(0), s)).collect();
+        assert_eq!(
+            told,
+            [
+                "75 yd west of the table",
+                "40 yd north of the table",
+                "42 yd southeast of the table",
+                "at the table"
+            ]
+        );
+    }
 }

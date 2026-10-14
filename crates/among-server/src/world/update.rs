@@ -14,6 +14,7 @@ const TYPEID_PLAYER: u8 = 4;
 pub const UPDATEFLAG_SELF: u8 = 0x01;
 pub const UPDATEFLAG_ALL: u8 = 0x10;
 pub const UPDATEFLAG_LIVING: u8 = 0x20;
+pub const UPDATEFLAG_HAS_POSITION: u8 = 0x40;
 
 /// A sparse descriptor: field index to raw `u32` value.
 #[derive(Debug, Default, Clone)]
@@ -75,7 +76,11 @@ pub fn create_player(guid: u64, is_self: bool, living: &Living, fields: &Fields)
     b.u8(UPDATETYPE_CREATE_OBJECT2)
         .packed_guid(guid)
         .u8(TYPEID_PLAYER);
-    let flags = UPDATEFLAG_ALL | UPDATEFLAG_LIVING | if is_self { UPDATEFLAG_SELF } else { 0 };
+    // vmangos's player flags: `0x71` for the receiver's own body, `0x70` for anyone else's.
+    let flags = UPDATEFLAG_ALL
+        | UPDATEFLAG_LIVING
+        | UPDATEFLAG_HAS_POSITION
+        | if is_self { UPDATEFLAG_SELF } else { 0 };
     b.u8(flags)
         .u32(living.movement_flags)
         .u32(living.time)

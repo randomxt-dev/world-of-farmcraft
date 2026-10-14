@@ -176,6 +176,12 @@ impl Session {
                 let sequence = read_u32_le(&mut cur)?;
                 self.send(packets::pong(sequence))?;
             }
+            opcode::CMSG_QUERY_TIME => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as u32);
+                self.send(packets::query_time_response(now))?;
+            }
             opcode::CMSG_NAME_QUERY => {
                 let guid = read_u64_le(&mut cur)?;
                 let known = self

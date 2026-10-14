@@ -159,6 +159,7 @@ pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool) -> Pac
 pub fn login_packets(c: &CharacterRecord) -> Vec<Packet> {
     vec![
         packets::login_verify_world(SPAWN),
+        packets::login_set_time_speed(),
         create_packet(c, &spawn_living(), true),
     ]
 }

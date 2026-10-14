@@ -9,7 +9,7 @@ use std::time::Duration;
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
     Actions, Class, Command, CreatureId, Event, Game, Layout, Phase, PlayerId, Position, Reject,
-    SabotageDef, SabotageKind, Settings, TaskDef, TaskId, TaskKind, TaskStep, Vote,
+    SabotageDef, SabotageKind, Settings, StepAction, TaskDef, TaskId, TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
@@ -45,6 +45,8 @@ struct Inner {
     hunting: HashMap<CreatureId, PlayerId>,
     /// Where each creature was last shown, the start of its next move.
     creature_at: HashMap<CreatureId, Position>,
+    /// The gather nodes each player has picked, hidden from their client until the lobby.
+    hidden: HashMap<PlayerId, Vec<u64>>,
 }
 
 impl GameHost {
@@ -70,6 +72,7 @@ impl GameHost {
             attacking: HashMap::new(),
             hunting: HashMap::new(),
             creature_at: HashMap::new(),
+            hidden: HashMap::new(),
         })))
     }
 
@@ -100,6 +103,7 @@ impl GameHost {
         inner.cooldowns.remove(&player);
         inner.casts.remove(&player);
         inner.health.remove(&player);
+        inner.hidden.remove(&player);
     }
 
     /// A character moved; spectators outside the game are ignored.
@@ -162,7 +166,7 @@ impl GameHost {
         }
     }
 
-    /// A `CMSG_GAMEOBJ_USE` on a node with no lock: work its task step.
+    /// A `CMSG_GAMEOBJ_USE` on a node with no lock: work its task step, or gather that node.
     pub fn use_object(&self, guid: u64, object: u64) {
         let mut inner = self.lock();
         let player = PlayerId(guid);
@@ -232,7 +236,8 @@ impl GameHost {
     }
 }
 
-/// Put every task step's node in the world, where the step is done, for the whole session.
+/// Put every task node in the world for the whole session: a Cast step's one node where the step
+/// is done, a Gather step's one at each of its spots.
 fn spawn_nodes(layout: &Layout, look: &Look, map: &Map) {
     for (t, def) in layout.tasks.iter().enumerate() {
         let task = TaskId(t);
@@ -244,9 +249,15 @@ fn spawn_nodes(layout: &Layout, look: &Look, map: &Map) {
             let Some(node) = look.node(task, step) else {
                 continue;
             };
-            let g = guid::node(task, step);
-            let create = objects::create_node(g, guid::node_entry(task, step), node, s.at, 0.0);
-            map.spawn(g, create);
+            let spots = match &s.action {
+                StepAction::Gather { nodes, .. } => nodes.as_slice(),
+                _ => std::slice::from_ref(&s.at),
+            };
+            let entry = guid::node_entry(task, step);
+            for (index, &at) in spots.iter().enumerate() {
+                let g = guid::node(task, step, index);
+                map.spawn(g, objects::create_node(g, entry, node, at, 0.0));
+            }
         }
     }
 }
@@ -283,12 +294,37 @@ impl Inner {
     fn show(&mut self, event: &Event) {
         match *event {
             Event::CastStarted { player, task, time } => {
+                let p = self.game.player(player);
+                let step =
+                    (p.and_then(|p| p.tasks.iter().find(|t| t.task == task))).map_or(0, |t| t.step);
+                let index = (p.and_then(|p| p.casting)).and_then(|c| c.node);
+                let spell = self.look.node(task, step).map_or(spells::USE, |n| n.spell);
+                let target = Target::GameObject(guid::node(task, step, index.unwrap_or(0)));
+                self.start_cast(player, spell, time, target);
+            }
+            Event::GatherProgress {
+                player,
+                task,
+                node,
+                picked,
+                count,
+            } => {
+                // The picked herb or vein is gone for its gatherer; the others still see it.
                 let step = (self.game.player(player))
                     .and_then(|p| p.tasks.iter().find(|t| t.task == task))
                     .map_or(0, |t| t.step);
-                let spell = self.look.node(task, step).map_or(spells::USE, |n| n.spell);
-                let target = Target::GameObject(guid::node(task, step));
-                self.start_cast(player, spell, time, target);
+                // The pick that reached the count has already moved the step on.
+                let step = step - usize::from(picked >= count && step > 0);
+                let g = guid::node(task, step, node);
+                self.map.hide_from(player.0, g);
+                self.hidden.entry(player).or_default().push(g);
+            }
+            Event::ReturnedToLobby => {
+                for (player, nodes) in std::mem::take(&mut self.hidden) {
+                    for g in nodes {
+                        self.map.show_to(player.0, g);
+                    }
+                }
             }
             Event::SpellCastStarted {
                 player,
@@ -502,6 +538,15 @@ impl Inner {
         self.shown.insert(player, spell);
     }
 
+    fn is_gather_step(&self, task: TaskId, step: usize) -> bool {
+        (self.game.layout().tasks.get(task.0)).is_some_and(|t| {
+            matches!(
+                t.steps.get(step).map(|s| &s.action),
+                Some(StepAction::Gather { .. })
+            )
+        })
+    }
+
     fn class_spell(&self, player: PlayerId) -> u32 {
         let class = self.game.player(player).map_or(Class::Warrior, |p| p.class);
         spells::class_spell(class)
@@ -566,10 +611,15 @@ impl Inner {
         self.command(player, request)
     }
 
-    /// Work at a task node: the step it stands for, if that is the player's current step.
+    /// Work at a task node: the step it stands for, if that is the player's current step; at a
+    /// Gather step's node, gather that one.
     fn node_command(&self, player: PlayerId, object: u64) -> Result<Command, Reject> {
-        let (task, step) = guid::node_step(object).ok_or(Reject::InvalidTarget)?;
-        let cmd = Command::UseTask { player, task };
+        let (task, step, node) = guid::node_step(object).ok_or(Reject::InvalidTarget)?;
+        let cmd = if self.is_gather_step(task, step) {
+            Command::GatherNode { player, task, node }
+        } else {
+            Command::UseTask { player, task }
+        };
         let current = (self.game.player(player))
             .and_then(|p| p.tasks.iter().find(|t| t.task == task))
             .map(|t| t.step);
@@ -771,6 +821,25 @@ fn placeholder() -> (Layout, Look) {
         let node = NodeLook::station(name, display, spell);
         (TaskStep::cast(at(dx, dy), 3.0), node)
     };
+    // Peacebloom grows at 7 spots 5-6 yd apart around the spawn's east side; 5 are picked.
+    let meadow = [
+        (10.0, 0.0),
+        (14.0, -4.0),
+        (13.0, 5.0),
+        (18.0, 2.0),
+        (12.0, -10.0),
+        (6.0, -6.0),
+        (5.0, 5.0),
+    ];
+    let meadow: Vec<Position> = meadow.iter().map(|&(dx, dy)| at(dx, dy)).collect();
+    let gather = TaskStep {
+        at: meadow[0],
+        action: StepAction::Gather {
+            nodes: meadow,
+            cast: Duration::from_secs(5),
+            count: 5,
+        },
+    };
     // Two young wolves past the tasks, beyond aggro range of every task spot.
     let den = at(-30.0, 29.0);
     let creatures = vec![
@@ -802,7 +871,7 @@ fn placeholder() -> (Layout, Look) {
         (
             "Pick Peacebloom",
             TaskKind::Common,
-            vec![herb(10.0, 0.0, "Peacebloom", look::PEACEBLOOM)],
+            vec![(gather, Some(NodeLook::herb("Peacebloom", look::PEACEBLOOM)))],
         ),
         (
             "Roast Boar Meat",
@@ -1184,7 +1253,10 @@ mod tests {
         let (task, at, node) = {
             let inner = host.lock();
             let p = inner.game.player(PlayerId(c)).unwrap();
-            let t = p.tasks[0];
+            let layout = inner.game.layout();
+            let t = *(p.tasks.iter())
+                .find(|t| matches!(layout.tasks[t.task.0].steps[0].action, StepAction::Cast(_)))
+                .unwrap();
             let at = inner.game.layout().tasks[t.task.0].steps[t.step].at;
             (t.task, at, inner.look.node(t.task, t.step).unwrap().clone())
         };
@@ -1207,7 +1279,7 @@ mod tests {
             });
             let start = start.expect("a cast bar");
             assert_eq!((start.caster, start.spell_id), (c, node.spell));
-            assert_eq!(start.targets.go_target, Some(guid::node(task, 0)));
+            assert_eq!(start.targets.go_target, Some(guid::node(task, 0, 0)));
             assert!(start.cast_time_ms >= 3000);
         }
         // A step breaks it for everyone.
@@ -1224,7 +1296,7 @@ mod tests {
             &host,
             c,
             node.spell,
-            Target::GameObject(guid::node(task, 0)),
+            Target::GameObject(guid::node(task, 0, 0)),
         );
         host.tick(Duration::from_secs(6));
         for inbox in &mut inboxes {
@@ -1235,7 +1307,7 @@ mod tests {
             &host,
             c,
             node.spell,
-            Target::GameObject(guid::node(task, 0)),
+            Target::GameObject(guid::node(task, 0, 0)),
         );
         let seen = received(&mut inboxes[me]);
         let names: Vec<String> = seen.iter().map(|p| p.name()).collect();
@@ -1244,6 +1316,121 @@ mod tests {
                 .any(|p| matches!(p, ServerPacket::Notification { .. })),
             "{names:?}"
         );
+    }
+
+    /// Guids destroyed in `seen`.
+    fn destroyed(seen: &[ServerPacket]) -> Vec<u64> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::DestroyObject { guid } => Some(*guid),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Guids created in `seen`.
+    fn created(seen: &[ServerPacket]) -> Vec<u64> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::UpdateObject { objects } => Some(objects),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|o| match o {
+                benilla_protocol::messages::Object::Create { guid, .. } => Some(*guid),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_gather_spot_is_a_node_and_a_picked_one_vanishes_for_its_gatherer_only() {
+        let map = Map::default();
+        let (task, nodes) = (placeholder_layout().tasks.iter().enumerate())
+            .find_map(|(i, t)| match &t.steps[0].action {
+                StepAction::Gather { nodes, .. } => Some((TaskId(i), nodes.clone())),
+                _ => None,
+            })
+            .expect("the placeholder gathers");
+        let _host = GameHost::new(
+            quick(),
+            placeholder_layout(),
+            placeholder_look(),
+            map.clone(),
+        );
+        let (tx, mut rx) = unbounded_channel();
+        let character = CharacterRecord {
+            guid: 9,
+            name: "P9".into(),
+            race: 1,
+            class: 1,
+            gender: 0,
+            skin: 0,
+            face: 0,
+            hair_style: 0,
+            hair_color: 0,
+            facial_hair: 0,
+            level: 1,
+        };
+        map.enter(character, tx, player::spawn_living());
+        let seen = created(&received(&mut rx));
+        for i in 0..nodes.len() {
+            assert!(seen.contains(&guid::node(task, 0, i)), "node {i} stands");
+        }
+
+        // Both common tasks dealt, so everyone has the gathering one.
+        let settings = Settings {
+            common_tasks: 2,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 3);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let c = crew[0];
+        let me = c as usize - 1;
+        let node = guid::node(task, 0, 2);
+        host.moved(c, nodes[2]);
+        drain(&mut inboxes);
+        // Right-clicking a herb casts Herb Gathering at it; the bar names that node.
+        cast(
+            &host,
+            c,
+            crate::look::HERB_GATHERING,
+            Target::GameObject(node),
+        );
+        let start = received(&mut inboxes[(me + 1) % 3])
+            .into_iter()
+            .find_map(|p| match p {
+                ServerPacket::SpellStart(s) => Some(s),
+                _ => None,
+            })
+            .expect("a cast bar");
+        assert_eq!(start.targets.go_target, Some(node));
+        host.tick(Duration::from_secs(6));
+        assert_eq!(destroyed(&received(&mut inboxes[me])), [node]);
+        for i in (0..3).filter(|&i| i != me) {
+            assert!(
+                destroyed(&received(&mut inboxes[i])).is_empty(),
+                "{i} still sees it"
+            );
+        }
+        // Picked again: refused, the reason in red.
+        cast(
+            &host,
+            c,
+            crate::look::HERB_GATHERING,
+            Target::GameObject(node),
+        );
+        assert!(received(&mut inboxes[me]).iter().any(|p| matches!(p,
+            ServerPacket::Notification { text } if text == "Already gathered here")));
+
+        // The impostor ends it; back in the lobby the herb grows again for its gatherer.
+        host.request(imp, Request::Kill);
+        assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
+        drain(&mut inboxes);
+        host.request(1, Request::Lobby);
+        assert!(created(&received(&mut inboxes[me])).contains(&node));
+        assert!(created(&received(&mut inboxes[(me + 1) % 3])).is_empty());
     }
 
     #[test]

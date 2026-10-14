@@ -9,11 +9,16 @@ const HIGH_UNIT: u64 = 0xF130;
 /// `HIGHGUID_GAMEOBJECT`.
 const HIGH_GAMEOBJECT: u64 = 0xF110;
 
-/// Gameobject entries are task nodes: `task * STEPS + step + 1`, so entry 0 is never used.
+/// Gameobject entries are task steps: `task * STEPS + step + 1`, so entry 0 is never used.
 const STEPS: u64 = 16;
 
 fn make(high: u64, entry: u64) -> u64 {
-    high << 48 | entry << 24 | entry
+    make_low(high, entry, entry)
+}
+
+/// `low` is the per-object counter under the entry, unique among objects of that entry.
+fn make_low(high: u64, entry: u64, low: u64) -> u64 {
+    high << 48 | entry << 24 | low
 }
 
 fn split(guid: u64, high: u64) -> Option<u64> {
@@ -35,18 +40,25 @@ pub fn creature_entry(entry: u32) -> Option<CreatureId> {
     Some(CreatureId(entry.checked_sub(1)? as usize))
 }
 
-/// The node `task`'s step `step` is worked at.
-pub fn node(task: TaskId, step: usize) -> u64 {
-    make(HIGH_GAMEOBJECT, node_entry(task, step).into())
+/// Node `index` of `task`'s step `step`: a Cast step's one node is index 0, a Gather step has
+/// one per spot. Every node of a step shares the step's entry; the counter is `index + 1`.
+pub fn node(task: TaskId, step: usize, index: usize) -> u64 {
+    make_low(
+        HIGH_GAMEOBJECT,
+        node_entry(task, step).into(),
+        index as u64 + 1,
+    )
 }
 
 pub fn node_entry(task: TaskId, step: usize) -> u32 {
     (task.0 as u64 * STEPS + step as u64 + 1) as u32
 }
 
-/// A node guid back to its task and step.
-pub fn node_step(guid: u64) -> Option<(TaskId, usize)> {
-    entry_step(split(guid, HIGH_GAMEOBJECT)? as u32)
+/// A node guid back to its task, step and node index.
+pub fn node_step(guid: u64) -> Option<(TaskId, usize, usize)> {
+    let (task, step) = entry_step(split(guid, HIGH_GAMEOBJECT)? as u32)?;
+    let index = (guid & 0xFF_FFFF).checked_sub(1)?;
+    Some((task, step, index as usize))
 }
 
 /// A gameobject template entry back to its task and step.
@@ -70,15 +82,20 @@ mod tests {
         assert_eq!(g >> 48, 0xF130);
         assert_eq!(benilla_protocol::guid::entry(g), Some(5));
         assert_eq!(creature_id(g), Some(CreatureId(4)));
-        assert_eq!(creature_id(node(TaskId(0), 0)), None);
+        assert_eq!(creature_id(node(TaskId(0), 0, 0)), None);
 
-        let n = node(TaskId(3), 1);
+        let n = node(TaskId(3), 1, 6);
         assert_eq!(n >> 48, 0xF110);
         assert_eq!(
             benilla_protocol::guid::entry(n),
             Some(node_entry(TaskId(3), 1))
         );
-        assert_eq!(node_step(n), Some((TaskId(3), 1)));
+        assert_eq!(node_step(n), Some((TaskId(3), 1, 6)));
+        assert_ne!(
+            n,
+            node(TaskId(3), 1, 5),
+            "each node of a step is its own object"
+        );
         assert_eq!(node_step(7), None, "a player");
         assert_eq!(entry_step(0), None);
     }

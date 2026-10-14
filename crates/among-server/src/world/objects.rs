@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn a_node_is_created_where_it_stands_and_its_template_names_its_lock() {
         let herb = NodeLook::herb("Peacebloom", 269);
-        let guid = super::super::guid::node(among_rules::TaskId(2), 1);
+        let guid = super::super::guid::node(among_rules::TaskId(2), 1, 0);
         let at = [-8939.95, -132.5, 83.5];
         let ServerPacket::UpdateObject { objects } = parse(&create_node(guid, 34, &herb, at, 1.0))
         else {

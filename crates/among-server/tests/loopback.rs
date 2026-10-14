@@ -72,11 +72,27 @@ fn enter(host: &str, user: &str, pass: &str) -> (WorldSession, u64) {
 }
 
 /// Read packets until `want` matches one, failing after a few seconds.
-fn wait_for<T>(session: &mut WorldSession, mut want: impl FnMut(&ServerPacket) -> Option<T>) -> T {
-    let deadline = Instant::now() + Duration::from_secs(5);
+fn wait_for<T>(session: &mut WorldSession, want: impl FnMut(&ServerPacket) -> Option<T>) -> T {
+    wait_for_secs(session, 5, want)
+}
+
+/// [`wait_for`] with a deadline of `secs` seconds, for what waits on a cast.
+fn wait_for_secs<T>(
+    session: &mut WorldSession,
+    secs: u64,
+    mut want: impl FnMut(&ServerPacket) -> Option<T>,
+) -> T {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    // A cast can be silent for longer than the socket's usual timeout.
+    session
+        .set_read_timeout(Some(Duration::from_secs(secs)))
+        .unwrap();
     while Instant::now() < deadline {
         let packet = session.recv().expect("a packet before the deadline");
         if let Some(found) = want(&packet) {
+            session
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
             return found;
         }
     }
@@ -330,19 +346,28 @@ fn a_newcomer_sees_every_task_node_and_learns_its_template() {
     let host = start_server();
     let (mut one, _) = enter(&host, "among1", "secret1");
     let layout = among_server::game::placeholder_layout();
-    // Slay steps are fought, not worked at a node.
-    let steps = (layout.tasks.iter())
+    // A cast step is worked at one node, a gather step at one per spot; Slay steps are fought.
+    let expected = (layout.tasks.iter())
         .flat_map(|t| &t.steps)
-        .filter(|s| matches!(s.action, among_rules::StepAction::Cast(_)))
-        .count();
+        .map(|s| match &s.action {
+            among_rules::StepAction::Cast(_) => 1,
+            among_rules::StepAction::Gather { nodes, .. } => nodes.len(),
+            among_rules::StepAction::Slay { .. } => 0,
+        })
+        .sum::<usize>();
+    assert!(expected > 10, "the placeholder gathers");
     let mut nodes = Vec::new();
-    while nodes.len() < steps {
+    while nodes.len() < expected {
         nodes.extend(wait_for(&mut one, |p| {
             let created = created_objects(p);
             (!created.is_empty()).then_some(created)
         }));
     }
-    assert_eq!(nodes.len(), steps, "one node per cast step");
+    assert_eq!(
+        nodes.len(),
+        expected,
+        "one node per cast step and gather spot"
+    );
     // The client asks for a node's template by the entry in its guid.
     let entry = benilla_protocol::guid::entry(nodes[0]).unwrap();
     one.gameobject_query(entry, nodes[0]).unwrap();
@@ -450,4 +475,70 @@ fn typing_speed_in_chat_makes_you_run_faster() {
         wait_system_line(&mut me),
         "Usage: .speed <0.5 to 10>, 1 is normal"
     );
+}
+
+#[test]
+fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_them() {
+    // Both common tasks dealt, so every crewmate has the gathering one.
+    let settings = Settings {
+        min_players: 3,
+        common_tasks: 2,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=3 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    press(&mut players[0].0, Request::Start);
+    let roles: Vec<Role> = (players.iter_mut())
+        .map(|(s, _)| {
+            wait_notice(s, |n| match n {
+                Notice::Role { role, .. } => Some(*role),
+                _ => None,
+            })
+        })
+        .collect();
+    let crew = roles.iter().position(|r| *r == Role::Crewmate).unwrap();
+    let layout = among_server::game::placeholder_layout();
+    let (task, spot) = (layout.tasks.iter().enumerate())
+        .find_map(|(i, t)| match &t.steps[0].action {
+            among_rules::StepAction::Gather { nodes, .. } => {
+                Some((among_rules::TaskId(i), nodes[3]))
+            }
+            _ => None,
+        })
+        .unwrap();
+    let herb = among_server::world::guid::node(task, 0, 3);
+    let (me, guid) = &mut players[crew];
+    let guid = *guid;
+    me.start_forward(spot, 0.0).unwrap();
+    me.stop(spot, 0.0).unwrap();
+    // Right-clicking a herb casts Herb Gathering at it: the bar is shown at that node.
+    me.cast_spell_gameobject(among_server::look::HERB_GATHERING, herb)
+        .unwrap();
+    let target = wait_for(me, |p| match p {
+        ServerPacket::SpellStart(s) if s.caster == guid => Some(s.targets.go_target),
+        _ => None,
+    });
+    assert_eq!(target, Some(herb));
+    // Five seconds later the herb is picked, then gone from this crewmate's world.
+    let progress = wait_for_secs(me, 8, |p| match p {
+        ServerPacket::MessageChat(m) => {
+            let payload = m.text.strip_prefix(wire::PREFIX)?.strip_prefix('\t')?;
+            match Notice::decode(payload)? {
+                Notice::Gather { picked, count, .. } => Some((picked, count)),
+                _ => None,
+            }
+        }
+        _ => None,
+    });
+    assert_eq!(progress, (1, 5));
+    let gone = wait_for(me, |p| match p {
+        ServerPacket::DestroyObject { guid } => Some(*guid),
+        _ => None,
+    });
+    assert_eq!(gone, herb);
 }

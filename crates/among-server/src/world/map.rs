@@ -66,6 +66,21 @@ impl Map {
         }
     }
 
+    /// Destroy `object` on `player`'s client only; the object stays in the world for everyone else.
+    pub fn hide_from(&self, player: u64, object: u64) {
+        let destroy = Packet::new(opcode::SMSG_DESTROY_OBJECT, object.to_le_bytes().to_vec());
+        self.send(player, destroy);
+    }
+
+    /// Create `object` again on `player`'s client, as it stands now, after [`Map::hide_from`].
+    pub fn show_to(&self, player: u64, object: u64) {
+        let world = self.lock();
+        if let (Some(create), Some(o)) = (world.objects.get(&object), world.occupants.get(&player))
+        {
+            let _ = o.outbox.send(create.clone());
+        }
+    }
+
     /// Queue `packet` for everyone in the world.
     pub fn broadcast(&self, packet: &Packet) {
         for o in self.lock().occupants.values() {

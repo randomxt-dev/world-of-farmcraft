@@ -12,6 +12,8 @@ button = "abbey-hall"
 
 # Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`); a
 # node you picked is spent for you, so you walk on to the next. 7 spots for 5 picks leaves spares.
+# `node` is what a step is worked at: peacebloom, silverleaf, earthroot, copper, campfire, forge
+# or anvil (a copper vein when left out).
 
 # --- Common: everyone gets the same one -------------------------------------------------------
 
@@ -22,12 +24,12 @@ kind = "common"
 steps = [{ gather = [
     "peacebloom-1", "peacebloom-2", "peacebloom-3", "peacebloom-4",
     "peacebloom-5", "peacebloom-6", "peacebloom-7",
-], cast = 5.0, count = 5 }]
+], cast = 5.0, count = 5, node = "peacebloom" }]
 
 [[tasks]]
 name = "Roast a meal"
 kind = "common"
-steps = [{ at = "campfire", cast = 3.0 }]     # by the stables
+steps = [{ at = "campfire", cast = 3.0, node = "campfire" }]     # by the stables
 
 # --- Long: two stops ----------------------------------------------------------------------------
 
@@ -38,8 +40,8 @@ steps = [
     # Copper veins inside Echo Ridge Mine.
     { gather = [
         "copper-1", "copper-2", "copper-3", "copper-4", "copper-5", "copper-6", "copper-7",
-    ], cast = 3.2, count = 5 },
-    { at = "forge", cast = 3.0 },             # by the stables or lumber area
+    ], cast = 3.2, count = 5, node = "copper" },
+    { at = "forge", cast = 3.0, node = "forge" },   # by the stables or lumber area
 ]
 
 [[tasks]]
@@ -47,7 +49,7 @@ name = "Hunt and cook wolf meat"
 kind = "long"
 steps = [
     { slay = ["wolf-1", "wolf-2", "wolf-3"], count = 1 },
-    { at = "campfire", cast = 3.0 },
+    { at = "campfire", cast = 3.0, node = "campfire" },
 ]
 
 # --- Short: one stop ----------------------------------------------------------------------------
@@ -59,7 +61,7 @@ kind = "short"
 steps = [{ gather = [
     "silverleaf-1", "silverleaf-2", "silverleaf-3", "silverleaf-4",
     "silverleaf-5", "silverleaf-6", "silverleaf-7",
-], cast = 5.0, count = 5 }]
+], cast = 5.0, count = 5, node = "silverleaf" }]
 
 [[tasks]]
 name = "Pick Earthroot"
@@ -68,12 +70,12 @@ kind = "short"
 steps = [{ gather = [
     "earthroot-1", "earthroot-2", "earthroot-3", "earthroot-4",
     "earthroot-5", "earthroot-6", "earthroot-7",
-], cast = 5.0, count = 5 }]
+], cast = 5.0, count = 5, node = "earthroot" }]
 
 [[tasks]]
 name = "Sharpen at the anvil"
 kind = "short"
-steps = [{ at = "anvil", cast = 3.0 }]
+steps = [{ at = "anvil", cast = 3.0, node = "anvil" }]
 
 [[tasks]]
 name = "Clear the kobolds"

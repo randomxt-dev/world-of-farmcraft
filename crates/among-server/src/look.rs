@@ -39,6 +39,32 @@ pub const FORGE: u32 = 233;
 pub const ANVIL: u32 = 273;
 pub const CAMPFIRE: u32 = 192;
 
+/// The nodes a layout file may name for a step, by `node = "<name>"`.
+pub const NODE_NAMES: [&str; 7] = [
+    "peacebloom",
+    "silverleaf",
+    "earthroot",
+    "copper",
+    "campfire",
+    "forge",
+    "anvil",
+];
+
+/// The node a layout file names: a herb, a copper vein, or a crafting station showing its craft.
+pub fn named(name: &str) -> Option<NodeLook> {
+    Some(match name {
+        "peacebloom" => NodeLook::herb("Peacebloom", PEACEBLOOM),
+        "silverleaf" => NodeLook::herb("Silverleaf", SILVERLEAF),
+        "earthroot" => NodeLook::herb("Earthroot", EARTHROOT),
+        "copper" => NodeLook::kneel("Copper Vein", COPPER_VEIN),
+        // Roasted Boar Meat, Smelt Copper and Copper Bracers: the crafts each station shows.
+        "campfire" => NodeLook::station("Campfire", CAMPFIRE, 2540),
+        "forge" => NodeLook::station("Forge", FORGE, 2657),
+        "anvil" => NodeLook::station("Anvil", ANVIL, 2663),
+        _ => return None,
+    })
+}
+
 /// A creature's model and level.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreatureLook {

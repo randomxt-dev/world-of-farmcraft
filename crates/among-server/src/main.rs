@@ -52,13 +52,16 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     if let Some(path) = &args.check_layout {
-        let layout = layout_file::load(path, &args.marks)?;
+        let (layout, _) = layout_file::load(path, &args.marks)?;
         println!("{}", layout_file::summary(&layout));
         return Ok(());
     }
-    let layout = match &args.layout {
+    let (layout, look) = match &args.layout {
         Some(path) => layout_file::load(path, &args.marks)?,
-        None => among_server::game::placeholder_layout(),
+        None => (
+            among_server::game::placeholder_layout(),
+            among_server::game::placeholder_look(),
+        ),
     };
     let accounts = Accounts::default();
     for entry in &args.accounts {
@@ -79,7 +82,7 @@ async fn main() -> Result<()> {
                 ..among_rules::Settings::default()
             },
             layout,
-            look: among_server::game::placeholder_look(),
+            look,
             marks: args.marks,
         },
         accounts,

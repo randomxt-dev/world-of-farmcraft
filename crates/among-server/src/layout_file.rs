@@ -12,6 +12,7 @@ use among_rules::{
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
+use crate::look::{self, CreatureLook, Look, NodeLook};
 use crate::survey::Mark;
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +45,8 @@ struct TaskEntry {
 
 /// One of: `cast` alone (seconds at `at`); `gather` (node spots) with `cast` per node and
 /// `count` nodes; `slay` (creature ids) with `count` kills. `count` defaults to 1, and `at` (the
-/// area a player is pointed to) to the first node or creature.
+/// area a player is pointed to) to the first node or creature. `node` names what a cast or
+/// gather step is worked at ([`look::NODE_NAMES`]); without it, a copper vein.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StepEntry {
@@ -53,6 +55,7 @@ struct StepEntry {
     gather: Option<Vec<Spot>>,
     slay: Option<Vec<String>>,
     count: Option<u32>,
+    node: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +85,11 @@ struct CreatureEntry {
 
 /// Parse a layout file's text, placing every named spot at its mark.
 pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
+    parse_with_look(text, marks).map(|(layout, _)| layout)
+}
+
+/// [`parse`], and how the layout looks in the world: each step's node and each creature's model.
+pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(Layout, Look)> {
     let file: LayoutFile = toml::from_str(text).context("reading the layout")?;
     let missing = unsurveyed(&file, marks);
     if !missing.is_empty() {
@@ -125,6 +133,7 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
     }
 
     let mut tasks = Vec::new();
+    let mut step_looks = Vec::new();
     for t in &file.tasks {
         let kind = match t.kind.as_str() {
             "common" => TaskKind::Common,
@@ -139,6 +148,7 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
             bail!("task {:?}: no steps", t.name);
         }
         let mut steps = Vec::new();
+        let mut looks = Vec::new();
         for (n, s) in t.steps.iter().enumerate() {
             let what = format!("task {:?} step {}", t.name, n + 1);
             let count = s.count.unwrap_or(1);
@@ -179,6 +189,20 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
                      or slay = [ids] and count"
                 ),
             };
+            let node = match (&action, &s.node) {
+                (StepAction::Slay { .. }, None) => None,
+                (StepAction::Slay { .. }, Some(_)) => {
+                    bail!("{what}: a slay step is fought, not worked at a node")
+                }
+                (_, None) => Some(NodeLook::kneel(&t.name, look::COPPER_VEIN)),
+                (_, Some(name)) => Some(look::named(name).ok_or_else(|| {
+                    anyhow!(
+                        "{what}: node {name:?} is not one of {}",
+                        look::NODE_NAMES.join(", ")
+                    )
+                })?),
+            };
+            looks.push(node);
             let at = match (&s.at, first) {
                 (Some(at), _) => spot(at, &what)?,
                 (None, Some(first)) => first,
@@ -191,6 +215,7 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
             kind,
             steps,
         });
+        step_looks.push(looks);
     }
 
     let mut sabotages = Vec::new();
@@ -218,12 +243,17 @@ pub fn parse(text: &str, marks: &BTreeMap<String, Mark>) -> Result<Layout> {
         });
     }
 
-    Ok(Layout {
+    let look = Look {
+        steps: step_looks,
+        creatures: creatures.iter().map(|_| CreatureLook::wolf()).collect(),
+    };
+    let layout = Layout {
         emergency_button: spot(&file.button, "button")?,
         tasks,
         sabotages,
         creatures,
-    })
+    };
+    Ok((layout, look))
 }
 
 /// Where the first of a Slay step's creatures spawns: the area the step points to by default.
@@ -257,12 +287,12 @@ fn unsurveyed(file: &LayoutFile, marks: &BTreeMap<String, Mark>) -> Vec<String> 
     names
 }
 
-/// Load the layout at `path` against the marks at `marks_path`.
-pub fn load(path: &std::path::Path, marks_path: &std::path::Path) -> Result<Layout> {
+/// Load the layout at `path` against the marks at `marks_path`, with its look.
+pub fn load(path: &std::path::Path, marks_path: &std::path::Path) -> Result<(Layout, Look)> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let marks = crate::survey::read_marks(marks_path)?;
-    parse(&text, &marks).with_context(|| format!("in {}", path.display()))
+    parse_with_look(&text, &marks).with_context(|| format!("in {}", path.display()))
 }
 
 /// One line per part of the layout, for `--check-layout`.
@@ -292,6 +322,8 @@ pub fn summary(l: &Layout) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::look::{NodeKind, NodeLook};
+    use among_rules::TaskId;
 
     fn mark(x: f32) -> Mark {
         Mark {
@@ -426,6 +458,38 @@ mod tests {
         assert!(e.contains("gather = [spots], cast and count"), "{e}");
     }
 
+    #[test]
+    fn a_step_names_the_node_it_is_worked_at() {
+        let text = r#"button = "hall"
+            [[tasks]]
+            name = "Pick Peacebloom"
+            kind = "common"
+            steps = [{ gather = ["herb"], cast = 5.0, node = "peacebloom" }]
+            [[tasks]]
+            name = "Smelt"
+            kind = "long"
+            steps = [{ at = "herb", cast = 3.0, node = "forge" }, { at = "herb", cast = 1.0 }]"#;
+        let (l, look) = parse_with_look(text, &marks(&["hall", "herb"])).unwrap();
+        assert!(look.covers(&l));
+        let node = |t, s| look.node(TaskId(t), s).unwrap();
+        assert_eq!(
+            *node(0, 0),
+            NodeLook::herb("Peacebloom", crate::look::PEACEBLOOM)
+        );
+        assert_eq!(node(1, 0).kind, NodeKind::Station);
+        // No node named: a kneeling spot at a copper vein, as a plain look has.
+        assert_eq!(node(1, 1).kind, NodeKind::Kneel);
+        let wrong = text.replace("\"forge\"", "\"furnace\"");
+        let e = format!(
+            "{:#}",
+            parse_with_look(&wrong, &marks(&["hall", "herb"])).unwrap_err()
+        );
+        assert!(
+            e.contains("node \"furnace\"") && e.contains("peacebloom"),
+            "{e}"
+        );
+    }
+
     /// The shipped Northshire example parses once every mark it names is surveyed.
     #[test]
     fn the_northshire_example_is_a_valid_layout() {
@@ -434,7 +498,17 @@ mod tests {
         let checklist = unsurveyed(&file, &BTreeMap::new());
         assert!(checklist.len() > 30, "{checklist:?}");
         let refs: Vec<&str> = checklist.iter().map(String::as_str).collect();
-        let l = parse(text, &marks(&refs)).unwrap();
+        let (l, look) = parse_with_look(text, &marks(&refs)).unwrap();
+        // Every worked step names its node: herbs look like herbs, not the plain copper vein.
+        let plain = Look::plain(&l);
+        for (t, task) in l.tasks.iter().enumerate() {
+            for s in 0..task.steps.len() {
+                let id = TaskId(t);
+                if let Some(n) = look.node(id, s) {
+                    assert_ne!(Some(n), plain.node(id, s), "{} step {}", task.name, s + 1);
+                }
+            }
+        }
         assert!(l.tasks.iter().any(|t| t.kind == TaskKind::Common));
         assert!(l.tasks.iter().any(|t| t.kind == TaskKind::Long));
         assert!(l.tasks.iter().filter(|t| t.kind == TaskKind::Short).count() >= 2);

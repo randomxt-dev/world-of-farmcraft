@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use among_rules::wire::{self, Notice, Request};
 use among_rules::{Role, Settings};
 use among_server::{Accounts, Server, ServerConfig};
-use benilla_protocol::messages::{opcode, Object, ServerPacket, CHAT_TYPE_PARTY};
+use benilla_protocol::messages::{opcode, Object, ObjectType, ServerPacket, CHAT_TYPE_PARTY};
 use benilla_protocol::WorldSession;
 
 /// Start a server on free ports with two accounts; returns realmd's `host:port`.
@@ -77,9 +77,30 @@ fn created_player(packet: &ServerPacket) -> Option<u64> {
         return None;
     };
     objects.iter().find_map(|o| match o {
-        Object::Create { guid, .. } => Some(*guid),
+        Object::Create {
+            guid,
+            object_type: ObjectType::Player,
+            ..
+        } => Some(*guid),
         _ => None,
     })
+}
+
+/// The guids of the gameobjects created in this update.
+fn created_objects(packet: &ServerPacket) -> Vec<u64> {
+    let ServerPacket::UpdateObject { objects } = packet else {
+        return Vec::new();
+    };
+    (objects.iter())
+        .filter_map(|o| match o {
+            Object::Create {
+                guid,
+                object_type: ObjectType::GameObject,
+                ..
+            } => Some(*guid),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -102,7 +123,7 @@ fn a_client_logs_in_and_another_sees_it_move() {
         ServerPacket::ActionButtons { buttons } => Some(buttons.len()),
         _ => None,
     });
-    assert_eq!(bar, book.len(), "every spell in the book is on the bar");
+    assert_eq!(bar + 2, book.len(), "the bar, then the two node openers");
     assert_eq!(wait_for(&mut one, created_player), one_guid, "its own body");
 
     let (mut two, two_guid) = enter(&host, "among2", "secret2");
@@ -290,4 +311,32 @@ fn the_action_bar_starts_a_game_and_kills_by_casting() {
         _ => None,
     });
     assert_eq!((caster, hits), (players[imp].1, vec![victim_guid]));
+}
+
+#[test]
+fn a_newcomer_sees_every_task_node_and_learns_its_template() {
+    let host = start_server();
+    let (mut one, _) = enter(&host, "among1", "secret1");
+    let layout = among_server::game::placeholder_layout();
+    let steps: usize = layout.tasks.iter().map(|t| t.steps.len()).sum();
+    let mut nodes = Vec::new();
+    while nodes.len() < steps {
+        nodes.extend(wait_for(&mut one, |p| {
+            let created = created_objects(p);
+            (!created.is_empty()).then_some(created)
+        }));
+    }
+    assert_eq!(nodes.len(), steps, "one node per task step");
+    // The client asks for a node's template by the entry in its guid.
+    let entry = benilla_protocol::guid::entry(nodes[0]).unwrap();
+    one.gameobject_query(entry, nodes[0]).unwrap();
+    let (answered, name) = wait_for(&mut one, |p| match p {
+        ServerPacket::GameObjectQueryResponse {
+            entry,
+            info: Some(info),
+        } => Some((*entry, info.name.clone())),
+        _ => None,
+    });
+    assert_eq!(answered, entry);
+    assert!(!name.is_empty());
 }

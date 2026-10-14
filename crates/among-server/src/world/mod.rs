@@ -3,6 +3,7 @@
 
 pub mod guid;
 mod map;
+pub mod objects;
 pub mod packets;
 pub mod player;
 mod session;

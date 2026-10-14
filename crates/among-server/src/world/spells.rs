@@ -55,10 +55,14 @@ pub fn main_bar(class: Class) -> [u32; 9] {
     ]
 }
 
-/// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns. Every
-/// spell on the bar is in the book.
+/// The spells the client opens task nodes with: it casts the first known spell whose lock type
+/// the node's lock names, so they must be in the book, though not on the bar.
+pub const OPENERS: [u32; 2] = [crate::look::HERB_GATHERING, crate::look::KNEEL];
+
+/// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns. The book
+/// is the bar, then the node openers.
 pub fn initial_spells(class: Class) -> Packet {
-    let book = main_bar(class);
+    let book: Vec<u32> = main_bar(class).into_iter().chain(OPENERS).collect();
     let mut b = Body::default();
     b.u8(0).u16(book.len() as u16);
     for spell in book {
@@ -229,7 +233,7 @@ mod tests {
         };
         assert_eq!(
             spell_ids,
-            [6603, 133, 6602, 6468, 15692, 9874, 3605, 18946, 28084]
+            [6603, 133, 6602, 6468, 15692, 9874, 3605, 18946, 28084, 2366, 6478]
         );
         assert!(cooldowns.is_empty());
 

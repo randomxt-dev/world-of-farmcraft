@@ -9,13 +9,13 @@ use std::time::Duration;
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
     Actions, Class, Command, Event, Game, Layout, Phase, PlayerId, Position, Reject, SabotageDef,
-    SabotageKind, Settings, TaskDef, TaskKind, TaskStep, Vote,
+    SabotageKind, Settings, TaskDef, TaskId, TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
 use crate::look::Look;
 use crate::world::spells::{self, CastRequest, Target};
-use crate::world::{guid, packets, player, Map};
+use crate::world::{guid, objects, packets, player, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
@@ -48,6 +48,7 @@ impl GameHost {
             tracing::warn!("game: the look does not fit the layout; using a plain one");
             Look::plain(&layout)
         };
+        spawn_nodes(&layout, &look, &map);
         Self(Arc::new(Mutex::new(Inner {
             game: Game::new(settings, layout),
             look,
@@ -162,6 +163,32 @@ impl GameHost {
 
     pub fn tick(&self, dt: Duration) {
         let _ = self.lock().apply(Command::Tick { dt });
+    }
+
+    /// The answer to `CMSG_GAMEOBJECT_QUERY` for template `entry`: a task node's, or a miss.
+    pub fn gameobject_query(&self, entry: u32) -> Packet {
+        let inner = self.lock();
+        let node = guid::entry_step(entry).and_then(|(task, step)| inner.look.node(task, step));
+        objects::query_response(entry, node)
+    }
+}
+
+/// Put every task step's node in the world, where the step is done, for the whole session.
+fn spawn_nodes(layout: &Layout, look: &Look, map: &Map) {
+    for (t, def) in layout.tasks.iter().enumerate() {
+        let task = TaskId(t);
+        if !guid::fits(def.steps.len()) {
+            tracing::warn!("game: task {:?} has too many steps to show", def.name);
+            continue;
+        }
+        for (step, s) in def.steps.iter().enumerate() {
+            let Some(node) = look.node(task, step) else {
+                continue;
+            };
+            let g = guid::node(task, step);
+            let create = objects::create_node(g, guid::node_entry(task, step), node, s.at, 0.0);
+            map.spawn(g, create);
+        }
     }
 }
 
@@ -800,18 +827,22 @@ mod tests {
     fn a_task_cast_shows_its_gathering_spell_to_everyone_and_breaks_on_a_step() {
         let (host, mut inboxes) = hosted(quick(), 3);
         host.request(1, Request::Start);
+        // A crewmate, whose task advances; an impostor's cover task never does.
+        let c = roles(&host).1[0];
+        let me = c as usize - 1;
+        let other = (me + 1) % 3;
         let (task, at, node) = {
             let inner = host.lock();
-            let p = inner.game.player(PlayerId(2)).unwrap();
+            let p = inner.game.player(PlayerId(c)).unwrap();
             let t = p.tasks[0];
             let at = inner.game.layout().tasks[t.task.0].steps[t.step].at;
             (t.task, at, inner.look.node(t.task, t.step).unwrap().clone())
         };
-        host.moved(2, at);
+        host.moved(c, at);
         drain(&mut inboxes);
         // Use from the bar: shown as the node's own cast, the Use press freed.
-        cast(&host, 2, spells::USE, Target::Caster);
-        let mine = received(&mut inboxes[1]);
+        cast(&host, c, spells::USE, Target::Caster);
+        let mine = received(&mut inboxes[me]);
         assert!(mine.iter().any(|p| matches!(
             p,
             ServerPacket::CastResult {
@@ -819,47 +850,50 @@ mod tests {
                 outcome: benilla_protocol::messages::CastOutcome::Ok
             }
         )));
-        for seen in [mine, received(&mut inboxes[0])] {
+        for seen in [mine, received(&mut inboxes[other])] {
             let start = seen.iter().find_map(|p| match p {
                 ServerPacket::SpellStart(s) => Some(s.clone()),
                 _ => None,
             });
             let start = start.expect("a cast bar");
-            assert_eq!((start.caster, start.spell_id), (2, node.spell));
+            assert_eq!((start.caster, start.spell_id), (c, node.spell));
             assert_eq!(start.targets.go_target, Some(guid::node(task, 0)));
             assert!(start.cast_time_ms >= 3000);
         }
         // A step breaks it for everyone.
-        host.moved(2, [at[0] + 1.0, at[1], at[2]]);
+        host.moved(c, [at[0] + 1.0, at[1], at[2]]);
         for inbox in &mut inboxes {
             assert!(
                 received(inbox).iter().any(|p| matches!(p,
-                ServerPacket::SpellFailedOther { caster: 2, spell_id } if *spell_id == node.spell))
+                ServerPacket::SpellFailedOther { caster, spell_id } if *caster == c && *spell_id == node.spell))
             );
         }
         // Right-clicking the node casts at it; the cast runs out and launches for everyone.
-        host.moved(2, at);
+        host.moved(c, at);
         cast(
             &host,
-            2,
+            c,
             node.spell,
             Target::GameObject(guid::node(task, 0)),
         );
         host.tick(Duration::from_secs(6));
         for inbox in &mut inboxes {
-            assert_eq!(launches(&received(inbox), node.spell), [2]);
+            assert_eq!(launches(&received(inbox), node.spell), [c]);
         }
         // The node of a later step, or someone else's task, is refused with the reason.
         cast(
             &host,
-            2,
+            c,
             node.spell,
             Target::GameObject(guid::node(task, 0)),
         );
-        let seen = received(&mut inboxes[1]);
-        assert!(seen
-            .iter()
-            .any(|p| matches!(p, ServerPacket::Notification { .. })));
+        let seen = received(&mut inboxes[me]);
+        let names: Vec<String> = seen.iter().map(|p| p.name()).collect();
+        assert!(
+            seen.iter()
+                .any(|p| matches!(p, ServerPacket::Notification { .. })),
+            "{names:?}"
+        );
     }
 
     #[test]

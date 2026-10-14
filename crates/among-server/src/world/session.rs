@@ -222,6 +222,10 @@ impl Session {
                     self.host.cast(me.guid, cast);
                 }
             }
+            opcode::CMSG_GAMEOBJECT_QUERY => {
+                let entry = read_u32_le(&mut cur)?;
+                self.send(self.host.gameobject_query(entry))?;
+            }
             opcode::CMSG_GAMEOBJ_USE => {
                 if let Some(me) = &self.in_world {
                     self.host.use_object(me.guid, read_u64_le(&mut cur)?);

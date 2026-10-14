@@ -280,12 +280,12 @@ pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: 
 }
 
 /// What `CMSG_PLAYER_LOGIN` answers, in vmangos's order: the world to load, the spell book and
-/// action bar, the clock, then the body.
+/// action bar, the clock, then the body. A login is a lobby seat, so the bar is a crewmate's.
 pub fn login_packets(c: &CharacterRecord) -> Vec<Packet> {
     vec![
         packets::login_verify_world(SPAWN),
         spells::initial_spells(class(c)),
-        spells::action_buttons(class(c)),
+        spells::action_buttons(class(c), false),
         packets::login_set_time_speed(),
         create_packet(c, &spawn_living(), true, Life::Alive),
     ]

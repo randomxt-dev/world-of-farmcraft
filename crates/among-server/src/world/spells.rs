@@ -51,18 +51,20 @@ pub fn class_school(class: Class) -> u8 {
     }
 }
 
-/// The main bar, slots 0-8 (keys 1-9): fight, then the Among Us buttons.
-pub fn main_bar(class: Class) -> [u32; 9] {
+/// The main bar, slots 0-8 (keys 1-9): fight, the buttons everyone has, then the impostor's two;
+/// 0 is an empty slot, so a crewmate's bar shows no Kill or Sabotage.
+pub fn main_bar(class: Class, impostor: bool) -> [u32; 9] {
+    let (kill, sabotage) = if impostor { (KILL, SABOTAGE) } else { (0, 0) };
     [
         ATTACK,
         class_spell(class),
         USE,
         REPORT,
-        KILL,
-        SABOTAGE,
         FIX,
         EMERGENCY,
         SKIP_VOTE,
+        kill,
+        sabotage,
     ]
 }
 
@@ -71,9 +73,10 @@ pub fn main_bar(class: Class) -> [u32; 9] {
 pub const OPENERS: [u32; 2] = [crate::look::HERB_GATHERING, crate::look::KNEEL];
 
 /// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns. The book
-/// is the bar, then the node openers.
+/// is the impostor's bar, then the node openers, for everyone: the book never changes, so it
+/// cannot give a role away (`SMSG_LEARNED_SPELL` would also print "You have learned").
 pub fn initial_spells(class: Class) -> Packet {
-    let book: Vec<u32> = main_bar(class).into_iter().chain(OPENERS).collect();
+    let book: Vec<u32> = main_bar(class, true).into_iter().chain(OPENERS).collect();
     let mut b = Body::default();
     b.u8(0).u16(book.len() as u16);
     for spell in book {
@@ -84,10 +87,11 @@ pub fn initial_spells(class: Class) -> Packet {
 }
 
 /// `SMSG_ACTION_BUTTONS`: 120 slot words, `spell | kind << 24` with kind 0 for a spell; the main
-/// bar filled, the rest empty.
-pub fn action_buttons(class: Class) -> Packet {
+/// bar filled, the rest empty. Sent again mid-session it replaces the whole bar (benilla
+/// `spell::net::action_buttons`), which is how a role's buttons arrive.
+pub fn action_buttons(class: Class, impostor: bool) -> Packet {
     let mut slots = [0u32; 120];
-    slots[..9].copy_from_slice(&main_bar(class));
+    slots[..9].copy_from_slice(&main_bar(class, impostor));
     let mut b = Body::default();
     for s in slots {
         b.u32(s);
@@ -244,19 +248,30 @@ mod tests {
         };
         assert_eq!(
             spell_ids,
-            [6603, 133, 6602, 6468, 15692, 9874, 3605, 18946, 28084, 2366, 6478]
+            [6603, 133, 6602, 6468, 3605, 18946, 28084, 15692, 9874, 2366, 6478]
         );
         assert!(cooldowns.is_empty());
 
-        let ServerPacket::ActionButtons { buttons } = parse(&action_buttons(Class::Rogue)) else {
-            panic!("not an action bar");
+        let bar = |impostor| {
+            let ServerPacket::ActionButtons { buttons } =
+                parse(&action_buttons(Class::Rogue, impostor))
+            else {
+                panic!("not an action bar");
+            };
+            (buttons.iter())
+                .map(|b| (b.slot, b.action, b.kind))
+                .collect::<Vec<_>>()
         };
-        let bar: Vec<(u8, u32, u8)> = buttons.iter().map(|b| (b.slot, b.action, b.kind)).collect();
-        assert_eq!(bar.len(), 9);
-        assert_eq!(bar[0], (0, ATTACK, 0));
-        assert_eq!(bar[1], (1, 1752, 0), "Sinister Strike on key 2");
-        assert_eq!(bar[4], (4, KILL, 0));
-        assert_eq!(bar[8], (8, SKIP_VOTE, 0));
+        let crew = bar(false);
+        assert_eq!(crew.len(), 7, "the client reads only the occupied slots");
+        assert_eq!(crew[0], (0, ATTACK, 0));
+        assert_eq!(crew[1], (1, 1752, 0), "Sinister Strike on key 2");
+        assert_eq!(crew[6], (6, SKIP_VOTE, 0));
+        assert!(crew.iter().all(|&(_, s, _)| s != KILL && s != SABOTAGE));
+
+        let impostor = bar(true);
+        assert_eq!(impostor[..7], crew[..]);
+        assert_eq!(impostor[7..], [(7, KILL, 0), (8, SABOTAGE, 0)]);
     }
 
     #[test]
@@ -345,7 +360,7 @@ mod tests {
         for class in Class::ALL {
             assert!(class_spell(class) <= u32::from(u16::MAX), "{class:?}");
         }
-        assert!(main_bar(Class::Druid)
+        assert!(main_bar(Class::Druid, true)
             .iter()
             .all(|&s| s <= u32::from(u16::MAX)));
     }

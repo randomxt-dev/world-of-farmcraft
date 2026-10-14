@@ -473,7 +473,11 @@ impl Game {
     fn use_task(&mut self, player: PlayerId, task: TaskId) {
         let steps = self.layout.tasks[task.0].steps.len();
         let p = self.seat(player);
-        let t = p.tasks.iter_mut().find(|t| t.task == task).unwrap();
+        let t = p
+            .tasks
+            .iter_mut()
+            .find(|t| t.task == task)
+            .expect("validated task");
         t.step += 1;
         let step = t.step;
         self.out.push(Event::TaskProgress {

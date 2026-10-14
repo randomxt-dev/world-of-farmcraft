@@ -6,6 +6,7 @@ pub mod packets;
 pub mod player;
 mod session;
 mod socket;
+pub mod spells;
 pub mod update;
 mod wire;
 

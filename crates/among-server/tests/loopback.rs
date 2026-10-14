@@ -92,6 +92,17 @@ fn a_client_logs_in_and_another_sees_it_move() {
         _ => None,
     });
     assert_eq!(map, 0);
+    // The spell book and the action bar: auto-attack, the class spell, then the buttons.
+    let book = wait_for(&mut one, |p| match p {
+        ServerPacket::InitialSpells { spell_ids, .. } => Some(spell_ids.clone()),
+        _ => None,
+    });
+    assert!(book.contains(&6603) && book.contains(&15692), "{book:?}");
+    let bar = wait_for(&mut one, |p| match p {
+        ServerPacket::ActionButtons { buttons } => Some(buttons.len()),
+        _ => None,
+    });
+    assert_eq!(bar, book.len(), "every spell in the book is on the bar");
     assert_eq!(wait_for(&mut one, created_player), one_guid, "its own body");
 
     let (mut two, two_guid) = enter(&host, "among2", "secret2");

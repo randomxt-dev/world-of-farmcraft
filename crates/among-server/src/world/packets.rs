@@ -334,4 +334,46 @@ mod tests {
         assert_eq!(fields.unit_health(), Some(100), "alive");
         assert_eq!(fields.unit_race(), Some(1), "race in bytes 0");
     }
+
+    /// What the client's cast checks read: a full pool, a main hand, FFA PvP and Judgement's
+    /// aura state; another client sees no inventory.
+    #[test]
+    fn a_player_is_created_ready_to_cast_every_button() {
+        use benilla_protocol::{decode, SessionEvent};
+        let living = crate::world::player::spawn_living();
+        let created = |c: &CharacterRecord, is_self| {
+            let events = decode(parse(&crate::world::player::create_packet(
+                c, &living, is_self,
+            )));
+            let [SessionEvent::ObjectCreate { fields, .. }] = events.as_slice() else {
+                panic!("one object create, got {events:?}");
+            };
+            fields.clone()
+        };
+        for (class, power, pool) in [(1u8, 1u8, 1000u32), (4, 3, 100), (8, 0, 1000), (2, 0, 1000)] {
+            let c = CharacterRecord {
+                class,
+                ..character()
+            };
+            let me = created(&c, true);
+            assert_eq!(me.unit_power_type(), power, "class {class}");
+            assert_eq!(
+                me.unit_power(power),
+                Some(pool),
+                "class {class} starts full"
+            );
+            assert_eq!(me.unit_max_power(power), Some(pool));
+            assert_ne!(me.player_inv_slot(15), Some(0), "a main hand");
+            assert!(me.player_inv_slot(15).is_some());
+            assert_eq!(me.player_flags() & 0x80, 0x80, "FFA PvP");
+            assert_eq!(me.unit_aura_state() & 0x10, 0x10, "Judgement usable");
+            let them = created(&c, false);
+            assert_eq!(them.player_flags() & 0x80, 0x80, "attackable to others");
+            assert_eq!(
+                them.player_inv_slot(15),
+                None,
+                "the inventory is the owner's"
+            );
+        }
+    }
 }

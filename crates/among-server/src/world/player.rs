@@ -1,10 +1,12 @@
 //! A player as the world shows it: where it spawns, the descriptor it is created with, the packets
 //! that seat it at login, and the movement a client sends for it.
 
+use among_rules::Class;
 use benilla_protocol::messages::opcode;
 
 use super::packets::{self, Location};
 use super::socket::Packet;
+use super::spells;
 use super::update::{self, Fields, Living, BASE_SPEEDS};
 use crate::accounts::CharacterRecord;
 
@@ -39,15 +41,19 @@ const UNIT_FIELD_LEVEL: u16 = 34;
 const UNIT_FIELD_FACTIONTEMPLATE: u16 = 35;
 const UNIT_FIELD_BYTES_0: u16 = 36;
 const UNIT_FIELD_FLAGS: u16 = 46;
+const UNIT_FIELD_AURASTATE: u16 = 125;
 const UNIT_FIELD_BASEATTACKTIME: u16 = 126;
 const UNIT_FIELD_BOUNDINGRADIUS: u16 = 129;
 const UNIT_FIELD_COMBATREACH: u16 = 130;
 const UNIT_FIELD_DISPLAYID: u16 = 131;
 const UNIT_FIELD_NATIVEDISPLAYID: u16 = 132;
 const UNIT_MOD_CAST_SPEED: u16 = 145;
+const PLAYER_FLAGS: u16 = 190;
 const PLAYER_BYTES: u16 = 193;
 const PLAYER_BYTES_2: u16 = 194;
 const PLAYER_BYTES_3: u16 = 195;
+/// `PLAYER_FIELD_INV_SLOT_HEAD`, then two words per equipment slot; slot 15 is the main hand.
+const PLAYER_FIELD_INV_SLOT_MAINHAND: u16 = 486 + 2 * 15;
 const PLAYER_NEXT_LEVEL_XP: u16 = 717;
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER`.
@@ -56,6 +62,13 @@ const TYPE_PLAYER: u32 = 0x01 | 0x08 | 0x10;
 const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x08;
 /// `REST_STATE_NORMAL` in `PLAYER_BYTES_2`'s top byte.
 const REST_STATE_NORMAL: u32 = 0x02;
+/// `PLAYER_FLAGS_FFA_PVP`: every player may attack every other, so Kill can target anyone.
+const PLAYER_FLAGS_FFA_PVP: u32 = 0x80;
+/// `AURA_STATE_JUDGEMENT` (5) as its `UNIT_FIELD_AURASTATE` bit: Judgement greys out without it.
+const AURASTATE_JUDGEMENT: u32 = 1 << (5 - 1);
+/// An item guid (`HIGHGUID_ITEM` 0x4000) the client is never sent: a nonzero main-hand slot is
+/// all its melee-weapon check reads, so Kill and the melee strikes are castable bare-handed.
+const PHANTOM_WEAPON: u64 = 0x4000_0000_0000_0000;
 
 /// The race's `CreatureDisplayInfo` id for `gender` (`ChrRaces.dbc` male/female display).
 fn display_id(race: u8, gender: u8) -> u32 {
@@ -90,30 +103,33 @@ fn faction_template(race: u8) -> u32 {
     }
 }
 
-/// The class's power type in `UNIT_FIELD_BYTES_0`: rage for warriors, energy for rogues, else mana.
-fn power_type(class: u8) -> u8 {
+/// The class's power type in `UNIT_FIELD_BYTES_0` and the pool it is held full at: rage for
+/// warriors (stored x10), energy for rogues, else mana. The client checks a spell's cost against
+/// it before sending the cast, and the server never spends it.
+fn power(class: u8) -> (u8, u32) {
     match class {
-        1 => 1,
-        4 => 3,
-        _ => 0,
+        1 => (1, 1000),
+        4 => (3, 100),
+        _ => (0, 1000),
     }
 }
 
-/// The player's create-time descriptor.
-pub fn fields(c: &CharacterRecord) -> Fields {
+/// The character's class as the rules know it; anything else fights as a warrior.
+pub fn class(c: &CharacterRecord) -> Class {
+    Class::from_wow(c.class).unwrap_or(Class::Warrior)
+}
+
+/// The player's create-time descriptor; `is_self` adds the fields only the owner is sent.
+pub fn fields(c: &CharacterRecord, is_self: bool) -> Fields {
     let mut f = Fields::default();
-    let power = power_type(c.class);
-    let max_power = if power == 1 { 1000 } else { 100 };
+    let (power, pool) = power(c.class);
     f.u64(OBJECT_FIELD_GUID, c.guid)
         .u32(OBJECT_FIELD_TYPE, TYPE_PLAYER)
         .f32(OBJECT_FIELD_SCALE_X, 1.0)
         .u32(UNIT_FIELD_HEALTH, 100)
         .u32(UNIT_FIELD_MAXHEALTH, 100)
-        .u32(
-            UNIT_FIELD_POWER1 + u16::from(power),
-            if power == 1 { 0 } else { max_power },
-        )
-        .u32(UNIT_FIELD_MAXPOWER1 + u16::from(power), max_power)
+        .u32(UNIT_FIELD_POWER1 + u16::from(power), pool)
+        .u32(UNIT_FIELD_MAXPOWER1 + u16::from(power), pool)
         .u32(UNIT_FIELD_LEVEL, c.level.into())
         .u32(UNIT_FIELD_FACTIONTEMPLATE, faction_template(c.race))
         .u32(
@@ -124,6 +140,7 @@ pub fn fields(c: &CharacterRecord) -> Fields {
                 | u32::from(power) << 24,
         )
         .u32(UNIT_FIELD_FLAGS, UNIT_FLAG_PVP_ATTACKABLE)
+        .u32(UNIT_FIELD_AURASTATE, AURASTATE_JUDGEMENT)
         .u32(UNIT_FIELD_BASEATTACKTIME, 2000)
         .u32(UNIT_FIELD_BASEATTACKTIME + 1, 2000)
         .f32(UNIT_FIELD_BOUNDINGRADIUS, 0.389)
@@ -131,6 +148,7 @@ pub fn fields(c: &CharacterRecord) -> Fields {
         .u32(UNIT_FIELD_DISPLAYID, display_id(c.race, c.gender))
         .u32(UNIT_FIELD_NATIVEDISPLAYID, display_id(c.race, c.gender))
         .f32(UNIT_MOD_CAST_SPEED, 1.0)
+        .u32(PLAYER_FLAGS, PLAYER_FLAGS_FFA_PVP)
         .u32(
             PLAYER_BYTES,
             u32::from(c.skin)
@@ -144,6 +162,9 @@ pub fn fields(c: &CharacterRecord) -> Fields {
         )
         .u32(PLAYER_BYTES_3, c.gender.into())
         .u32(PLAYER_NEXT_LEVEL_XP, 400);
+    if is_self {
+        f.u64(PLAYER_FIELD_INV_SLOT_MAINHAND, PHANTOM_WEAPON | c.guid);
+    }
     f
 }
 
@@ -151,14 +172,17 @@ pub fn fields(c: &CharacterRecord) -> Fields {
 pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool) -> Packet {
     Packet::new(
         opcode::SMSG_UPDATE_OBJECT,
-        update::create_player(c.guid, is_self, living, &fields(c)),
+        update::create_player(c.guid, is_self, living, &fields(c, is_self)),
     )
 }
 
-/// What `CMSG_PLAYER_LOGIN` answers, in vmangos's order: the world to load, then the body.
+/// What `CMSG_PLAYER_LOGIN` answers, in vmangos's order: the world to load, the spell book and
+/// action bar, the clock, then the body.
 pub fn login_packets(c: &CharacterRecord) -> Vec<Packet> {
     vec![
         packets::login_verify_world(SPAWN),
+        spells::initial_spells(class(c)),
+        spells::action_buttons(class(c)),
         packets::login_set_time_speed(),
         create_packet(c, &spawn_living(), true),
     ]

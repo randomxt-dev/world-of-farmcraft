@@ -117,7 +117,7 @@ pub enum Station {
 }
 
 /// The match: lobby, roles, tasks, kills, meetings, votes, sabotage and the win check.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Game {
     settings: Settings,
     layout: Layout,

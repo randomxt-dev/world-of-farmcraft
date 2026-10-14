@@ -21,6 +21,9 @@ use crate::world::{combat, guid, objects, packets, player, Map, Packet};
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
 
+/// Nodes this close stand on one spot, as overlapping models a click cannot tell apart.
+const SAME_SPOT: f32 = 1.0;
+
 /// The one match; cheap to clone. Lock order: the host, then the map.
 #[derive(Clone)]
 pub struct GameHost(Arc<Mutex<Inner>>);
@@ -615,6 +618,61 @@ impl Inner {
     /// Gather step's node, gather that one.
     fn node_command(&self, player: PlayerId, object: u64) -> Result<Command, Reject> {
         let (task, step, node) = guid::node_step(object).ok_or(Reject::InvalidTarget)?;
+        let exact = self.exact_node_command(player, task, step, node);
+        if exact
+            .as_ref()
+            .is_ok_and(|cmd| self.game.validate(cmd).is_ok())
+        {
+            return exact;
+        }
+        // Two tasks may share a spot (one surveyed campfire): their nodes overlap, so a click
+        // may land on the other task's; work this player's own there instead.
+        self.node_spot(task, step, node)
+            .and_then(|at| self.own_node_at(player, at))
+            .map_or(exact, Ok)
+    }
+
+    /// Where node `node` of `task`'s step `step` stands.
+    fn node_spot(&self, task: TaskId, step: usize, node: usize) -> Option<Position> {
+        let s = self.game.layout().tasks.get(task.0)?.steps.get(step)?;
+        match &s.action {
+            StepAction::Gather { nodes, .. } => nodes.get(node).copied(),
+            _ => Some(s.at),
+        }
+    }
+
+    /// A legal command working one of `player`'s current steps at a node standing on `at`.
+    fn own_node_at(&self, player: PlayerId, at: Position) -> Option<Command> {
+        let p = self.game.player(player)?;
+        (p.tasks.iter())
+            .flat_map(|t| {
+                let s = self.game.layout().tasks[t.task.0].steps.get(t.step);
+                let task = t.task;
+                let spots: Vec<(Position, Command)> = match s.map(|s| (&s.action, s.at)) {
+                    Some((StepAction::Gather { nodes, .. }, _)) => (nodes.iter().enumerate())
+                        .map(|(node, &n)| (n, Command::GatherNode { player, task, node }))
+                        .collect(),
+                    Some((StepAction::Cast(_), spot)) => {
+                        vec![(spot, Command::UseTask { player, task })]
+                    }
+                    _ => Vec::new(),
+                };
+                spots
+            })
+            .find(|(spot, cmd)| {
+                among_rules::within(*spot, at, SAME_SPOT) && self.game.validate(cmd).is_ok()
+            })
+            .map(|(_, cmd)| cmd)
+    }
+
+    /// The command for exactly the node clicked: its step, if that is the player's current one.
+    fn exact_node_command(
+        &self,
+        player: PlayerId,
+        task: TaskId,
+        step: usize,
+        node: usize,
+    ) -> Result<Command, Reject> {
         let cmd = if self.is_gather_step(task, step) {
             Command::GatherNode { player, task, node }
         } else {
@@ -967,13 +1025,17 @@ mod tests {
     /// A host on the placeholder map with players `1..=n` in the world at the spawn; each
     /// receiver is that player's outbox.
     fn hosted(settings: Settings, n: u64) -> (GameHost, Vec<UnboundedReceiver<Packet>>) {
+        hosted_on(settings, placeholder_layout(), n)
+    }
+
+    /// [`hosted`] on `layout`, dressed as the placeholder is.
+    fn hosted_on(
+        settings: Settings,
+        layout: Layout,
+        n: u64,
+    ) -> (GameHost, Vec<UnboundedReceiver<Packet>>) {
         let map = Map::default();
-        let host = GameHost::new(
-            settings,
-            placeholder_layout(),
-            placeholder_look(),
-            map.clone(),
-        );
+        let host = GameHost::new(settings, layout, placeholder_look(), map.clone());
         let mut inboxes = Vec::new();
         for guid in 1..=n {
             let (tx, rx) = unbounded_channel();
@@ -1431,6 +1493,47 @@ mod tests {
         host.request(1, Request::Lobby);
         assert!(created(&received(&mut inboxes[me])).contains(&node));
         assert!(created(&received(&mut inboxes[(me + 1) % 3])).is_empty());
+    }
+
+    #[test]
+    fn a_node_on_a_shared_spot_works_for_whichever_task_is_yours() {
+        // Every task that starts with a cast starts it at one spot, as two tasks sharing one
+        // surveyed campfire do.
+        let mut layout = placeholder_layout();
+        let spot = layout.tasks[1].steps[0].at;
+        for t in &mut layout.tasks {
+            if matches!(t.steps[0].action, StepAction::Cast(_)) {
+                t.steps[0].at = spot;
+            }
+        }
+        let shared: Vec<TaskId> = (layout.tasks.iter().enumerate())
+            .filter(|(_, t)| t.steps[0].at == spot)
+            .map(|(i, _)| TaskId(i))
+            .collect();
+        let (host, mut inboxes) = hosted_on(quick(), layout, 3);
+        host.request(1, Request::Start);
+        let c = roles(&host).1[0];
+        let me = c as usize - 1;
+        let mine: Vec<TaskId> = (host.lock().game.player(PlayerId(c)).unwrap().tasks.iter())
+            .map(|t| t.task)
+            .collect();
+        let theirs = *shared.iter().find(|t| !mine.contains(t)).unwrap();
+        host.moved(c, spot);
+        drain(&mut inboxes);
+        // A right-click lands on another task's node at the spot: this player's own is worked.
+        host.use_object(c, guid::node(theirs, 0, 0));
+        let start = received(&mut inboxes[me])
+            .into_iter()
+            .find_map(|p| match p {
+                ServerPacket::SpellStart(s) => Some(s),
+                _ => None,
+            })
+            .expect("a cast bar");
+        let worked = guid::node_step(start.targets.go_target.unwrap()).unwrap().0;
+        assert!(
+            mine.contains(&worked) && shared.contains(&worked),
+            "{worked:?}"
+        );
     }
 
     #[test]

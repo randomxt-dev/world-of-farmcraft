@@ -232,7 +232,15 @@ impl GameHost {
         let result = command.and_then(|cmd| inner.run(cmd));
         if let Err(r) = result {
             tracing::debug!("game: {guid} use of {object:#x} refused: {r}");
-            inner.map.send(guid, spells::notification(&sentence(r)));
+            // The button has no bar sweep, so its refusal says how long is left.
+            let left = inner.game.emergency_cooldown();
+            let why = match (r, Fixture::of_guid(object)) {
+                (Reject::OnCooldown, Some(Fixture::Button)) if !left.is_zero() => {
+                    format!("Ready in {} s", left.as_secs_f32().ceil())
+                }
+                _ => sentence(r),
+            };
+            inner.map.send(guid, spells::notification(&why));
         }
     }
 
@@ -805,7 +813,6 @@ impl Inner {
         let p = self.game.player(player)?;
         let left = match spell {
             spells::KILL => p.kill_cooldown,
-            spells::EMERGENCY => self.game.emergency_cooldown(),
             spells::SABOTAGE => self.game.sabotage_cooldown(),
             s if s == spells::class_spell(p.class) => p.spell_cooldown,
             _ => return None,
@@ -1027,15 +1034,12 @@ impl Inner {
                 }
                 _ => Request::Kill,
             },
-            spells::USE => Request::Use,
             spells::REPORT => Request::Report,
-            spells::FIX => Request::Fix,
             spells::SKIP_VOTE => Request::Vote(Vote::Skip),
             spells::SABOTAGE => match g.sabotage_target(player) {
                 Some(kind) => Request::Sabotage(kind),
                 None => return Err(no_sabotage(g, player)),
             },
-            spells::EMERGENCY => self.horn(),
             spell if spell == self.class_spell(player) => {
                 return match cast.target {
                     Target::Unit(unit) => guid::creature_id(unit)
@@ -1272,7 +1276,7 @@ impl Inner {
     }
 
     /// Start the cooldown sweep of every button whose cooldown began since the last refresh:
-    /// kill, sabotage, emergency and the class spell. A client's sweep can grow but not shrink,
+    /// kill, sabotage and the class spell. A client's sweep can grow but not shrink,
     /// so only a cooldown that rose is sent.
     fn refresh_cooldowns(&mut self) {
         let playing = *self.game.phase() == Phase::Playing;
@@ -1281,13 +1285,10 @@ impl Inner {
             .filter(|(_, p)| p.connected)
             .map(|(id, p)| {
                 let mut cds = vec![(spells::class_spell(p.class), p.spell_cooldown)];
-                if playing {
-                    cds.push((spells::EMERGENCY, g.emergency_cooldown()));
-                    if p.is_impostor() {
-                        cds.push((spells::KILL, p.kill_cooldown));
-                        if g.sabotage().is_none() {
-                            cds.push((spells::SABOTAGE, g.sabotage_cooldown()));
-                        }
+                if playing && p.is_impostor() {
+                    cds.push((spells::KILL, p.kill_cooldown));
+                    if g.sabotage().is_none() {
+                        cds.push((spells::SABOTAGE, g.sabotage_cooldown()));
                     }
                 }
                 (id, cds)
@@ -1806,28 +1807,41 @@ mod tests {
             ServerPacket::AttackStop { attacker, victim } if *attacker == c && *victim == wolf)));
     }
 
+    /// The red error text `seen` holds.
+    fn notifications(seen: Vec<ServerPacket>) -> Vec<String> {
+        (seen.into_iter())
+            .filter_map(|p| match p {
+                ServerPacket::Notification { text } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
-    fn the_horn_starts_the_game_from_the_lobby() {
+    fn only_the_host_starts_the_game_at_the_button() {
         let (host, mut inboxes) = hosted(quick(), 3);
         drain(&mut inboxes);
-        cast(&host, 2, spells::EMERGENCY, Target::Caster);
-        let seen = received(&mut inboxes[1]);
-        assert!(seen.iter().any(|p| matches!(
-            p,
-            ServerPacket::CastResult {
-                spell_id: spells::EMERGENCY,
-                outcome: benilla_protocol::messages::CastOutcome::Failed { reason: 0x17, .. }
-            }
-        )));
-        assert!(seen.iter().any(|p| matches!(p,
-            ServerPacket::Notification { text } if text == "Only the host can do that")));
-        cast(&host, 1, spells::EMERGENCY, Target::Caster);
-        assert!(matches!(host.lock().game.phase(), Phase::Playing));
-        let seen = received(&mut inboxes[0]);
+        host.use_object(2, Fixture::Button.guid());
         assert_eq!(
-            launches(&seen, spells::EMERGENCY),
-            [1],
-            "the press is answered"
+            notifications(received(&mut inboxes[1])),
+            ["Only the host can do that"]
+        );
+        assert_eq!(*host.lock().game.phase(), Phase::Lobby);
+        host.use_object(1, Fixture::Button.guid());
+        assert!(matches!(host.lock().game.phase(), Phase::Playing));
+    }
+
+    #[test]
+    fn a_cooling_button_says_how_long_is_left() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.use_object(1, Fixture::Button.guid());
+        host.moved(2, placeholder_layout().emergency_button);
+        drain(&mut inboxes);
+        host.use_object(2, Fixture::Button.guid());
+        let left = quick().emergency_cooldown.as_secs_f32().ceil();
+        assert_eq!(
+            notifications(received(&mut inboxes[1])),
+            [format!("Ready in {left} s")]
         );
     }
 
@@ -1850,7 +1864,8 @@ mod tests {
         host.request(1, Request::Start);
         let (imp, crew) = roles(&host);
         let warrior = |impostor| spells::main_bar(Class::Warrior, impostor);
-        let sent = |bar: [u32; 9]| bar.into_iter().filter(|&s| s != 0).collect::<Vec<_>>();
+        let sent =
+            |bar: [u32; spells::BAR_SLOTS]| bar.into_iter().filter(|&s| s != 0).collect::<Vec<_>>();
         assert_eq!(
             bars(&received(&mut inboxes[imp as usize - 1])),
             [sent(warrior(true))]
@@ -1933,17 +1948,9 @@ mod tests {
         };
         host.moved(c, at);
         drain(&mut inboxes);
-        // Use from the bar: shown as the node's own cast, the Use press freed.
-        cast(&host, c, spells::USE, Target::Caster);
-        let mine = received(&mut inboxes[me]);
-        assert!(mine.iter().any(|p| matches!(
-            p,
-            ServerPacket::CastResult {
-                spell_id: spells::USE,
-                outcome: benilla_protocol::messages::CastOutcome::Ok
-            }
-        )));
-        for seen in [mine, received(&mut inboxes[other])] {
+        // A right-click on the node: shown as the node's own cast.
+        host.use_object(c, guid::node(task, 0, 0));
+        for seen in [received(&mut inboxes[me]), received(&mut inboxes[other])] {
             let start = seen.iter().find_map(|p| match p {
                 ServerPacket::SpellStart(s) => Some(s.clone()),
                 _ => None,
@@ -2472,7 +2479,7 @@ mod tests {
         let (host, mut inboxes) = hosted(quick(), 3);
         host.set_start_countdown(Duration::from_secs(5));
         drain(&mut inboxes);
-        cast(&host, 1, spells::EMERGENCY, Target::Caster);
+        host.use_object(1, Fixture::Button.guid());
         assert_eq!(*host.lock().game.phase(), Phase::Lobby, "counting down");
         assert_eq!(chat_lines(&mut inboxes[1]), ["P1 starts the game: 5..."]);
         let mut heard = Vec::new();

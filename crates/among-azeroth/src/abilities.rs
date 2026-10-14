@@ -40,10 +40,6 @@ pub fn abilities(settings: &Settings) -> Vec<Ability> {
             description,
         }
     };
-    let emergencies = match s.emergency_meetings {
-        1 => "once".to_string(),
-        n => format!("{n} times"),
-    };
     let mut out = vec![
         button(
             spells::KILL,
@@ -55,16 +51,6 @@ pub fn abilities(settings: &Settings) -> Vec<Ability> {
                  first kill of a game waits {}.",
                 yards(s.kill_distance),
                 time(s.initial_kill_cooldown),
-            ),
-        ),
-        button(
-            spells::USE,
-            "Salt Flats Racer Normal",
-            "Use",
-            None,
-            format!(
-                "Work on the step of your task within {} yards.",
-                yards(s.use_distance)
             ),
         ),
         button(
@@ -85,30 +71,6 @@ pub fn abilities(settings: &Settings) -> Vec<Ability> {
             "Set off a sabotage the crew must fix: the lights, the comms, the oxygen or the \
              reactor. Impostors only."
                 .into(),
-        ),
-        button(
-            spells::FIX,
-            "Summon Remote-Controlled Golem",
-            "Fix",
-            None,
-            format!(
-                "Repair a station of the active sabotage within {} yards. Reactor stations must \
-                 be held at the same time.",
-                yards(s.use_distance)
-            ),
-        ),
-        button(
-            spells::EMERGENCY,
-            "The Lion Horn of Stormwind",
-            "Emergency Meeting",
-            Some(s.emergency_cooldown),
-            format!(
-                "Sound the horn within {} yards of the emergency button to call a meeting, {} \
-                 per game. In the lobby the host sounds it to start the game, and after a game \
-                 to return to the lobby.",
-                yards(s.use_distance),
-                emergencies,
-            ),
         ),
         button(
             spells::SKIP_VOTE,

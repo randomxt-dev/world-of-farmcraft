@@ -1,5 +1,7 @@
 //! Among Azeroth's buttons as existing 1.12 spells on WoW's own action bar, and each class's one
 //! combat spell. The server deals them and the client names them, so both read them from here.
+//! Using a task, fixing a sabotage and calling a meeting are right-clicks on the world's own
+//! objects (task nodes, stations, the emergency button), so they have no button.
 
 use among_rules::Class;
 
@@ -7,16 +9,12 @@ use among_rules::Class;
 pub const ATTACK: u32 = 6603;
 /// NPC Eviscerate: the Kill button (`Ability_Rogue_Eviscerate`).
 pub const KILL: u32 = 15692;
-/// "Salt Flats Racer Normal", the Use button (`INV_Misc_Gear_01`).
+/// "Salt Flats Racer Normal" (`INV_Misc_Gear_01`): the cast bar of a task step with no node look.
 pub const USE: u32 = 6602;
 /// Raise Dead's icon (`Spell_Shadow_RaiseDead`): the Report button.
 pub const REPORT: u32 = 6468;
 /// Self Destruct: the Sabotage button.
 pub const SABOTAGE: u32 = 9874;
-/// Ability_Repair, a 3 s cast: the Fix button.
-pub const FIX: u32 = 3605;
-/// The Lion Horn of Stormwind: the Emergency button.
-pub const EMERGENCY: u32 = 18946;
 /// Negative Charge: skip the vote.
 pub const SKIP_VOTE: u32 = 28084;
 
@@ -46,17 +44,17 @@ pub fn class_school(class: Class) -> u8 {
     }
 }
 
-/// The main bar, slots 0-8 (keys 1-9): fight, the buttons everyone has, then the impostor's two;
+/// Slots on the main bar.
+pub const BAR_SLOTS: usize = 6;
+
+/// The main bar, slots 0-5 (keys 1-6): fight, the buttons everyone has, then the impostor's two;
 /// 0 is an empty slot, so a crewmate's bar shows no Kill or Sabotage.
-pub fn main_bar(class: Class, impostor: bool) -> [u32; 9] {
+pub fn main_bar(class: Class, impostor: bool) -> [u32; BAR_SLOTS] {
     let (kill, sabotage) = if impostor { (KILL, SABOTAGE) } else { (0, 0) };
     [
         ATTACK,
         class_spell(class),
-        USE,
         REPORT,
-        FIX,
-        EMERGENCY,
         SKIP_VOTE,
         kill,
         sabotage,

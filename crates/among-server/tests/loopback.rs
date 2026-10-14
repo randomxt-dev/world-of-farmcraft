@@ -311,7 +311,7 @@ fn three_clients_start_a_game_by_button_and_a_kill_press_lands() {
 }
 
 #[test]
-fn the_action_bar_starts_a_game_and_kills_by_casting() {
+fn the_button_starts_a_game_and_the_bar_kills_by_casting() {
     let settings = Settings {
         min_players: 3,
         initial_kill_cooldown: Duration::ZERO,
@@ -324,8 +324,9 @@ fn the_action_bar_starts_a_game_and_kills_by_casting() {
         wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
         players.push((session, guid));
     }
-    // The host sounds the horn (Emergency) in the lobby: the game starts, the press is answered.
-    players[0].0.cast_spell(18946, None).unwrap();
+    // The host right-clicks the emergency button in the lobby: the game starts.
+    let button = among_server::world::guid::Fixture::Button.guid();
+    players[0].0.gameobj_use(button).unwrap();
     let roles: Vec<Role> = (players.iter_mut())
         .map(|(s, _)| {
             wait_notice(s, |n| match n {
@@ -334,12 +335,6 @@ fn the_action_bar_starts_a_game_and_kills_by_casting() {
             })
         })
         .collect();
-    // The game's events come first, then the answer to the press.
-    let answered = wait_for(&mut players[0].0, |p| match p {
-        ServerPacket::SpellGo(go) if go.spell_id == 18946 => Some(go.caster),
-        _ => None,
-    });
-    assert_eq!(answered, players[0].1);
     let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
     let victim = (0..3).find(|&i| i != imp).unwrap();
     let victim_guid = players[victim].1;
@@ -818,7 +813,7 @@ fn own_cooldowns(packet: &ServerPacket, me: u64) -> Option<Vec<(u32, u32)>> {
 }
 
 #[test]
-fn each_client_is_sent_its_own_cooldowns_at_the_start_and_after_a_kill() {
+fn the_impostor_is_sent_its_kill_cooldown_after_a_kill() {
     let settings = Settings {
         min_players: 4,
         initial_kill_cooldown: Duration::ZERO,
@@ -831,7 +826,8 @@ fn each_client_is_sent_its_own_cooldowns_at_the_start_and_after_a_kill() {
         wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
         players.push((session, guid));
     }
-    players[0].0.cast_spell(18946, None).unwrap();
+    let button = among_server::world::guid::Fixture::Button.guid();
+    players[0].0.gameobj_use(button).unwrap();
     let roles: Vec<Role> = (players.iter_mut())
         .map(|(s, _)| {
             wait_notice(s, |n| match n {
@@ -840,12 +836,6 @@ fn each_client_is_sent_its_own_cooldowns_at_the_start_and_after_a_kill() {
             })
         })
         .collect();
-    // The horn cools down for everyone from the start, on their own guid.
-    for (session, me) in &mut players {
-        let me = *me;
-        let cds = wait_for(session, |p| own_cooldowns(p, me));
-        assert!(cds.contains(&(18946, 15_000)), "{cds:?}");
-    }
     // The impostor's Kill sweeps 25 s after the strike (four players, so the game goes on).
     let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
     let victim = players[(imp + 1) % 4].1;

@@ -33,7 +33,7 @@ pub fn initial_spells(class: Class) -> Packet {
 /// `spell::net::action_buttons`), which is how a role's buttons arrive.
 pub fn action_buttons(class: Class, impostor: bool) -> Packet {
     let mut slots = [0u32; 120];
-    slots[..9].copy_from_slice(&main_bar(class, impostor));
+    slots[..BAR_SLOTS].copy_from_slice(&main_bar(class, impostor));
     let mut b = Body::default();
     for s in slots {
         b.u32(s);
@@ -188,10 +188,7 @@ mod tests {
         else {
             panic!("not a spell book");
         };
-        assert_eq!(
-            spell_ids,
-            [6603, 133, 6602, 6468, 3605, 18946, 28084, 15692, 9874, 2366, 6478]
-        );
+        assert_eq!(spell_ids, [6603, 133, 6468, 28084, 15692, 9874, 2366, 6478]);
         assert!(cooldowns.is_empty());
 
         let bar = |impostor| {
@@ -205,15 +202,16 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let crew = bar(false);
-        assert_eq!(crew.len(), 7, "the client reads only the occupied slots");
+        assert_eq!(crew.len(), 4, "the client reads only the occupied slots");
         assert_eq!(crew[0], (0, ATTACK, 0));
         assert_eq!(crew[1], (1, 1752, 0), "Sinister Strike on key 2");
-        assert_eq!(crew[6], (6, SKIP_VOTE, 0));
+        assert_eq!(crew[2], (2, REPORT, 0));
+        assert_eq!(crew[3], (3, SKIP_VOTE, 0));
         assert!(crew.iter().all(|&(_, s, _)| s != KILL && s != SABOTAGE));
 
         let impostor = bar(true);
-        assert_eq!(impostor[..7], crew[..]);
-        assert_eq!(impostor[7..], [(7, KILL, 0), (8, SABOTAGE, 0)]);
+        assert_eq!(impostor[..4], crew[..]);
+        assert_eq!(impostor[4..], [(4, KILL, 0), (5, SABOTAGE, 0)]);
     }
 
     #[test]

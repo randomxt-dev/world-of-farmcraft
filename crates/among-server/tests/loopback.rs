@@ -153,7 +153,11 @@ fn a_client_logs_in_and_another_sees_it_move() {
         ServerPacket::ActionButtons { buttons } => Some(buttons.len()),
         _ => None,
     });
-    assert_eq!(bar + 2, book.len(), "the bar, then the two node openers");
+    assert_eq!(
+        bar + 4,
+        book.len(),
+        "the lobby's crewmate bar, then Kill, Sabotage and the two node openers"
+    );
     assert_eq!(wait_for(&mut one, created_player), one_guid, "its own body");
 
     let (mut two, two_guid) = enter(&host, "among2", "secret2");

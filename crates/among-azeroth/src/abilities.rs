@@ -187,10 +187,11 @@ mod tests {
     fn every_bar_spell_has_one_entry() {
         let table = abilities(&Settings::default());
         for class in Class::ALL {
-            for spell in spells::main_bar(class) {
+            // The impostor's bar holds every button; 0 is an empty slot.
+            for spell in spells::main_bar(class, true) {
                 let entries = table.iter().filter(|a| a.spell == spell).count();
                 // Auto-attack keeps the stock tooltip.
-                let want = usize::from(spell != spells::ATTACK);
+                let want = usize::from(spell != spells::ATTACK && spell != 0);
                 assert_eq!(entries, want, "spell {spell} for {class:?}");
             }
         }

@@ -44,6 +44,8 @@ struct Inner {
     map: Map,
     /// The buttons each player was last told are live.
     actions: HashMap<PlayerId, Actions>,
+    /// Who was last sent the impostor's action bar; absent is the crewmate's bar a login sends.
+    impostor_bars: HashMap<PlayerId, bool>,
     /// Each cast on show, by caster: its spell and target, for the launch or the break.
     casts: HashMap<PlayerId, (u32, Target)>,
     /// The spell each caster's command was shown as, during one cast's apply.
@@ -90,6 +92,7 @@ impl GameHost {
             look,
             map,
             actions: HashMap::new(),
+            impostor_bars: HashMap::new(),
             casts: HashMap::new(),
             shown: HashMap::new(),
             cooldowns: HashMap::new(),
@@ -138,6 +141,7 @@ impl GameHost {
         let player = PlayerId(guid);
         let _ = inner.apply(Command::Leave { player });
         inner.actions.remove(&player);
+        inner.impostor_bars.remove(&player);
         inner.cooldowns.remove(&player);
         inner.casts.remove(&player);
         inner.health.remove(&player);
@@ -472,6 +476,7 @@ impl Inner {
             self.show_quests(event);
         }
         self.refresh_actions();
+        self.refresh_bars();
         self.refresh_cooldowns();
         self.refresh_health();
         Ok(events)
@@ -1163,6 +1168,22 @@ impl Inner {
         }
     }
 
+    /// Send the action bar again to each player whose role changed it: Kill and Sabotage arrive
+    /// with the impostor role and go at the lobby, where roles end.
+    fn refresh_bars(&mut self) {
+        let changed: Vec<(PlayerId, Class, bool)> = (self.game.players())
+            .filter(|(_, p)| p.connected)
+            .map(|(id, p)| (id, p.class, p.is_impostor()))
+            .filter(|(id, _, impostor)| {
+                self.impostor_bars.get(id).copied().unwrap_or(false) != *impostor
+            })
+            .collect();
+        for (id, class, impostor) in changed {
+            self.impostor_bars.insert(id, impostor);
+            self.map.send(id.0, spells::action_buttons(class, impostor));
+        }
+    }
+
     /// Start the cooldown sweep of every button whose cooldown began since the last refresh:
     /// kill, sabotage, emergency and the class spell. A client's sweep can grow but not shrink,
     /// so only a cooldown that rose is sent.
@@ -1721,6 +1742,48 @@ mod tests {
             [1],
             "the press is answered"
         );
+    }
+
+    /// The action bars `seen` replaced the whole bar with, as the client reads them.
+    fn bars(seen: &[ServerPacket]) -> Vec<Vec<u32>> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::ActionButtons { buttons } => {
+                    Some(buttons.iter().map(|b| b.action).collect())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn kill_and_sabotage_reach_only_the_impostors_bar_and_leave_at_the_lobby() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        drain(&mut inboxes);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let warrior = |impostor| spells::main_bar(Class::Warrior, impostor);
+        let sent = |bar: [u32; 9]| bar.into_iter().filter(|&s| s != 0).collect::<Vec<_>>();
+        assert_eq!(
+            bars(&received(&mut inboxes[imp as usize - 1])),
+            [sent(warrior(true))]
+        );
+        for c in &crew {
+            let seen = received(&mut inboxes[*c as usize - 1]);
+            assert!(bars(&seen).is_empty(), "crewmate {c} keeps the login bar");
+        }
+
+        host.request(imp, Request::Kill);
+        assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
+        drain(&mut inboxes);
+        host.request(1, Request::Lobby);
+        assert_eq!(
+            bars(&received(&mut inboxes[imp as usize - 1])),
+            [sent(warrior(false))]
+        );
+        for c in &crew {
+            assert!(bars(&received(&mut inboxes[*c as usize - 1])).is_empty());
+        }
     }
 
     #[test]

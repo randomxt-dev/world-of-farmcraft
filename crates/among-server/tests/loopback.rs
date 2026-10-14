@@ -515,6 +515,52 @@ fn a_started_game_shows_the_wolves_and_a_swing_at_one_is_echoed() {
     assert_eq!((attacker, victim), (*me, wolf));
 }
 
+#[test]
+fn a_dealt_task_lands_in_the_quest_log_and_its_quest_query_is_answered() {
+    let settings = Settings {
+        min_players: 3,
+        ..Settings::default()
+    };
+    let host = start_server_with(3, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=3 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    press(&mut players[0].0, Request::Start);
+    let (one, me) = &mut players[1];
+    // The owner's values update fills its log: the crew's quest, then its first task.
+    let quests = wait_for(one, |p| {
+        let ServerPacket::UpdateObject { objects } = p else {
+            return None;
+        };
+        objects.iter().find_map(|o| match o {
+            Object::Values { guid, mask } if guid == me => {
+                let ids: Vec<u32> = (0..20)
+                    .filter_map(|s| mask.player_quest_log(s))
+                    .map(|q| q.quest_id)
+                    .filter(|&id| id != 0)
+                    .collect();
+                (!ids.is_empty()).then_some(ids)
+            }
+            _ => None,
+        })
+    });
+    assert_eq!(quests[0], among_server::world::quests::CREW_QUEST);
+    assert!(quests.len() > 1, "{quests:?}");
+    // The client asks the task's template as the log does when a new quest id appears.
+    one.quest_query(quests[1]).unwrap();
+    let template = wait_for(one, |p| match p {
+        ServerPacket::QuestQueryResponse(t) if t.quest_id == quests[1] => Some(t.clone()),
+        _ => None,
+    });
+    let task = among_server::world::quests::quest_task(quests[1]).unwrap();
+    let layout = among_server::game::placeholder_layout();
+    assert_eq!(template.title, layout.tasks[task.0].name);
+    assert!(template.objectives[0].required_count > 0);
+}
+
 /// The next system chat line, skipping everything else.
 fn wait_system_line(session: &mut WorldSession) -> String {
     wait_for(session, |p| match p {

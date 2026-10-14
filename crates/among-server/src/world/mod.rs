@@ -11,6 +11,7 @@ pub mod meeting;
 pub mod objects;
 pub mod packets;
 pub mod player;
+pub mod quests;
 mod session;
 mod socket;
 pub mod spells;

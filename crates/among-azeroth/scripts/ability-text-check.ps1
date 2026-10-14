@@ -44,6 +44,10 @@ if (-not $NoBuild) {
     if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 }
 
+# The server takes the stock realmd and world ports, which a running one already holds.
+if (Get-Process among-server -ErrorAction SilentlyContinue) {
+    throw 'An among-server is already running: close it (and its clients) first.'
+}
 $serverExe = Join-Path $target 'release\among-server.exe'
 $server = Start-Process -FilePath $serverExe -ArgumentList @('--account', $Account) -WorkingDirectory $root -PassThru
 Write-Host ''

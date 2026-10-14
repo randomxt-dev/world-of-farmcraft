@@ -1,0 +1,16 @@
+//! Among Azeroth's client side: Bevy plugins added on top of the stock benilla client. Movement,
+//! camera and controls stay benilla's; these only change what the stock UI shows.
+
+pub mod abilities;
+pub mod ability_text;
+
+use bevy::app::{PluginGroup, PluginGroupBuilder};
+
+/// Every Among Azeroth client plugin, added by the launcher after benilla's own.
+pub struct AmongAzerothPlugins;
+
+impl PluginGroup for AmongAzerothPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>().add(ability_text::AbilityTextPlugin)
+    }
+}

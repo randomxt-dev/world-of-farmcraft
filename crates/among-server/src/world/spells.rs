@@ -238,7 +238,8 @@ mod tests {
     #[test]
     fn cast_packets_read_back_whole_in_the_client() {
         use benilla_protocol::messages::CastOutcome;
-        let ServerPacket::CastResult { spell_id, outcome } = parse(&cast_failed(KILL, FAILED_SILENT))
+        let ServerPacket::CastResult { spell_id, outcome } =
+            parse(&cast_failed(KILL, FAILED_SILENT))
         else {
             panic!("not a cast result");
         };
@@ -255,7 +256,10 @@ mod tests {
         let ServerPacket::SpellStart(start) = parse(&spell_start(7, 2366, 5000, target)) else {
             panic!("not a spell start");
         };
-        assert_eq!((start.caster, start.spell_id, start.cast_time_ms), (7, 2366, 5000));
+        assert_eq!(
+            (start.caster, start.spell_id, start.cast_time_ms),
+            (7, 2366, 5000)
+        );
         assert_eq!(start.targets.unit_target, Some(0x2a));
         let ServerPacket::SpellStart(start) = parse(&spell_start(7, USE, 0, Target::Caster)) else {
             panic!("not a spell start");

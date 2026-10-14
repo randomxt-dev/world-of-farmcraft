@@ -117,11 +117,11 @@ pub fn rejected(g: &mut Game, cmd: Command) -> Reject {
     }
 }
 
-pub fn tick(g: &mut Game, secs: f32) -> Vec<Event> {
+pub fn tick(g: &mut Game, secs: f64) -> Vec<Event> {
     ok(
         g,
         Command::Tick {
-            dt: Duration::from_secs_f32(secs),
+            dt: Duration::from_secs_f64(secs),
         },
     )
 }

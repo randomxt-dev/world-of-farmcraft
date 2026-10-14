@@ -53,6 +53,13 @@ pub struct PlayerTask {
     pub step: usize,
 }
 
+/// A dead crewmate's body, where they fell, until a meeting clears the map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Body {
+    pub victim: PlayerId,
+    pub position: Position,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Phase {
     Lobby,
@@ -68,6 +75,7 @@ pub struct Game {
     phase: Phase,
     host: Option<PlayerId>,
     players: BTreeMap<PlayerId, Player>,
+    bodies: Vec<Body>,
     emergency_cooldown: Duration,
     out: Vec<Event>,
 }
@@ -80,6 +88,7 @@ impl Game {
             phase: Phase::Lobby,
             host: None,
             players: BTreeMap::new(),
+            bodies: Vec::new(),
             emergency_cooldown: Duration::ZERO,
             out: Vec::new(),
         }
@@ -108,6 +117,11 @@ impl Game {
 
     pub fn player(&self, id: PlayerId) -> Option<&Player> {
         self.players.get(&id)
+    }
+
+    /// Unreported bodies, oldest first.
+    pub fn bodies(&self) -> &[Body] {
+        &self.bodies
     }
 
     /// Until the emergency button works again.
@@ -182,6 +196,20 @@ impl Game {
                     .ok_or(Reject::TaskDone)?;
                 self.in_reach(p.position, *at, self.settings.use_distance)
             }
+            Command::Kill { killer, victim } => {
+                self.playing()?;
+                let k = self.alive(killer)?;
+                if !k.is_impostor() {
+                    return Err(Reject::NotImpostor);
+                }
+                let v = (self.players.get(&victim))
+                    .filter(|v| v.connected && v.alive && v.is_crewmate())
+                    .ok_or(Reject::InvalidTarget)?;
+                if !k.kill_cooldown.is_zero() {
+                    return Err(Reject::OnCooldown);
+                }
+                self.in_reach(k.position, v.position, self.settings.kill_distance)
+            }
             Command::ReturnToLobby { by } => {
                 if !matches!(self.phase, Phase::GameOver { .. }) {
                     return Err(Reject::WrongPhase);
@@ -214,6 +242,7 @@ impl Game {
             Command::Start { seed, .. } => self.start(seed),
             Command::Move { player, position } => self.seat(player).position = position,
             Command::UseTask { player, task } => self.use_task(player, task),
+            Command::Kill { killer, victim } => self.kill(killer, victim),
             Command::ReturnToLobby { .. } => self.return_to_lobby(),
             Command::Tick { dt } => self.tick(dt),
             _ => {}
@@ -306,6 +335,22 @@ impl Game {
         }
     }
 
+    fn kill(&mut self, killer: PlayerId, victim: PlayerId) {
+        let v = self.seat(victim);
+        v.alive = false;
+        let at = v.position;
+        let cooldown = self.settings.kill_cooldown;
+        let k = self.seat(killer);
+        k.position = at;
+        k.kill_cooldown = cooldown;
+        self.bodies.push(Body {
+            victim,
+            position: at,
+        });
+        self.out.push(Event::Killed { killer, victim, at });
+        self.check_win();
+    }
+
     fn leave(&mut self, player: PlayerId) {
         if self.phase == Phase::Lobby {
             self.players.remove(&player);
@@ -329,6 +374,7 @@ impl Game {
 
     fn return_to_lobby(&mut self) {
         self.players.retain(|_, p| p.connected);
+        self.bodies.clear();
         for p in self.players.values_mut() {
             *p = Player {
                 position: p.position,
@@ -423,6 +469,15 @@ impl Game {
             Ok(())
         } else {
             Err(Reject::NotHost)
+        }
+    }
+
+    fn alive(&self, id: PlayerId) -> Result<&Player, Reject> {
+        let p = self.connected(id)?;
+        if p.alive {
+            Ok(p)
+        } else {
+            Err(Reject::Dead)
         }
     }
 

@@ -39,6 +39,8 @@ fn start_server_full(n: u32, settings: Settings, marks: std::path::PathBuf) -> S
         world_port: 0,
         settings,
         marks,
+        // Games start on the press; the countdown has its own host test.
+        start_countdown: Duration::ZERO,
         ..ServerConfig::default()
     };
     let (tx, rx) = std::sync::mpsc::channel();
@@ -443,6 +445,8 @@ fn typing_mark_in_chat_records_where_you_stand() {
     let marks = temp_marks("survey");
     let host = start_server_full(1, Settings::default(), marks.clone());
     let (mut me, _) = enter(&host, "among1", "secret1");
+    // The first in is told in chat that they host.
+    assert!(wait_system_line(&mut me).starts_with("You host this game"));
     // Walk somewhere, then mark it the way a surveyor would: a /say line.
     me.start_forward([-8930.5, -120.25, 84.0], 0.5).unwrap();
     me.send_chat(".mark herb-north").unwrap();

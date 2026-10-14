@@ -38,6 +38,9 @@ struct Args {
     /// The survey file `.mark` writes and layouts read their marks from.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_MARKS)]
     marks: PathBuf,
+    /// Seconds the start is counted down in chat; 0 starts on the press.
+    #[arg(long, value_name = "SECONDS", default_value_t = 5)]
+    countdown: u64,
     /// Check a layout against the marks, print what it holds, and exit.
     #[arg(long, value_name = "FILE")]
     check_layout: Option<PathBuf>,
@@ -84,6 +87,7 @@ async fn main() -> Result<()> {
             layout,
             look,
             marks: args.marks,
+            start_countdown: std::time::Duration::from_secs(args.countdown),
         },
         accounts,
     )

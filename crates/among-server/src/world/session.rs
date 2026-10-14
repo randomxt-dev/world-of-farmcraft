@@ -291,8 +291,13 @@ impl Session {
     /// A `.` command typed in chat: the survey's, answered as system lines.
     fn dot_command(&self, guid: u64, text: &str) -> Result<()> {
         let mut words = text.split_whitespace();
-        if words.next() == Some(".speed") {
-            return self.set_speed(guid, words.next(), words.next().is_some());
+        match words.next() {
+            Some(".speed") => return self.set_speed(guid, words.next(), words.next().is_some()),
+            Some(".vote") => {
+                let reply = self.host.vote_by_name(guid, words.next());
+                return self.send(packets::system_message(&reply));
+            }
+            _ => {}
         }
         let Some(pose) = self.map.pose(guid) else {
             return Ok(());

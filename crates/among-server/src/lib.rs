@@ -3,6 +3,7 @@
 //! client logs in to it unchanged, so movement, camera and controls stay regular WoW.
 
 pub mod accounts;
+mod announce;
 pub mod game;
 pub mod layout_file;
 pub mod look;
@@ -45,6 +46,8 @@ pub struct ServerConfig {
     pub look: look::Look,
     /// The survey file `.mark` writes.
     pub marks: PathBuf,
+    /// How long the start is counted down in chat before the game begins.
+    pub start_countdown: std::time::Duration,
 }
 
 impl Default for ServerConfig {
@@ -58,6 +61,7 @@ impl Default for ServerConfig {
             layout: game::placeholder_layout(),
             look: game::placeholder_look(),
             marks: DEFAULT_MARKS.into(),
+            start_countdown: game::START_COUNTDOWN,
         }
     }
 }
@@ -72,6 +76,7 @@ pub struct Server {
     layout: among_rules::Layout,
     look: look::Look,
     marks: PathBuf,
+    start_countdown: std::time::Duration,
 }
 
 impl Server {
@@ -96,6 +101,7 @@ impl Server {
             layout: config.layout.clone(),
             look: config.look.clone(),
             marks: config.marks.clone(),
+            start_countdown: config.start_countdown,
         })
     }
 
@@ -127,6 +133,7 @@ impl Server {
         tracing::info!("among-server: survey marks in {}", survey.path().display());
         let map = world::Map::default();
         let host = GameHost::new(self.settings, self.layout, self.look, map.clone());
+        host.set_start_countdown(self.start_countdown);
         let clock = host.clone();
         tokio::spawn(async move {
             let mut every = tokio::time::interval(TICK);

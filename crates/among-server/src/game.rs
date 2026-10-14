@@ -13,6 +13,7 @@ use among_rules::{
 };
 use rand::RngCore;
 
+use crate::announce;
 use crate::look::Look;
 use crate::world::creatures::{self, Shown};
 use crate::world::player::Life;
@@ -28,6 +29,9 @@ const SAME_SPOT: f32 = 1.0;
 /// How long the fallen may lie before their spirit is released for them (vmangos
 /// `CORPSE_REPOP_TIME`, the Release Spirit popup's countdown).
 const AUTO_RELEASE: Duration = Duration::from_secs(6 * 60);
+
+/// How long a start is counted down in chat, by default.
+pub const START_COUNTDOWN: Duration = Duration::from_secs(5);
 
 /// The one match; cheap to clone. Lock order: the host, then the map.
 #[derive(Clone)]
@@ -59,6 +63,10 @@ struct Inner {
     fallen: HashMap<PlayerId, (Life, Duration)>,
     /// The corpses standing in the world, until a meeting or the lobby clears them.
     corpses: Vec<u64>,
+    /// How long a start is counted down; zero starts on the press.
+    countdown: Duration,
+    /// A start counting down: who pressed it, and the time left.
+    starting: Option<(PlayerId, Duration)>,
 }
 
 impl GameHost {
@@ -87,6 +95,8 @@ impl GameHost {
             hidden: HashMap::new(),
             fallen: HashMap::new(),
             corpses: Vec::new(),
+            countdown: START_COUNTDOWN,
+            starting: None,
         })))
     }
 
@@ -101,11 +111,18 @@ impl GameHost {
         let player = PlayerId(guid);
         // Character creation offers only the nine 1.12 classes; anything else fights as a warrior.
         let class = Class::from_wow(wow_class).unwrap_or(Class::Warrior);
-        if let Err(r) = inner.apply(Command::Join { player, class }) {
-            inner.notify(To::Player(player), &Notice::Refused(r.to_string()));
+        let told = match inner.apply(Command::Join { player, class }) {
+            Ok(events) => (events.iter()).any(|e| matches!(e, Event::HostChanged { .. })),
+            Err(r) => {
+                inner.notify(To::Player(player), &Notice::Refused(r.to_string()));
+                false
+            }
+        };
+        // The first in already heard it as the host change.
+        if !told {
+            let host = inner.game.host();
+            inner.notify(To::Player(player), &Notice::Host(host));
         }
-        let host = inner.game.host();
-        inner.notify(To::Player(player), &Notice::Host(host));
     }
 
     /// A character left the world.
@@ -135,7 +152,7 @@ impl GameHost {
         let player = PlayerId(guid);
         let result = inner
             .command(player, request)
-            .and_then(|cmd| inner.apply(cmd));
+            .and_then(|cmd| inner.run(cmd));
         if let Err(r) = result {
             tracing::debug!("game: {guid} {request:?} refused: {r}");
             inner.notify(To::Player(player), &Notice::Refused(r.to_string()));
@@ -161,7 +178,7 @@ impl GameHost {
         inner.shown.clear();
         let result = inner
             .cast_command(player, cast)
-            .and_then(|cmd| inner.apply(cmd));
+            .and_then(|cmd| inner.run(cmd));
         let map = inner.map.clone();
         match result {
             Err(r) => {
@@ -202,6 +219,7 @@ impl GameHost {
     /// Run the clock; the fallen who lay unreleased for [`AUTO_RELEASE`] are released.
     pub fn tick(&self, dt: Duration) {
         let mut inner = self.lock();
+        inner.count_down(dt);
         let _ = inner.apply(Command::Tick { dt });
         let mut due = Vec::new();
         for (&player, (life, lain)) in &mut inner.fallen {
@@ -215,6 +233,44 @@ impl GameHost {
         for player in due {
             inner.release(player);
         }
+    }
+
+    /// `.vote <name>` or `.vote skip` typed in chat; the reply line for the voter. With no name,
+    /// the reply lists who may be voted for.
+    pub fn vote_by_name(&self, guid: u64, who: Option<&str>) -> String {
+        let mut inner = self.lock();
+        let voter = PlayerId(guid);
+        let candidates: Vec<(PlayerId, String)> = (inner.game.players())
+            .filter(|(_, p)| p.connected && p.alive)
+            .map(|(id, _)| (id, inner.name(id)))
+            .collect();
+        let vote = match who {
+            None => {
+                let names: Vec<&str> = candidates.iter().map(|(_, n)| n.as_str()).collect();
+                return format!(
+                    "Vote with .vote <name> or .vote skip. Still standing: {}.",
+                    names.join(", ")
+                );
+            }
+            Some(w) if w.eq_ignore_ascii_case("skip") => Vote::Skip,
+            Some(w) => match candidates.iter().find(|(_, n)| n.eq_ignore_ascii_case(w)) {
+                Some((id, _)) => Vote::Player(*id),
+                None => return format!("Nobody standing is named {w}."),
+            },
+        };
+        match inner.apply(Command::Vote { voter, vote }) {
+            Ok(_) => match vote {
+                Vote::Skip => "You voted to skip.".into(),
+                Vote::Player(p) => format!("You voted for {}.", inner.name(p)),
+            },
+            Err(r) => format!("{}.", sentence(r)),
+        }
+    }
+
+    /// Count a start down for `countdown` (zero: start on the press), as tests and quick
+    /// runs set it.
+    pub fn set_start_countdown(&self, countdown: Duration) {
+        self.lock().countdown = countdown;
     }
 
     /// A `CMSG_REPOP_REQUEST`, the Release Spirit button: the fallen become ghosts where they
@@ -308,6 +364,51 @@ fn sentence(r: Reject) -> String {
 }
 
 impl Inner {
+    /// A press's command: a start is counted down first, anything else applied now.
+    fn run(&mut self, cmd: Command) -> Result<Vec<Event>, Reject> {
+        let Command::Start { by, .. } = cmd else {
+            return self.apply(cmd);
+        };
+        if self.countdown.is_zero() {
+            return self.apply(cmd);
+        }
+        self.game.validate(&cmd)?;
+        if self.starting.is_none() {
+            self.starting = Some((by, self.countdown));
+            let secs = self.countdown.as_secs();
+            self.announce(&format!("{} starts the game: {secs}...", self.name(by)));
+        }
+        Ok(Vec::new())
+    }
+
+    /// Run a start's countdown by `dt`: each whole second is called in chat, and at zero the
+    /// game starts, or the reason it cannot is told.
+    fn count_down(&mut self, dt: Duration) {
+        let Some((by, left)) = self.starting else {
+            return;
+        };
+        let now = left.saturating_sub(dt);
+        if !now.is_zero() {
+            self.starting = Some((by, now));
+            // A second's mark crossed: 4..., 3..., counting the seconds started in.
+            let (was, is) = (left.as_secs_f32().ceil(), now.as_secs_f32().ceil());
+            if is < was {
+                self.announce(&format!("{is}..."));
+            }
+            return;
+        }
+        self.starting = None;
+        let seed = rand::thread_rng().next_u64();
+        if let Err(r) = self.apply(Command::Start { by, seed }) {
+            self.announce(&format!("The start is called off: {r}."));
+        }
+    }
+
+    /// One system line to everyone in the world.
+    fn announce(&self, text: &str) {
+        self.map.broadcast(&packets::system_message(text));
+    }
+
     /// Apply `cmd`, send what its events tell whom and show them in the world, then any changed
     /// buttons and cooldowns.
     fn apply(&mut self, cmd: Command) -> Result<Vec<Event>, Reject> {
@@ -512,6 +613,11 @@ impl Inner {
         self.map.send(g, death::force_swim_speed(g, next(), swim));
         self.map.set_run_speed(g, run);
         self.map.set_swim_speed(g, swim);
+    }
+
+    /// The player's character name, as chat shows it.
+    fn name(&self, player: PlayerId) -> String {
+        (self.map.character(player.0)).map_or_else(|| format!("Player {}", player.0), |c| c.name)
     }
 
     fn max_health(&self, player: PlayerId) -> u32 {
@@ -941,12 +1047,17 @@ impl Inner {
         }
     }
 
-    /// Each recipient gets the line under its own guid, which its name query always answers.
+    /// Each recipient gets the line under its own guid, which its name query always answers, and
+    /// the notice in words as a system line in its chat.
     fn notify(&self, to: To, notice: &Notice) {
         let payload = notice.encode();
         let send = |guid: u64| {
             self.map
                 .send(guid, packets::addon_message(guid, wire::PREFIX, &payload));
+            let name = |p: PlayerId| self.name(p);
+            if let Some(text) = announce::line(notice, PlayerId(guid), &self.game, &name) {
+                self.map.send(guid, packets::system_message(&text));
+            }
         };
         match to {
             To::Player(p) => send(p.0),
@@ -1172,6 +1283,8 @@ mod tests {
     ) -> (GameHost, Vec<UnboundedReceiver<Packet>>) {
         let map = Map::default();
         let host = GameHost::new(settings, layout, placeholder_look(), map.clone());
+        // Games start on the press here; the countdown has its own test.
+        host.set_start_countdown(Duration::ZERO);
         let mut inboxes = Vec::new();
         for guid in 1..=n {
             let (tx, rx) = unbounded_channel();
@@ -1203,6 +1316,10 @@ mod tests {
             else {
                 continue;
             };
+            // The system lines in words ride beside each notice.
+            if !m.is_addon() {
+                continue;
+            }
             let (prefix, payload) = m.text.split_once('\t').unwrap();
             assert_eq!(prefix, wire::PREFIX);
             out.push(Notice::decode(payload).expect(payload));
@@ -1887,6 +2004,81 @@ mod tests {
         // Unreleased after the popup's six minutes, the spirit is released for them.
         host.tick(AUTO_RELEASE);
         assert!(created(&received(&mut inboxes[(c as usize) % 3])).contains(&guid::corpse(c)));
+    }
+
+    /// The system lines waiting in `inbox`, in order; everything else is skipped.
+    fn chat_lines(inbox: &mut UnboundedReceiver<Packet>) -> Vec<String> {
+        (received(inbox).into_iter())
+            .filter_map(|p| match p {
+                ServerPacket::MessageChat(m) if !m.is_addon() => Some(m.text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_horn_counts_the_start_down_in_chat_then_tells_each_their_role() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.set_start_countdown(Duration::from_secs(5));
+        drain(&mut inboxes);
+        cast(&host, 1, spells::EMERGENCY, Target::Caster);
+        assert_eq!(*host.lock().game.phase(), Phase::Lobby, "counting down");
+        assert_eq!(chat_lines(&mut inboxes[1]), ["P1 starts the game: 5..."]);
+        let mut heard = Vec::new();
+        for _ in 0..50 {
+            host.tick(Duration::from_millis(100));
+            heard.extend(chat_lines(&mut inboxes[1]));
+        }
+        assert!(matches!(host.lock().game.phase(), Phase::Playing));
+        assert_eq!(heard[..4], ["4...", "3...", "2...", "1..."]);
+        assert!(heard[4].starts_with("The game begins: 3 players, 1 impostor"));
+
+        // Each is told their own role and tasks, and nobody else's role.
+        let (imp, _) = roles(&host);
+        for (i, inbox) in inboxes.iter_mut().enumerate() {
+            // Player 2's lines so far were read into `heard`.
+            let mut lines = chat_lines(inbox);
+            if i == 1 {
+                lines = [heard.clone(), lines].concat();
+            }
+            let impostor = lines.iter().filter(|l| l.contains("IMPOSTOR")).count();
+            let crewmate = lines.iter().filter(|l| l.contains("CREWMATE")).count();
+            let me = i as u64 + 1 == imp;
+            assert_eq!((impostor, crewmate), if me { (1, 0) } else { (0, 1) });
+            assert!(
+                lines.iter().any(|l| l.starts_with("Your task: ")),
+                "{lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dot_vote_names_a_player_or_skips_and_explains_itself() {
+        let (host, _inboxes, imp, crew) = four_with_one_far();
+        assert_eq!(host.vote_by_name(crew[1], Some("skip")), "Not now.");
+        cast(&host, imp, spells::KILL, Target::Unit(crew[0]));
+        host.request(crew[1], Request::Report);
+        host.tick(Duration::from_secs(15));
+        let list = host.vote_by_name(crew[1], None);
+        assert!(
+            list.starts_with("Vote with .vote <name> or .vote skip."),
+            "{list}"
+        );
+        assert!(
+            !list.contains(&format!("P{}", crew[0])),
+            "the dead are not candidates"
+        );
+        assert_eq!(
+            host.vote_by_name(crew[1], Some("Nobody")),
+            "Nobody standing is named Nobody."
+        );
+        let target = format!("p{imp}");
+        assert_eq!(
+            host.vote_by_name(crew[1], Some(&target)),
+            format!("You voted for P{imp}.")
+        );
+        assert_eq!(host.vote_by_name(crew[1], Some("skip")), "Already voted.");
+        assert_eq!(host.vote_by_name(imp, Some("SKIP")), "You voted to skip.");
     }
 
     #[test]

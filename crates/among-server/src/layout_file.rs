@@ -12,7 +12,7 @@ use among_rules::{
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
-use crate::look::{self, CreatureLook, Look, NodeLook};
+use crate::look::{self, CreatureLook, Look, NodeKind, NodeLook};
 use crate::survey::Mark;
 
 #[derive(Debug, Deserialize)]
@@ -202,13 +202,23 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
                     )
                 })?),
             };
-            looks.push(node);
             let at = match (&s.at, first) {
                 (Some(at), _) => spot(at, &what)?,
                 (None, Some(first)) => first,
                 (None, None) => bail!("{what}: a cast step needs at = <spot>"),
             };
-            steps.push(TaskStep { at, action });
+            // A lone herb or vein is picked, not worked: gone for everyone once a crewmate has it.
+            let resource = node
+                .as_ref()
+                .is_some_and(|n| matches!(n.kind, NodeKind::Herb | NodeKind::Mine));
+            let step = match action {
+                StepAction::Cast(time) if resource && !time.is_zero() => {
+                    TaskStep::pick(at, time.as_secs_f32())
+                }
+                action => TaskStep { at, action },
+            };
+            looks.push(node);
+            steps.push(step);
         }
         tasks.push(TaskDef {
             name: t.name.clone(),
@@ -322,7 +332,7 @@ pub fn summary(l: &Layout) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::look::{NodeKind, NodeLook};
+    use crate::look::NodeLook;
     use among_rules::TaskId;
 
     fn mark(x: f32) -> Mark {
@@ -375,9 +385,14 @@ mod tests {
         let l = parse(SMALL, &marks(&["hall", "herb", "den", "pump"])).unwrap();
         assert_eq!(l.emergency_button, [0.0, 0.0, 0.0]);
         assert_eq!(l.tasks[0].steps[0].at, [10.0, 0.0, 0.0]);
+        // A lone herb is picked: one node, gone for everyone once a crewmate has it.
         assert_eq!(
             l.tasks[0].steps[0].action,
-            StepAction::Cast(Duration::from_secs(5))
+            StepAction::Gather {
+                nodes: vec![[10.0, 0.0, 0.0]],
+                cast: Duration::from_secs(5),
+                count: 1
+            }
         );
         assert_eq!(
             l.tasks[1].steps[0].action,

@@ -61,8 +61,9 @@ struct Inner {
     hunting: HashMap<CreatureId, PlayerId>,
     /// Where each creature was last shown, the start of its next move.
     creature_at: HashMap<CreatureId, Position>,
-    /// The gather nodes each player has picked, hidden from their client until the lobby.
-    hidden: HashMap<PlayerId, Vec<u64>>,
+    /// The gather nodes a crewmate picked, gone from the world until the lobby, with the create
+    /// that puts each back.
+    picked: Vec<(u64, Packet)>,
     /// The fallen and the ghosts, with how long each has lain unreleased; the rest are alive.
     fallen: HashMap<PlayerId, (Life, Duration)>,
     /// The corpses standing in the world, until a meeting or the lobby clears them.
@@ -104,7 +105,7 @@ impl GameHost {
             attacking: HashMap::new(),
             hunting: HashMap::new(),
             creature_at: HashMap::new(),
-            hidden: HashMap::new(),
+            picked: Vec::new(),
             fallen: HashMap::new(),
             corpses: Vec::new(),
             countdown: START_COUNTDOWN,
@@ -150,7 +151,6 @@ impl GameHost {
         inner.cooldowns.remove(&player);
         inner.casts.remove(&player);
         inner.health.remove(&player);
-        inner.hidden.remove(&player);
         inner.fallen.remove(&player);
     }
 
@@ -386,7 +386,8 @@ impl GameHost {
         } else {
             let task = quests::quest_task(quest_id)?;
             let def = layout.tasks.get(task.0)?;
-            quests::task_text(task, def, &inner.look, &layout.creatures)
+            let need = |step| inner.game.gather_need(task, step);
+            quests::task_text(task, def, &inner.look, &layout.creatures, &need)
         };
         Some(quests::template(quest_id, player::SPAWN.zone, &text))
     }
@@ -548,27 +549,17 @@ impl Inner {
                 self.start_cast(player, spell, time, target);
             }
             Event::GatherProgress {
-                player,
-                task,
-                node,
-                picked,
-                count,
+                task, step, node, ..
             } => {
-                // The picked herb or vein is gone for its gatherer; the others still see it.
-                let step = (self.game.player(player))
-                    .and_then(|p| p.tasks.iter().find(|t| t.task == task))
-                    .map_or(0, |t| t.step);
-                // The pick that reached the count has already moved the step on.
-                let step = step - usize::from(picked >= count && step > 0);
+                // The picked herb or vein is gone for the whole crew until the lobby.
                 let g = guid::node(task, step, node);
-                self.map.hide_from(player.0, g);
-                self.hidden.entry(player).or_default().push(g);
+                if let Some(create) = self.map.withdraw(g) {
+                    self.picked.push((g, create));
+                }
             }
             Event::ReturnedToLobby => {
-                for (player, nodes) in std::mem::take(&mut self.hidden) {
-                    for g in nodes {
-                        self.map.show_to(player.0, g);
-                    }
+                for (g, create) in std::mem::take(&mut self.picked) {
+                    self.map.spawn(g, create);
                 }
                 // Everyone walks the lobby alive, and no corpse is left.
                 for g in std::mem::take(&mut self.corpses) {
@@ -1374,8 +1365,26 @@ impl Inner {
             return;
         };
         let (done, total) = self.game.task_bar();
-        let now = quests::player_log(&p.tasks, &self.game.layout().tasks, (done, total));
+        let need = |task, step| self.game.gather_need(task, step);
+        let now = quests::player_log(&p.tasks, &self.game.layout().tasks, (done, total), &need);
+        // A task's share of its spots changes from game to game: send its text again when it does.
+        let layout = self.game.layout();
+        let texts: Vec<(u32, quests::QuestText)> = (p.tasks.iter())
+            .filter_map(|t| {
+                let def = layout.tasks.get(t.task.0)?;
+                let need = |step| self.game.gather_need(t.task, step);
+                let text = quests::task_text(t.task, def, &self.look, &layout.creatures, &need);
+                Some((quests::task_quest(t.task), text))
+            })
+            .collect();
         let told = self.quest_logs.entry(player).or_default();
+        for (quest, text) in texts {
+            if told.texts.get(&quest) != Some(&text.objectives) {
+                let template = quests::template(quest, player::SPAWN.zone, &text);
+                self.map.send(player.0, template);
+                told.texts.insert(quest, text.objectives);
+            }
+        }
         if now[0].0 == quests::CREW_QUEST && told.crew_total != Some(total) {
             let text = quests::crew_text(total);
             let crew = quests::template(quests::CREW_QUEST, player::SPAWN.zone, &text);
@@ -1437,13 +1446,13 @@ fn placeholder() -> (Layout, Look) {
     // Gathering and mining take 5 s, as Herb Gathering does; crafting 3 s.
     let herb = |dx, dy, name, display| {
         (
-            TaskStep::cast(at(dx, dy), 5.0),
+            TaskStep::pick(at(dx, dy), 5.0),
             NodeLook::herb(name, display),
         )
     };
     let vein = |dx, dy| {
         let node = NodeLook::mine("Copper Vein", look::COPPER_VEIN);
-        (TaskStep::cast(at(dx, dy), 5.0), node)
+        (TaskStep::pick(at(dx, dy), 5.0), node)
     };
     let craft = |dx, dy, name, display, spell| {
         let node = NodeLook::station(name, display, spell);
@@ -1948,8 +1957,13 @@ mod tests {
             let inner = host.lock();
             let p = inner.game.player(PlayerId(c)).unwrap();
             let layout = inner.game.layout();
+            // A task begun at one node: a station's cast, or a lone herb or vein to pick.
             let t = *(p.tasks.iter())
-                .find(|t| matches!(layout.tasks[t.task.0].steps[0].action, StepAction::Cast(_)))
+                .find(|t| match &layout.tasks[t.task.0].steps[0].action {
+                    StepAction::Cast(_) => true,
+                    StepAction::Gather { nodes, .. } => nodes.len() == 1,
+                    StepAction::Slay { .. } => false,
+                })
                 .unwrap();
             let at = inner.game.layout().tasks[t.task.0].steps[t.step].at;
             (t.task, at, inner.look.node(t.task, t.step).unwrap().clone())
@@ -2030,7 +2044,7 @@ mod tests {
     }
 
     #[test]
-    fn every_gather_spot_is_a_node_and_a_picked_one_vanishes_for_its_gatherer_only() {
+    fn every_gather_spot_is_a_node_and_a_picked_one_vanishes_for_everyone() {
         let map = Map::default();
         let (task, nodes) = (placeholder_layout().tasks.iter().enumerate())
             .find_map(|(i, t)| match &t.steps[0].action {
@@ -2093,12 +2107,8 @@ mod tests {
             .expect("a cast bar");
         assert_eq!(start.targets.go_target, Some(node));
         host.tick(Duration::from_secs(6));
-        assert_eq!(destroyed(&received(&mut inboxes[me])), [node]);
-        for i in (0..3).filter(|&i| i != me) {
-            assert!(
-                destroyed(&received(&mut inboxes[i])).is_empty(),
-                "{i} still sees it"
-            );
+        for (i, inbox) in inboxes.iter_mut().enumerate() {
+            assert_eq!(destroyed(&received(inbox)), [node], "{i} still sees it");
         }
         // Picked again: refused, the reason in red.
         cast(
@@ -2110,13 +2120,14 @@ mod tests {
         assert!(received(&mut inboxes[me]).iter().any(|p| matches!(p,
             ServerPacket::Notification { text } if text == "Already gathered here")));
 
-        // The impostor ends it; back in the lobby the herb grows again for its gatherer.
+        // The impostor ends it; back in the lobby the herb grows again for everyone.
         host.request(imp, Request::Kill);
         assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
         drain(&mut inboxes);
         host.request(1, Request::Lobby);
-        assert!(created(&received(&mut inboxes[me])).contains(&node));
-        assert!(created(&received(&mut inboxes[(me + 1) % 3])).is_empty());
+        for inbox in &mut inboxes {
+            assert!(created(&received(inbox)).contains(&node));
+        }
     }
 
     #[test]
@@ -2215,13 +2226,18 @@ mod tests {
 
     #[test]
     fn a_node_on_a_shared_spot_works_for_whichever_task_is_yours() {
-        // Every task that starts with a cast starts it at one spot, as two tasks sharing one
-        // surveyed campfire do.
+        // Every task that starts at one node (a station's cast, a lone herb or vein) starts it at
+        // one spot, as two tasks sharing one surveyed campfire do.
         let mut layout = placeholder_layout();
         let spot = layout.tasks[1].steps[0].at;
         for t in &mut layout.tasks {
-            if matches!(t.steps[0].action, StepAction::Cast(_)) {
-                t.steps[0].at = spot;
+            match &mut t.steps[0].action {
+                StepAction::Cast(_) => t.steps[0].at = spot,
+                StepAction::Gather { nodes, .. } if nodes.len() == 1 => {
+                    nodes[0] = spot;
+                    t.steps[0].at = spot;
+                }
+                _ => {}
             }
         }
         let shared: Vec<TaskId> = (layout.tasks.iter().enumerate())

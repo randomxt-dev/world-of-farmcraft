@@ -72,23 +72,44 @@ pub struct QuestText {
 }
 
 /// What one step asks, as its phrase in the objectives text and its counted line.
+/// How many nodes a holder gathers at a Gather step, by step index; 0 keeps the layout's count.
+pub type Need<'a> = &'a dyn Fn(usize) -> u32;
+
+/// The verb a node is worked with, and its past tense.
+fn verbs(kind: Option<NodeKind>) -> (&'static str, &'static str) {
+    match kind {
+        Some(NodeKind::Herb) => ("pick", "picked"),
+        Some(NodeKind::Mine) => ("mine", "mined"),
+        Some(NodeKind::Station) => ("use", "used"),
+        None => ("work", "worked"),
+    }
+}
+
 fn step_text(
     task: TaskId,
     step: usize,
     action: &StepAction,
     look: &Look,
     creatures: &[CreatureDef],
+    need: u32,
 ) -> (String, Line) {
     let node = look.node(task, step);
     let name = node.map(|n| n.name.as_str());
+    let (verb, done) = verbs(node.map(|n| n.kind));
     let (phrase, text, required) = match (action, name) {
-        (StepAction::Gather { count, .. }, Some(n)) => (
-            format!("gather {n} ({count})"),
-            format!("{n} gathered"),
-            *count,
-        ),
+        // One node to pick reads as the one thing: "mine the Copper Vein".
+        (StepAction::Gather { count, nodes, .. }, Some(n)) => {
+            let need = if need == 0 { *count } else { need };
+            let phrase = if need == 1 && nodes.len() == 1 {
+                format!("{verb} the {n}")
+            } else {
+                format!("{verb} {n} ({need})")
+            };
+            (phrase, format!("{n} {done}"), need)
+        }
         (StepAction::Gather { count, .. }, None) => {
-            (format!("gather ({count})"), "Gathered".into(), *count)
+            let need = if need == 0 { *count } else { need };
+            (format!("gather ({need})"), "Gathered".into(), need)
         }
         (
             StepAction::Slay {
@@ -102,15 +123,7 @@ fn step_text(
                 .map_or("creatures", |c| c.name.as_str());
             (format!("slay {n} ({count})"), format!("{n} slain"), *count)
         }
-        (StepAction::Cast(_), Some(n)) => {
-            let (verb, done) = match node.map(|n| n.kind) {
-                Some(NodeKind::Herb) => ("pick", "picked"),
-                Some(NodeKind::Mine) => ("mine", "mined"),
-                Some(NodeKind::Station) => ("use", "used"),
-                _ => ("work", "worked"),
-            };
-            (format!("{verb} the {n}"), format!("{n} {done}"), 1)
-        }
+        (StepAction::Cast(_), Some(n)) => (format!("{verb} the {n}"), format!("{n} {done}"), 1),
         (StepAction::Cast(_), None) => (
             format!("finish step {}", step + 1),
             format!("Step {} done", step + 1),
@@ -125,10 +138,17 @@ fn step_text(
     (phrase, line)
 }
 
-/// Task `task`'s quest: one line per step, or one "Steps done" line past four steps.
-pub fn task_text(task: TaskId, def: &TaskDef, look: &Look, creatures: &[CreatureDef]) -> QuestText {
+/// Task `task`'s quest: one line per step, or one "Steps done" line past four steps; a Gather
+/// step counts the holder's `need`.
+pub fn task_text(
+    task: TaskId,
+    def: &TaskDef,
+    look: &Look,
+    creatures: &[CreatureDef],
+    need: Need,
+) -> QuestText {
     let (phrases, mut lines): (Vec<String>, Vec<Line>) = (def.steps.iter().enumerate())
-        .map(|(i, s)| step_text(task, i, &s.action, look, creatures))
+        .map(|(i, s)| step_text(task, i, &s.action, look, creatures, need(i)))
         .unzip();
     if lines.len() > OBJECTIVES {
         lines = vec![Line {
@@ -217,7 +237,7 @@ fn count_state(counters: &[u32], complete: bool) -> u32 {
 
 /// A task's counters word: each finished step's line full, the current step's at its picks or
 /// kills, the rest empty; complete once every step is done.
-pub fn task_counters(def: &TaskDef, t: &PlayerTask) -> u32 {
+pub fn task_counters(def: &TaskDef, t: &PlayerTask, need: Need) -> u32 {
     let steps = def.steps.len();
     let done = t.step >= steps;
     if steps > OBJECTIVES {
@@ -227,7 +247,11 @@ pub fn task_counters(def: &TaskDef, t: &PlayerTask) -> u32 {
         .map(|(i, s)| {
             let required = match &s.action {
                 StepAction::Cast(_) => 1,
-                StepAction::Gather { count, .. } | StepAction::Slay { count, .. } => *count,
+                StepAction::Gather { count, .. } => match need(i) {
+                    0 => *count,
+                    n => n,
+                },
+                StepAction::Slay { count, .. } => *count,
             };
             match (i.cmp(&t.step), &s.action) {
                 (std::cmp::Ordering::Less, _) => required,
@@ -250,7 +274,12 @@ pub type Log = [(u32, u32); SLOTS];
 
 /// A player's log: empty with no tasks, else the crew's quest then each task in list order, as
 /// many as the slots hold.
-pub fn player_log(tasks: &[PlayerTask], defs: &[TaskDef], crew: (usize, usize)) -> Log {
+pub fn player_log(
+    tasks: &[PlayerTask],
+    defs: &[TaskDef],
+    crew: (usize, usize),
+    need: &dyn Fn(TaskId, usize) -> u32,
+) -> Log {
     let mut log = [(0, 0); SLOTS];
     if tasks.is_empty() {
         return log;
@@ -258,7 +287,10 @@ pub fn player_log(tasks: &[PlayerTask], defs: &[TaskDef], crew: (usize, usize)) 
     log[0] = (CREW_QUEST, crew_counters(crew.0, crew.1));
     for (slot, t) in log[1..].iter_mut().zip(tasks) {
         if let Some(def) = defs.get(t.task.0) {
-            *slot = (task_quest(t.task), task_counters(def, t));
+            *slot = (
+                task_quest(t.task),
+                task_counters(def, t, &|s| need(t.task, s)),
+            );
         }
     }
     log
@@ -269,6 +301,8 @@ pub fn player_log(tasks: &[PlayerTask], defs: &[TaskDef], crew: (usize, usize)) 
 pub struct Told {
     pub log: Log,
     pub crew_total: Option<usize>,
+    /// Each task quest's objectives as last sent, so a share that changed is sent again.
+    pub texts: std::collections::HashMap<u32, String>,
 }
 
 /// The owner's values update for every slot that differs between `was` and `now`: all three of
@@ -351,7 +385,7 @@ mod tests {
     #[test]
     fn a_task_template_reads_back_with_a_counted_line_per_step() {
         let (def, look, creatures) = three_steps();
-        let text = task_text(TaskId(0), &def, &look, &creatures);
+        let text = task_text(TaskId(0), &def, &look, &creatures, &|_| 0);
         let t = parse_template(&template(task_quest(TaskId(0)), 12, &text));
         assert_eq!(t.quest_id, 90_001);
         assert_eq!(t.title, "Feed the Crew");
@@ -359,7 +393,7 @@ mod tests {
         assert_eq!(t.level, TASK_LEVEL);
         assert_eq!(
             t.objectives_text,
-            "Gather Peacebloom (3), then use the Campfire, then slay Young Wolf (2)."
+            "Pick Peacebloom (3), then use the Campfire, then slay Young Wolf (2)."
         );
         assert_eq!(t.flags, 0, "not shareable");
         let lines: Vec<(u32, &str)> = (t.objectives.iter())
@@ -368,7 +402,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                (3, "Peacebloom gathered"),
+                (3, "Peacebloom picked"),
                 (1, "Campfire used"),
                 (2, "Young Wolf slain"),
                 (0, "")
@@ -390,7 +424,13 @@ mod tests {
             kind: TaskKind::Long,
             steps: vec![TaskStep::cast(AT, 1.0); 6],
         };
-        let text = task_text(TaskId(2), &def, &Look::plain(&Layout::default()), &[]);
+        let text = task_text(
+            TaskId(2),
+            &def,
+            &Look::plain(&Layout::default()),
+            &[],
+            &|_| 0,
+        );
         let t = parse_template(&template(task_quest(TaskId(2)), 12, &text));
         assert_eq!(t.objectives[0].text, "Steps done");
         assert_eq!(t.objectives[0].required_count, 6);
@@ -401,7 +441,7 @@ mod tests {
             kills: 0,
             picked: 0,
         };
-        assert_eq!(task_counters(&def, &t3), 3);
+        assert_eq!(task_counters(&def, &t3, &|_| 0), 3);
     }
 
     #[test]
@@ -439,7 +479,7 @@ mod tests {
             picked: 0b10010,
         };
         let empty = [(0, 0); SLOTS];
-        let now = player_log(&[fresh], &defs, (1, 4));
+        let now = player_log(&[fresh], &defs, (1, 4), &|_, _| 0);
         let slots = slots_of(&log_update(7, &empty, &now).unwrap());
         assert_eq!(slots.len(), 2, "the crew's quest and the task: {slots:?}");
         let (crew, task) = (slots[0].1, slots[1].1);
@@ -456,13 +496,13 @@ mod tests {
             picked: 0,
             ..fresh
         };
-        let later = player_log(&[slaying], &defs, (1, 4));
+        let later = player_log(&[slaying], &defs, (1, 4), &|_, _| 0);
         let slots = slots_of(&log_update(7, &now, &later).unwrap());
         assert_eq!(slots.len(), 1, "only the changed slot: {slots:?}");
         assert_eq!(slots[0].1.counters, [3, 1, 1, 0]);
 
         let done = PlayerTask { step: 3, ..slaying };
-        let finished = player_log(&[done], &defs, (4, 4));
+        let finished = player_log(&[done], &defs, (4, 4), &|_, _| 0);
         let slots = slots_of(&log_update(7, &later, &finished).unwrap());
         assert_eq!(slots.len(), 2);
         assert_eq!(slots[0].1.state, quest_slot_state::COMPLETE, "the crew's");
@@ -470,7 +510,7 @@ mod tests {
         assert_eq!(slots[1].1.state, quest_slot_state::COMPLETE);
 
         // No tasks clears every slot that held a quest.
-        let cleared = player_log(&[], &defs, (0, 0));
+        let cleared = player_log(&[], &defs, (0, 0), &|_, _| 0);
         assert_eq!(cleared, empty);
         let slots = slots_of(&log_update(7, &finished, &cleared).unwrap());
         assert!(slots.iter().all(|(_, q)| q.quest_id == 0 && q.state == 0));

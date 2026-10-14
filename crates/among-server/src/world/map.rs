@@ -95,6 +95,17 @@ impl Map {
         }
     }
 
+    /// Take an object out of the world as [`Map::despawn`] does, handing back the create that
+    /// puts it back as it stood.
+    pub fn withdraw(&self, guid: u64) -> Option<Packet> {
+        let mut world = self.lock();
+        let create = world.objects.remove(&guid)?;
+        for o in world.occupants.values() {
+            let _ = o.outbox.send(destroy(guid));
+        }
+        Some(create)
+    }
+
     /// Destroy `object` on `player`'s client only; the object stays in the world for everyone else.
     pub fn hide_from(&self, player: u64, object: u64) {
         self.send(player, destroy(object));

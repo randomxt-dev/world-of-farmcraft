@@ -706,7 +706,7 @@ fn typing_speed_in_chat_makes_you_run_faster() {
 }
 
 #[test]
-fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_them() {
+fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_everyone() {
     // Both common tasks dealt, so every crewmate has the gathering one.
     let settings = Settings {
         min_players: 3,
@@ -752,7 +752,8 @@ fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_them() {
         _ => None,
     });
     assert_eq!(target, Some(herb));
-    // Five seconds later the herb is picked, then gone from this crewmate's world.
+    // Five seconds later the herb is picked, then gone from everyone's world. Two crewmates
+    // share the seven spots, so each picks three.
     let progress = wait_for_secs(me, 8, |p| match p {
         ServerPacket::MessageChat(m) => {
             let payload = m.text.strip_prefix(wire::PREFIX)?.strip_prefix('\t')?;
@@ -763,12 +764,14 @@ fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_them() {
         }
         _ => None,
     });
-    assert_eq!(progress, (1, 5));
-    let gone = wait_for(me, |p| match p {
-        ServerPacket::DestroyObject { guid } => Some(*guid),
-        _ => None,
-    });
-    assert_eq!(gone, herb);
+    assert_eq!(progress, (1, 3));
+    for (session, _) in &mut players {
+        let gone = wait_for(session, |p| match p {
+            ServerPacket::DestroyObject { guid } if *guid == herb => Some(*guid),
+            _ => None,
+        });
+        assert_eq!(gone, herb);
+    }
 }
 
 /// The guid's health in this update, if it carries one.

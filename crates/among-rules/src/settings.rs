@@ -170,6 +170,19 @@ impl TaskStep {
         }
     }
 
+    /// A step done by picking the one node at `at` (a herb, a vein), a cast of `secs` seconds;
+    /// once a crewmate picks it, it is gone for everyone, as a Gather step's nodes are.
+    pub fn pick(at: Position, secs: f32) -> Self {
+        Self {
+            at,
+            action: StepAction::Gather {
+                nodes: vec![at],
+                cast: Duration::from_secs_f32(secs),
+                count: 1,
+            },
+        }
+    }
+
     /// A step done the moment it is used.
     pub fn instant(at: Position) -> Self {
         Self {
@@ -183,8 +196,9 @@ impl TaskStep {
 pub enum StepAction {
     /// A cast of this long, standing still; zero completes on use.
     Cast(Duration),
-    /// Gather `count` of these nodes (herbs, ore), a cast of `cast` each; a node you picked is
-    /// spent for you until the step is done. At most 64 nodes.
+    /// Gather `count` of these nodes (herbs, ore), a cast of `cast` each. A crewmate's pick takes
+    /// the node from everyone until the lobby, so each holder needs only their share of the spots
+    /// ([`crate::Game::gather_need`]). At most 64 nodes.
     Gather {
         nodes: Vec<Position>,
         cast: Duration,

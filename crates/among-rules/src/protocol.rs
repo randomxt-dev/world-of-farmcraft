@@ -213,7 +213,9 @@ pub enum Event {
     GatherProgress {
         player: PlayerId,
         task: TaskId,
-        /// The node just spent for this player, an index into the step's nodes.
+        /// The step the node belongs to, and the node now taken from everyone, an index into
+        /// that step's nodes.
+        step: usize,
         node: usize,
         picked: u32,
         count: u32,

@@ -197,6 +197,18 @@ fn random_streams_keep_the_invariants() {
     let mut games_over = 0;
     let mut casts = [0usize; 3];
     // Creature deaths, monster kills, spell hits, Slay progress.
+    // A meadow with a spot for every crewmate: a task is dealt only as far as its spots go.
+    let wide_meadow = || {
+        let mut l = gather_layout();
+        for t in &mut l.tasks {
+            for s in &mut t.steps {
+                if let StepAction::Gather { nodes, .. } = &mut s.action {
+                    *nodes = (0..16).map(|i| [i as f32 * 10.0, 700.0, 0.0]).collect();
+                }
+            }
+        }
+        l
+    };
     let mut fights = [0usize; 4];
     let mut gathered = 0usize;
     for seed in 1..=300u64 {
@@ -209,7 +221,7 @@ fn random_streams_keep_the_invariants() {
         let layout = match seed % 4 {
             0 => combat_layout(),
             1 => cast_layout(2.0),
-            2 => gather_layout(),
+            2 => wide_meadow(),
             _ => layout(),
         };
         let mut g = Game::new(settings, layout);

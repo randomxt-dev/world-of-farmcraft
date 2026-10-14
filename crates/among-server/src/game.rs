@@ -19,7 +19,7 @@ use crate::look::Look;
 use crate::world::creatures::{self, Shown};
 use crate::world::player::Life;
 use crate::world::spells::{self, CastRequest, Target};
-use crate::world::{combat, death, guid, meeting, objects, packets, player, Map, Packet};
+use crate::world::{combat, death, guid, meeting, objects, packets, player, quests, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
@@ -70,6 +70,8 @@ struct Inner {
     starting: Option<(PlayerId, Duration)>,
     /// Each open ballot's options by index, as its voter's menu lists them.
     ballots: HashMap<PlayerId, Vec<Vote>>,
+    /// Each player's quest log as their client was last told it.
+    quest_logs: HashMap<PlayerId, quests::Told>,
 }
 
 impl GameHost {
@@ -101,6 +103,7 @@ impl GameHost {
             countdown: START_COUNTDOWN,
             starting: None,
             ballots: HashMap::new(),
+            quest_logs: HashMap::new(),
         })))
     }
 
@@ -339,6 +342,21 @@ impl GameHost {
         creatures::query_response(entry, found)
     }
 
+    /// The answer to `CMSG_QUEST_QUERY`: a task's quest or the crew's, else none, as vmangos
+    /// answers an unknown id with silence.
+    pub fn quest_query(&self, quest_id: u32) -> Option<Packet> {
+        let inner = self.lock();
+        let layout = inner.game.layout();
+        let text = if quest_id == quests::CREW_QUEST {
+            quests::crew_text(inner.game.task_bar().1)
+        } else {
+            let task = quests::quest_task(quest_id)?;
+            let def = layout.tasks.get(task.0)?;
+            quests::task_text(task, def, &inner.look, &layout.creatures)
+        };
+        Some(quests::template(quest_id, player::SPAWN.zone, &text))
+    }
+
     /// The answer to `CMSG_GAMEOBJECT_QUERY` for template `entry`: a task node's, or a miss.
     pub fn gameobject_query(&self, entry: u32) -> Packet {
         let inner = self.lock();
@@ -445,6 +463,7 @@ impl Inner {
                 self.notify(to, &notice);
             }
             self.show(event);
+            self.show_quests(event);
         }
         self.refresh_actions();
         self.refresh_cooldowns();
@@ -1183,6 +1202,53 @@ impl Inner {
         match to {
             To::Player(p) => send(p.0),
             To::All => self.map.guids().into_iter().for_each(send),
+        }
+    }
+}
+
+/// The quest log: each player's tasks, and the crew's count, kept in WoW's own quest log.
+impl Inner {
+    /// Refresh the logs an event changed: the owner's on its task events, everyone's on the
+    /// crew's count and on the way back to the lobby, which empties them.
+    fn show_quests(&mut self, event: &Event) {
+        match *event {
+            Event::TasksAssigned { player, .. }
+            | Event::TaskProgress { player, .. }
+            | Event::GatherProgress { player, .. }
+            | Event::SlayProgress { player, .. }
+            | Event::TaskCompleted { player, .. } => self.refresh_quest_log(player),
+            Event::TaskBar { .. } | Event::ReturnedToLobby => {
+                let players: std::collections::HashSet<PlayerId> =
+                    (self.game.players().map(|(id, _)| id))
+                        .chain(self.quest_logs.keys().copied())
+                        .collect();
+                for player in players {
+                    self.refresh_quest_log(player);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Send `player` the slots of its log that changed, after a fresh crew template when the
+    /// crew's total moved (an unasked template replaces the cached one); one who left is forgotten.
+    fn refresh_quest_log(&mut self, player: PlayerId) {
+        let Some(p) = self.game.player(player).filter(|p| p.connected) else {
+            self.quest_logs.remove(&player);
+            return;
+        };
+        let (done, total) = self.game.task_bar();
+        let now = quests::player_log(&p.tasks, &self.game.layout().tasks, (done, total));
+        let told = self.quest_logs.entry(player).or_default();
+        if now[0].0 == quests::CREW_QUEST && told.crew_total != Some(total) {
+            let text = quests::crew_text(total);
+            let crew = quests::template(quests::CREW_QUEST, player::SPAWN.zone, &text);
+            self.map.send(player.0, crew);
+            told.crew_total = Some(total);
+        }
+        if let Some(update) = quests::log_update(player.0, &told.log, &now) {
+            self.map.send(player.0, update);
+            told.log = now;
         }
     }
 }
@@ -2467,5 +2533,166 @@ mod tests {
         let seen = notices(&mut inboxes[reporter as usize - 1]);
         assert!(seen.contains(&Notice::Voting(Duration::from_secs(120))));
         assert!(seen.contains(&Notice::Voted(PlayerId(reporter))));
+    }
+
+    type QuestLog = [Option<benilla_protocol::messages::QuestLogSlot>; quests::SLOTS];
+
+    /// Every quest-log slot `seen` sets, applied to `log`; each must be on `owner`, as the log's
+    /// fields are private to it.
+    fn read_quest_log(seen: &[ServerPacket], owner: u64, log: &mut QuestLog) {
+        use benilla_protocol::messages::Object;
+        for p in seen {
+            let ServerPacket::UpdateObject { objects } = p else {
+                continue;
+            };
+            for o in objects {
+                let Object::Values { guid, mask } = o else {
+                    continue;
+                };
+                for (s, slot) in log.iter_mut().enumerate() {
+                    if let Some(q) = mask.player_quest_log(s as u8) {
+                        assert_eq!(*guid, owner, "a quest log goes to its owner alone");
+                        *slot = Some(q);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The quests in `log`, slot by slot, empty slots left out.
+    fn quest_ids(log: &QuestLog) -> Vec<u32> {
+        (log.iter().flatten())
+            .map(|q| q.quest_id)
+            .filter(|&id| id != 0)
+            .collect()
+    }
+
+    /// The crew totals of the crew templates in `seen`.
+    fn crew_totals(seen: &[ServerPacket]) -> Vec<u32> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::QuestQueryResponse(t) if t.quest_id == quests::CREW_QUEST => {
+                    Some(t.objectives[0].required_count)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The log slot `task` fills for `g`: after the crew's quest, in list order.
+    fn slot_of(host: &GameHost, g: u64, task: TaskId) -> usize {
+        let inner = host.lock();
+        let tasks = &inner.game.player(PlayerId(g)).unwrap().tasks;
+        tasks.iter().position(|t| t.task == task).unwrap() + 1
+    }
+
+    /// `g` works `task` where it stands and the clock runs `secs`.
+    fn work(host: &GameHost, g: u64, task: TaskId, at: Position, secs: u64) {
+        host.moved(g, at);
+        let player = PlayerId(g);
+        host.lock()
+            .apply(Command::UseTask { player, task })
+            .unwrap();
+        host.tick(Duration::from_secs(secs));
+    }
+
+    #[test]
+    fn dealt_tasks_fill_each_owners_quest_log_and_the_crew_quest_counts_for_everyone() {
+        use benilla_protocol::messages::quest_slot_state::COMPLETE;
+        // Both common tasks and nothing else: Pick Peacebloom (gather 5) and Roast Boar Meat.
+        let settings = Settings {
+            common_tasks: 2,
+            long_tasks: 0,
+            short_tasks: 0,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 3);
+        drain(&mut inboxes);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let mut logs: [QuestLog; 3] = [[None; quests::SLOTS]; 3];
+        for g in 1..=3u64 {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            assert_eq!(crew_totals(&seen), [4], "two crewmates with two tasks each");
+            let log = &mut logs[g as usize - 1];
+            read_quest_log(&seen, g, log);
+            // The crew's quest first, then the dealt tasks; an impostor's cover tasks too.
+            let tasks: Vec<u32> = (host.lock().game.player(PlayerId(g)).unwrap().tasks)
+                .iter()
+                .map(|t| quests::task_quest(t.task))
+                .collect();
+            assert_eq!(quest_ids(log), [&[quests::CREW_QUEST], &tasks[..]].concat());
+            assert!((log.iter().flatten()).all(|q| q.counters == [0; 4] && q.state == 0));
+        }
+
+        let (roast, roast_at, peacebloom, herbs) = {
+            let inner = host.lock();
+            let layout = inner.game.layout();
+            let task =
+                |name: &str| TaskId((layout.tasks.iter()).position(|t| t.name == name).unwrap());
+            let (roast, peacebloom) = (task("Roast Boar Meat"), task("Pick Peacebloom"));
+            let StepAction::Gather { nodes, .. } = &layout.tasks[peacebloom.0].steps[0].action
+            else {
+                panic!("Peacebloom is gathered");
+            };
+            let roast_at = layout.tasks[roast.0].steps[0].at;
+            (roast, roast_at, peacebloom, nodes.clone())
+        };
+
+        // A crewmate roasts the meat: its quest completes, and the crew's counts one for all.
+        let c = crew[0];
+        work(&host, c, roast, roast_at, 4);
+        for g in 1..=3u64 {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            assert!(crew_totals(&seen).is_empty(), "the total did not move");
+            let log = &mut logs[g as usize - 1];
+            read_quest_log(&seen, g, log);
+            assert_eq!(log[0].unwrap().counters[0], 1, "{g} sees the crew's count");
+        }
+        let roasted = logs[c as usize - 1][slot_of(&host, c, roast)].unwrap();
+        assert_eq!(roasted.quest_id, quests::task_quest(roast));
+        assert_eq!((roasted.counters[0], roasted.state), (1, COMPLETE));
+
+        // A herb picked counts on the Peacebloom line; the quest is not done yet.
+        work(&host, c, peacebloom, herbs[0], 6);
+        let mine = &mut logs[c as usize - 1];
+        read_quest_log(&received(&mut inboxes[c as usize - 1]), c, mine);
+        let picking = mine[slot_of(&host, c, peacebloom)].unwrap();
+        assert_eq!(picking.quest_id, quests::task_quest(peacebloom));
+        assert_eq!((picking.counters[0], picking.state), (1, 0));
+
+        // The impostor's kill ends the game; the fallen keep their log until the lobby clears it.
+        drain(&mut inboxes);
+        host.request(imp, Request::Kill);
+        assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
+        for g in 1..=3u64 {
+            let mut after = logs[g as usize - 1];
+            read_quest_log(&received(&mut inboxes[g as usize - 1]), g, &mut after);
+            assert_eq!(after, logs[g as usize - 1]);
+        }
+        let host_player = host.lock().game.host().unwrap().0;
+        host.request(host_player, Request::Lobby);
+        for g in 1..=3u64 {
+            let log = &mut logs[g as usize - 1];
+            read_quest_log(&received(&mut inboxes[g as usize - 1]), g, log);
+            assert!(quest_ids(log).is_empty(), "{g}'s log is empty in the lobby");
+        }
+    }
+
+    #[test]
+    fn a_quest_query_is_answered_with_its_task_or_the_crew() {
+        let (host, _inboxes) = hosted(quick(), 3);
+        let parse = |p: Packet| match parse_server_with_tail(p.opcode, &p.body).unwrap() {
+            (ServerPacket::QuestQueryResponse(t), 0) => t,
+            _ => panic!("not a whole quest template"),
+        };
+        let name = placeholder_layout().tasks[1].name.clone();
+        let t = parse(host.quest_query(quests::task_quest(TaskId(1))).unwrap());
+        assert_eq!(t.title, name);
+        assert_eq!(t.zone_or_sort, player::SPAWN.zone as i32);
+        let crew = parse(host.quest_query(quests::CREW_QUEST).unwrap());
+        assert_eq!(crew.title, "Crew Tasks");
+        assert!(host.quest_query(quests::task_quest(TaskId(99))).is_none());
+        assert!(host.quest_query(1).is_none());
     }
 }

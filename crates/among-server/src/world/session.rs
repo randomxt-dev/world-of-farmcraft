@@ -267,6 +267,11 @@ impl Session {
                     self.send(super::meeting::vote_text())?;
                 }
             }
+            opcode::CMSG_QUEST_QUERY => {
+                if let Some(template) = self.host.quest_query(read_u32_le(&mut cur)?) {
+                    self.send(template)?;
+                }
+            }
             opcode::CMSG_GAMEOBJECT_QUERY => {
                 let entry = read_u32_le(&mut cur)?;
                 self.send(self.host.gameobject_query(entry))?;

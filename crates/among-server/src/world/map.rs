@@ -149,6 +149,18 @@ impl Map {
         self.lock().occupants.keys().copied().collect()
     }
 
+    /// Record `guid`'s run speed, which later creates of it carry.
+    pub fn set_run_speed(&self, guid: u64, speed: f32) {
+        if let Some(o) = self.lock().occupants.get_mut(&guid) {
+            o.living.speeds[1] = speed;
+        }
+    }
+
+    /// Where `guid` last reported standing.
+    pub fn pose(&self, guid: u64) -> Option<Living> {
+        self.lock().occupants.get(&guid).map(|o| o.living)
+    }
+
     /// The character behind an in-world guid, for name queries.
     pub fn character(&self, guid: u64) -> Option<CharacterRecord> {
         self.lock()

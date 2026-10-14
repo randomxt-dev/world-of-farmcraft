@@ -4,12 +4,15 @@
 
 pub mod accounts;
 pub mod game;
+pub mod layout_file;
 pub mod look;
 pub mod realmd;
 pub mod srp;
+pub mod survey;
 pub mod world;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -17,6 +20,11 @@ use tokio::net::TcpListener;
 
 pub use accounts::Accounts;
 pub use game::GameHost;
+pub use survey::Survey;
+
+/// Where `.mark` saves the survey unless told otherwise: our folder inside the gitignored
+/// `benilla-config/` (CLAUDE.md: our files live there), relative to the working directory.
+pub const DEFAULT_MARKS: &str = "benilla-config/among/marks.toml";
 
 /// How often the game clock advances: kill and sabotage cooldowns, meeting timers, deadlines.
 const TICK: Duration = Duration::from_millis(100);
@@ -35,6 +43,8 @@ pub struct ServerConfig {
     pub layout: among_rules::Layout,
     /// How the layout's spots look in the world.
     pub look: look::Look,
+    /// The survey file `.mark` writes.
+    pub marks: PathBuf,
 }
 
 impl Default for ServerConfig {
@@ -47,6 +57,7 @@ impl Default for ServerConfig {
             settings: among_rules::Settings::default(),
             layout: game::placeholder_layout(),
             look: game::placeholder_look(),
+            marks: DEFAULT_MARKS.into(),
         }
     }
 }
@@ -60,6 +71,7 @@ pub struct Server {
     settings: among_rules::Settings,
     layout: among_rules::Layout,
     look: look::Look,
+    marks: PathBuf,
 }
 
 impl Server {
@@ -83,6 +95,7 @@ impl Server {
             settings: config.settings.clone(),
             layout: config.layout.clone(),
             look: config.look.clone(),
+            marks: config.marks.clone(),
         })
     }
 
@@ -110,6 +123,8 @@ impl Server {
             name: self.realm_name,
             world_port: self.world.local_addr()?.port(),
         };
+        let survey = Survey::open(&self.marks)?;
+        tracing::info!("among-server: survey marks in {}", survey.path().display());
         let map = world::Map::default();
         let host = GameHost::new(self.settings, self.layout, self.look, map.clone());
         let clock = host.clone();
@@ -124,7 +139,7 @@ impl Server {
         });
         tokio::try_join!(
             realmd::serve(self.auth, self.accounts.clone(), realm),
-            world::serve(self.world, self.accounts, map, host),
+            world::serve(self.world, self.accounts, map, host, survey),
         )?;
         Ok(())
     }

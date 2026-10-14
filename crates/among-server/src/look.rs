@@ -84,7 +84,9 @@ impl Look {
                     (t.steps.iter())
                         .map(|s| match s.action {
                             StepAction::Slay { .. } => None,
-                            StepAction::Cast(_) => Some(NodeLook::kneel(&t.name, COPPER_VEIN)),
+                            StepAction::Cast(_) | StepAction::Gather { .. } => {
+                                Some(NodeLook::kneel(&t.name, COPPER_VEIN))
+                            }
                         })
                         .collect()
                 })

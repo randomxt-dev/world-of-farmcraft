@@ -17,6 +17,17 @@ fn start_server() -> String {
 
 /// Start a server on free ports with accounts `among1..=n` (password `secretN`).
 fn start_server_with(n: u32, settings: Settings) -> String {
+    start_server_full(n, settings, temp_marks("default"))
+}
+
+/// A marks file in a fresh temp folder, so a test never writes the repo's survey.
+fn temp_marks(test: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("among-loopback-{test}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir.join("marks.toml")
+}
+
+fn start_server_full(n: u32, settings: Settings, marks: std::path::PathBuf) -> String {
     let accounts = Accounts::default();
     for i in 1..=n {
         accounts
@@ -27,6 +38,7 @@ fn start_server_with(n: u32, settings: Settings) -> String {
         auth_port: 0,
         world_port: 0,
         settings,
+        marks,
         ..ServerConfig::default()
     };
     let (tx, rx) = std::sync::mpsc::channel();
@@ -391,4 +403,51 @@ fn a_started_game_shows_the_wolves_and_a_swing_at_one_is_echoed() {
         _ => None,
     });
     assert_eq!((attacker, victim), (*me, wolf));
+}
+
+/// The next system chat line, skipping everything else.
+fn wait_system_line(session: &mut WorldSession) -> String {
+    wait_for(session, |p| match p {
+        ServerPacket::MessageChat(m) if m.chat_type == 0x0A => Some(m.text.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn typing_mark_in_chat_records_where_you_stand() {
+    let marks = temp_marks("survey");
+    let host = start_server_full(1, Settings::default(), marks.clone());
+    let (mut me, _) = enter(&host, "among1", "secret1");
+    // Walk somewhere, then mark it the way a surveyor would: a /say line.
+    me.start_forward([-8930.5, -120.25, 84.0], 0.5).unwrap();
+    me.send_chat(".mark herb-north").unwrap();
+    let reply = wait_system_line(&mut me);
+    assert_eq!(
+        reply,
+        "Marked herb-north at map 0 (-8930.50, -120.25, 84.00) facing 0.50"
+    );
+    let saved = among_server::survey::read_marks(&marks).unwrap();
+    assert_eq!(saved["herb-north"].at, [-8930.5, -120.25, 84.0]);
+    // Ordinary chat is left alone; unknown dot commands get the usage line.
+    me.send_chat("hello").unwrap();
+    me.send_chat(".nonsense").unwrap();
+    assert!(wait_system_line(&mut me).starts_with("Survey: .loc"));
+}
+
+#[test]
+fn typing_speed_in_chat_makes_you_run_faster() {
+    let host = start_server_full(1, Settings::default(), temp_marks("speed"));
+    let (mut me, guid) = enter(&host, "among1", "secret1");
+    me.send_chat(".speed 3").unwrap();
+    let (to, speed) = wait_for(&mut me, |p| match p {
+        ServerPacket::ForceSpeedChange { guid, speed, .. } => Some((*guid, *speed)),
+        _ => None,
+    });
+    assert_eq!((to, speed), (guid, 21.0), "3 x the 7 yd/s base run speed");
+    assert_eq!(wait_system_line(&mut me), "Run speed x3 (21.0 yd/s)");
+    me.send_chat(".speed 50").unwrap();
+    assert_eq!(
+        wait_system_line(&mut me),
+        "Usage: .speed <0.5 to 10>, 1 is normal"
+    );
 }

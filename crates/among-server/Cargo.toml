@@ -21,6 +21,9 @@ benilla-srp = { path = "../benilla-srp" }
 among-rules = { path = "../among-rules" }
 num-bigint = "0.4.6"
 rand = "0.8.6"
+# The surveyed marks and the hand-written layout are TOML files (the versions benilla-app uses).
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

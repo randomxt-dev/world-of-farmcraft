@@ -175,6 +175,11 @@ impl GameHost {
         }
     }
 
+    /// Whether a match is running (anything but the lobby).
+    pub fn in_game(&self) -> bool {
+        *self.lock().game.phase() != among_rules::Phase::Lobby
+    }
+
     pub fn tick(&self, dt: Duration) {
         let _ = self.lock().apply(Command::Tick { dt });
     }

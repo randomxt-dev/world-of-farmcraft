@@ -183,6 +183,13 @@ impl TaskStep {
 pub enum StepAction {
     /// A cast of this long, standing still; zero completes on use.
     Cast(Duration),
+    /// Gather `count` of these nodes (herbs, ore), a cast of `cast` each; a node you picked is
+    /// spent for you until the step is done. At most 64 nodes.
+    Gather {
+        nodes: Vec<Position>,
+        cast: Duration,
+        count: u32,
+    },
     /// Kill `count` of these creatures: kills you tapped (damaged first) count.
     Slay {
         creatures: Vec<CreatureId>,

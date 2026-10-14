@@ -1,0 +1,149 @@
+# Northshire Valley, the first Among Azeroth map.
+#
+# Every quoted name below is a mark to survey: walk there in the game and type `.mark <name>` in
+# chat (`.marks` lists what you have, `.loc` shows where you stand). A spot may also be a literal
+# [x, y, z]. Check the file with:
+#   cargo run -p among-server -- --check-layout crates/among-server/layouts/northshire.example.toml
+# The spots suggested in the comments are a plan, not measurements: put each mark where it plays
+# well.
+
+# Where meetings are called: the Abbey's main hall.
+button = "abbey-hall"
+
+# Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`); a
+# node you picked is spent for you, so you walk on to the next. 7 spots for 5 picks leaves spares.
+
+# --- Common: everyone gets the same one -------------------------------------------------------
+
+[[tasks]]
+name = "Pick Peacebloom"
+kind = "common"
+# The meadows around the Abbey.
+steps = [{ gather = [
+    "peacebloom-1", "peacebloom-2", "peacebloom-3", "peacebloom-4",
+    "peacebloom-5", "peacebloom-6", "peacebloom-7",
+], cast = 5.0, count = 5 }]
+
+[[tasks]]
+name = "Roast a meal"
+kind = "common"
+steps = [{ at = "campfire", cast = 3.0 }]     # by the stables
+
+# --- Long: two stops ----------------------------------------------------------------------------
+
+[[tasks]]
+name = "Mine and smelt Copper"
+kind = "long"
+steps = [
+    # Copper veins inside Echo Ridge Mine.
+    { gather = [
+        "copper-1", "copper-2", "copper-3", "copper-4", "copper-5", "copper-6", "copper-7",
+    ], cast = 3.2, count = 5 },
+    { at = "forge", cast = 3.0 },             # by the stables or lumber area
+]
+
+[[tasks]]
+name = "Hunt and cook wolf meat"
+kind = "long"
+steps = [
+    { slay = ["wolf-1", "wolf-2", "wolf-3"], count = 1 },
+    { at = "campfire", cast = 3.0 },
+]
+
+# --- Short: one stop ----------------------------------------------------------------------------
+
+[[tasks]]
+name = "Pick Silverleaf"
+kind = "short"
+# Along the vineyards.
+steps = [{ gather = [
+    "silverleaf-1", "silverleaf-2", "silverleaf-3", "silverleaf-4",
+    "silverleaf-5", "silverleaf-6", "silverleaf-7",
+], cast = 5.0, count = 5 }]
+
+[[tasks]]
+name = "Pick Earthroot"
+kind = "short"
+# Along the path to the mine.
+steps = [{ gather = [
+    "earthroot-1", "earthroot-2", "earthroot-3", "earthroot-4",
+    "earthroot-5", "earthroot-6", "earthroot-7",
+], cast = 5.0, count = 5 }]
+
+[[tasks]]
+name = "Sharpen at the anvil"
+kind = "short"
+steps = [{ at = "anvil", cast = 3.0 }]
+
+[[tasks]]
+name = "Clear the kobolds"
+kind = "short"
+steps = [{ slay = ["kobold-1", "kobold-2"], count = 2 }]
+
+[[tasks]]
+name = "Drive off the Defias"
+kind = "short"
+steps = [{ slay = ["defias-1", "defias-2"], count = 2 }]
+
+# --- Sabotage stations --------------------------------------------------------------------------
+
+[[sabotages]]
+kind = "lights"
+stations = ["abbey-candles"]                  # the Abbey's upper floor
+
+[[sabotages]]
+kind = "comms"
+stations = ["abbey-library"]
+
+[[sabotages]]
+kind = "oxygen"
+stations = ["well", "stable-trough"]          # two stops far apart
+deadline = 30.0
+
+[[sabotages]]
+kind = "reactor"
+stations = ["mine-prop-a", "mine-prop-b"]     # held together: two players in the mine
+deadline = 30.0
+
+# --- Monsters (they fight back, and they kill for real) -----------------------------------------
+
+[[creatures]]
+id = "wolf-1"
+name = "Young Wolf"
+at = "wolf-1"
+
+[[creatures]]
+id = "wolf-2"
+name = "Young Wolf"
+at = "wolf-2"
+
+[[creatures]]
+id = "wolf-3"
+name = "Young Wolf"
+at = "wolf-3"
+
+[[creatures]]
+id = "kobold-1"
+name = "Kobold Vermin"
+at = "kobold-1"
+health = 35
+
+[[creatures]]
+id = "kobold-2"
+name = "Kobold Vermin"
+at = "kobold-2"
+health = 35
+
+[[creatures]]
+id = "defias-1"
+name = "Defias Thug"
+at = "defias-1"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-2"
+name = "Defias Thug"
+at = "defias-2"
+health = 55
+damage = 6

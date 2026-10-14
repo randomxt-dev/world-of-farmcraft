@@ -69,6 +69,16 @@ fn every_notice_round_trips() {
             name: "Align engine output".into(),
         },
         Notice::TaskBar { done: 3, total: 20 },
+        Notice::Slay {
+            task: TaskId(4),
+            kills: 1,
+            count: 2,
+        },
+        Notice::Gather {
+            task: TaskId(0),
+            picked: 3,
+            count: 5,
+        },
         Notice::Dead,
         Notice::Actions(Actions {
             kill: true,

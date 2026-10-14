@@ -232,6 +232,10 @@ impl Session {
                     self.host.cast(me.guid, cast);
                 }
             }
+            opcode::CMSG_ITEM_QUERY_SINGLE => {
+                let entry = read_u32_le(&mut cur)?;
+                self.send(super::items::query_response(entry))?;
+            }
             opcode::CMSG_CREATURE_QUERY => {
                 let entry = read_u32_le(&mut cur)?;
                 self.send(self.host.creature_query(entry))?;

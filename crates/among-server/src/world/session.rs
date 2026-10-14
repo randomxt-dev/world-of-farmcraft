@@ -1,8 +1,6 @@
 //! One world connection: the auth handshake, then the roster and the world until the socket
 //! closes.
 
-use std::cell::Cell;
-
 use anyhow::{bail, Context, Result};
 use benilla_protocol::messages::{self, opcode};
 use benilla_protocol::wire::{read_cstring, read_u32_le, read_u64_le};
@@ -83,7 +81,6 @@ pub async fn run(
         survey,
         outbox: tx,
         in_world: None,
-        speed_changes: Cell::new(0),
     };
     let result = async {
         loop {
@@ -122,8 +119,6 @@ struct Session {
     outbox: Outbox,
     /// The character in the world, once `CMSG_PLAYER_LOGIN` seated it.
     in_world: Option<CharacterRecord>,
-    /// The counter each `SMSG_FORCE_*_SPEED_CHANGE` carries, which the client's ack echoes.
-    speed_changes: Cell<u32>,
 }
 
 impl Session {
@@ -251,6 +246,14 @@ impl Session {
                     self.host.stop_attack(me.guid);
                 }
             }
+            opcode::CMSG_REPOP_REQUEST => {
+                if let Some(me) = &self.in_world {
+                    self.host.release_spirit(me.guid);
+                }
+            }
+            // A ghost here has no corpse run, so the client draws no marker and offers no
+            // Resurrect.
+            opcode::MSG_CORPSE_QUERY => self.send(super::death::corpse_not_found())?,
             opcode::CMSG_GAMEOBJECT_QUERY => {
                 let entry = read_u32_le(&mut cur)?;
                 self.send(self.host.gameobject_query(entry))?;
@@ -319,8 +322,7 @@ impl Session {
             Some(_) if self.host.in_game() => "Not during a game.".to_owned(),
             Some(m) => {
                 let speed = update::BASE_SPEEDS[1] * m;
-                let counter = self.speed_changes.get() + 1;
-                self.speed_changes.set(counter);
+                let counter = self.map.next_counter(guid).unwrap_or(0);
                 self.send(packets::force_run_speed(guid, counter, speed))?;
                 self.map.set_run_speed(guid, speed);
                 format!("Run speed x{m} ({speed:.1} yd/s)")

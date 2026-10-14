@@ -542,3 +542,109 @@ fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_them() {
     });
     assert_eq!(gone, herb);
 }
+
+/// The guid's health in this update, if it carries one.
+fn health_in(packet: &ServerPacket, guid: u64) -> Option<u32> {
+    let ServerPacket::UpdateObject { objects } = packet else {
+        return None;
+    };
+    objects.iter().find_map(|o| match o {
+        Object::Values { guid: g, mask } if *g == guid => mask.unit_health(),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_kill_fells_the_victim_who_releases_into_a_ghost_beside_a_reportable_corpse() {
+    let settings = Settings {
+        min_players: 4,
+        initial_kill_cooldown: Duration::ZERO,
+        ..Settings::default()
+    };
+    let host = start_server_with(4, settings);
+    let mut players: Vec<(WorldSession, u64)> = Vec::new();
+    for i in 1..=4 {
+        let (mut session, guid) = enter(&host, &format!("among{i}"), &format!("secret{i}"));
+        wait_notice(&mut session, |n| matches!(n, Notice::Host(_)).then_some(()));
+        players.push((session, guid));
+    }
+    press(&mut players[0].0, Request::Start);
+    let roles: Vec<Role> = (players.iter_mut())
+        .map(|(s, _)| {
+            wait_notice(s, |n| match n {
+                Notice::Role { role, .. } => Some(*role),
+                _ => None,
+            })
+        })
+        .collect();
+    let imp = roles.iter().position(|r| *r == Role::Impostor).unwrap();
+    let victim = (0..4).find(|&i| i != imp).unwrap();
+    let witness = (0..4).find(|&i| i != imp && i != victim).unwrap();
+    let victim_guid = players[victim].1;
+
+    // The strike: the victim's health goes to 0 on a bystander's screen, and the victim is
+    // rooted where it fell.
+    players[imp].0.cast_spell(15692, Some(victim_guid)).unwrap();
+    wait_for(&mut players[witness].0, |p| {
+        (health_in(p, victim_guid) == Some(0)).then_some(())
+    });
+    wait_for(&mut players[victim].0, |p| match p {
+        ServerPacket::MoveMode {
+            guid,
+            mode: benilla_protocol::messages::MoveMode::Root,
+            apply: true,
+            ..
+        } if *guid == victim_guid => Some(()),
+        _ => None,
+    });
+
+    // Release Spirit: the bystander sees a corpse appear and the ghost vanish.
+    players[victim].0.repop_request().unwrap();
+    let mut corpse = None;
+    let mut ghost_gone = false;
+    wait_for(&mut players[witness].0, |p| {
+        match p {
+            ServerPacket::UpdateObject { objects } => {
+                for o in objects {
+                    if let Object::Create {
+                        guid,
+                        object_type: ObjectType::Corpse,
+                        ..
+                    } = o
+                    {
+                        corpse = Some(*guid);
+                    }
+                }
+            }
+            ServerPacket::DestroyObject { guid } if *guid == victim_guid => ghost_gone = true,
+            _ => {}
+        }
+        (corpse.is_some() && ghost_gone).then_some(())
+    });
+    // The ghost itself is told it is one, and has no corpse to run back to.
+    wait_for(&mut players[victim].0, |p| {
+        let ServerPacket::UpdateObject { objects } = p else {
+            return None;
+        };
+        objects.iter().find_map(|o| match o {
+            Object::Values { guid, mask } if *guid == victim_guid && mask.player_is_ghost() => {
+                Some(())
+            }
+            _ => None,
+        })
+    });
+    players[victim].0.corpse_query().unwrap();
+    let found = wait_for(&mut players[victim].0, |p| match p {
+        ServerPacket::CorpseQuery(c) => Some(c.found),
+        _ => None,
+    });
+    assert!(!found);
+
+    // The bystander reports the body; the meeting takes the corpse away.
+    press(&mut players[witness].0, Request::Report);
+    let corpse = corpse.unwrap();
+    wait_for(&mut players[witness].0, |p| match p {
+        ServerPacket::DestroyObject { guid } if *guid == corpse => Some(()),
+        _ => None,
+    });
+}

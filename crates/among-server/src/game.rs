@@ -15,14 +15,19 @@ use rand::RngCore;
 
 use crate::look::Look;
 use crate::world::creatures::{self, Shown};
+use crate::world::player::Life;
 use crate::world::spells::{self, CastRequest, Target};
-use crate::world::{combat, guid, objects, packets, player, Map, Packet};
+use crate::world::{combat, death, guid, objects, packets, player, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
 const WITNESS_RANGE: f32 = 25.0;
 
 /// Nodes this close stand on one spot, as overlapping models a click cannot tell apart.
 const SAME_SPOT: f32 = 1.0;
+
+/// How long the fallen may lie before their spirit is released for them (vmangos
+/// `CORPSE_REPOP_TIME`, the Release Spirit popup's countdown).
+const AUTO_RELEASE: Duration = Duration::from_secs(6 * 60);
 
 /// The one match; cheap to clone. Lock order: the host, then the map.
 #[derive(Clone)]
@@ -50,6 +55,10 @@ struct Inner {
     creature_at: HashMap<CreatureId, Position>,
     /// The gather nodes each player has picked, hidden from their client until the lobby.
     hidden: HashMap<PlayerId, Vec<u64>>,
+    /// The fallen and the ghosts, with how long each has lain unreleased; the rest are alive.
+    fallen: HashMap<PlayerId, (Life, Duration)>,
+    /// The corpses standing in the world, until a meeting or the lobby clears them.
+    corpses: Vec<u64>,
 }
 
 impl GameHost {
@@ -76,6 +85,8 @@ impl GameHost {
             hunting: HashMap::new(),
             creature_at: HashMap::new(),
             hidden: HashMap::new(),
+            fallen: HashMap::new(),
+            corpses: Vec::new(),
         })))
     }
 
@@ -107,6 +118,7 @@ impl GameHost {
         inner.casts.remove(&player);
         inner.health.remove(&player);
         inner.hidden.remove(&player);
+        inner.fallen.remove(&player);
     }
 
     /// A character moved; spectators outside the game are ignored.
@@ -187,8 +199,28 @@ impl GameHost {
         *self.lock().game.phase() != among_rules::Phase::Lobby
     }
 
+    /// Run the clock; the fallen who lay unreleased for [`AUTO_RELEASE`] are released.
     pub fn tick(&self, dt: Duration) {
-        let _ = self.lock().apply(Command::Tick { dt });
+        let mut inner = self.lock();
+        let _ = inner.apply(Command::Tick { dt });
+        let mut due = Vec::new();
+        for (&player, (life, lain)) in &mut inner.fallen {
+            if *life == Life::Dead {
+                *lain += dt;
+                if *lain >= AUTO_RELEASE {
+                    due.push(player);
+                }
+            }
+        }
+        for player in due {
+            inner.release(player);
+        }
+    }
+
+    /// A `CMSG_REPOP_REQUEST`, the Release Spirit button: the fallen become ghosts where they
+    /// fell, leaving their corpse. There is no graveyard run: a spirit stays with the crew.
+    pub fn release_spirit(&self, guid: u64) {
+        self.lock().release(PlayerId(guid));
     }
 
     /// A `CMSG_ATTACKSWING`: auto-attack a creature. Players are never fought: their FFA flag
@@ -328,6 +360,14 @@ impl Inner {
                         self.map.show_to(player.0, g);
                     }
                 }
+                // Everyone walks the lobby alive, and no corpse is left.
+                for g in std::mem::take(&mut self.corpses) {
+                    self.map.despawn(g);
+                }
+                let fallen: Vec<PlayerId> = self.fallen.keys().copied().collect();
+                for player in fallen {
+                    self.revive(player);
+                }
             }
             Event::SpellCastStarted {
                 player,
@@ -340,14 +380,14 @@ impl Inner {
             }
             Event::CastFinished { player } => {
                 if let Some((spell, target)) = self.casts.remove(&player) {
-                    self.map
-                        .broadcast(&spells::spell_go(player.0, spell, target));
+                    let go = spells::spell_go(player.0, spell, target);
+                    self.map.broadcast_about(player.0, &go);
                 }
             }
             Event::CastInterrupted { player } | Event::SpellCastInterrupted { player } => {
                 if let Some((spell, _)) = self.casts.remove(&player) {
-                    self.map
-                        .broadcast(&spells::spell_failed_other(player.0, spell));
+                    let failed = spells::spell_failed_other(player.0, spell);
+                    self.map.broadcast_about(player.0, &failed);
                 }
             }
             Event::SpellHit {
@@ -376,10 +416,107 @@ impl Inner {
                     self.map.send(witness.0, go.clone());
                 }
                 self.shown.insert(killer, spells::KILL);
+                self.fall(victim);
+            }
+            Event::Slain { victim, .. } => self.fall(victim),
+            // The ejected leave no body: their spirit walks on at once.
+            Event::Ejected { player, .. } => self.become_ghost(player, None),
+            Event::BodiesCleared => {
+                for g in std::mem::take(&mut self.corpses) {
+                    self.map.despawn(g);
+                }
+                // A meeting takes every body off the map, the unreleased with it.
+                let lying: Vec<PlayerId> = (self.fallen.iter())
+                    .filter(|(_, (life, _))| *life == Life::Dead)
+                    .map(|(&p, _)| p)
+                    .collect();
+                for player in lying {
+                    self.become_ghost(player, None);
+                }
             }
             _ => {}
         }
         self.show_fight(event);
+    }
+
+    /// `victim` falls where they stand: health 0 for everyone, rooted, the Release Spirit popup up.
+    fn fall(&mut self, victim: PlayerId) {
+        if let Some(counter) = self.map.next_counter(victim.0) {
+            self.map.send(victim.0, death::root(victim.0, counter));
+        }
+        let change = player::life_change(victim.0, Life::Dead, self.max_health(victim));
+        self.map.set_life(victim.0, Life::Dead, change);
+        self.health.remove(&victim);
+        self.fallen.insert(victim, (Life::Dead, Duration::ZERO));
+    }
+
+    /// Release a fallen player's spirit: their corpse stays where they fell while their body is
+    /// still on the map, and they rise as a ghost.
+    fn release(&mut self, player: PlayerId) {
+        if !matches!(self.fallen.get(&player), Some((Life::Dead, _))) {
+            return;
+        }
+        let body = (self.game.bodies().iter())
+            .find(|b| b.victim == player)
+            .map(|b| b.position);
+        self.become_ghost(player, body);
+    }
+
+    /// `player` rises as a ghost, as vmangos's `BuildPlayerRepop` raises one: the corpse (at
+    /// `corpse`, if any), water walking, the Ghost aura's speeds, unrooted, health 1, and seen
+    /// by ghosts alone.
+    fn become_ghost(&mut self, player: PlayerId, corpse: Option<Position>) {
+        let g = player.0;
+        let was = self.fallen.get(&player).map_or(Life::Alive, |f| f.0);
+        if was == Life::Ghost {
+            return;
+        }
+        if let (Some(at), Some(c)) = (corpse, self.map.character(g)) {
+            let facing = self.map.pose(g).map_or(0.0, |p| p.orientation);
+            let corpse = guid::corpse(g);
+            self.map
+                .spawn(corpse, death::create_corpse(corpse, &c, at, facing));
+            self.corpses.push(corpse);
+        }
+        let [run, swim] = death::GHOST_SPEEDS;
+        self.force_moves(g, was == Life::Dead, true, run, swim);
+        let change = player::life_change(g, Life::Ghost, self.max_health(player));
+        self.map.set_life(g, Life::Ghost, change);
+        self.fallen.insert(player, (Life::Ghost, Duration::ZERO));
+    }
+
+    /// Back to life in the lobby: unrooted or back on land at living speeds, full health, seen
+    /// by all.
+    fn revive(&mut self, player: PlayerId) {
+        let Some((was, _)) = self.fallen.remove(&player) else {
+            return;
+        };
+        let g = player.0;
+        let [run, swim] = death::LIVING_SPEEDS;
+        self.force_moves(g, was == Life::Dead, false, run, swim);
+        let change = player::life_change(g, Life::Alive, self.max_health(player));
+        self.map.set_life(g, Life::Alive, change);
+        // The next refresh tells everyone the health the rules hold.
+        self.health.remove(&player);
+    }
+
+    /// The acked movement changes of a death or a revival: an unroot if `unroot`, water or land
+    /// walking, and the run and swim speeds, which later creates carry.
+    fn force_moves(&self, g: u64, unroot: bool, water_walk: bool, run: f32, swim: f32) {
+        let next = || self.map.next_counter(g).unwrap_or(0);
+        if unroot {
+            self.map.send(g, death::unroot(g, next()));
+        }
+        self.map.send(g, death::water_walk(g, next(), water_walk));
+        self.map.send(g, packets::force_run_speed(g, next(), run));
+        self.map.send(g, death::force_swim_speed(g, next(), swim));
+        self.map.set_run_speed(g, run);
+        self.map.set_swim_speed(g, swim);
+    }
+
+    fn max_health(&self, player: PlayerId) -> u32 {
+        let class = self.game.player(player).map_or(Class::Warrior, |p| p.class);
+        self.game.settings().kits.get(class).health
     }
 
     /// Monsters and auto-attack: spawns, chases, swings, damage, deaths and despawns.
@@ -517,8 +654,7 @@ impl Inner {
     }
 
     /// Tell everyone each living player's health when it changed: hits, regeneration, and the
-    /// class's pool at join and after a meeting. A dead player's health is left as it was; the
-    /// world's side of a death (corpse, ghost) is not shown yet.
+    /// class's pool at join and after a meeting. The dead's is shown by their fall.
     fn refresh_health(&mut self) {
         let kits = &self.game.settings().kits;
         let changed: Vec<(PlayerId, (u32, u32))> = (self.game.players())
@@ -532,11 +668,11 @@ impl Inner {
         }
     }
 
-    /// Show `player`'s cast of `spell` to everyone: a bar of `time`, at `target`.
+    /// Show `player`'s cast of `spell` to everyone who sees them: a bar of `time`, at `target`.
     fn start_cast(&mut self, player: PlayerId, spell: u32, time: Duration, target: Target) {
         let ms = time.as_millis().min(u32::MAX.into()) as u32;
-        self.map
-            .broadcast(&spells::spell_start(player.0, spell, ms, target));
+        let start = spells::spell_start(player.0, spell, ms, target);
+        self.map.broadcast_about(player.0, &start);
         self.casts.insert(player, (spell, target));
         self.shown.insert(player, spell);
     }
@@ -1534,6 +1670,223 @@ mod tests {
             mine.contains(&worked) && shared.contains(&worked),
             "{worked:?}"
         );
+    }
+
+    /// The descriptor changes `seen` gives player `guid`, in order.
+    fn changes_of(
+        seen: &[ServerPacket],
+        guid: u64,
+    ) -> Vec<benilla_protocol::messages::ObjectFields> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::UpdateObject { objects } => Some(objects),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|o| match o {
+                benilla_protocol::messages::Object::Values { guid: g, mask } if *g == guid => {
+                    Some(mask.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The acked movement modes `seen` sends `guid`: (mode, apply).
+    fn modes(seen: &[ServerPacket], guid: u64) -> Vec<(MoveMode, bool)> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::MoveMode {
+                    guid: g,
+                    mode,
+                    apply,
+                    ..
+                } if *g == guid => Some((*mode, *apply)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The run speeds `seen` forces on its reader.
+    fn run_speeds(seen: &[ServerPacket]) -> Vec<f32> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::ForceSpeedChange {
+                    kind: benilla_protocol::messages::SpeedKind::Run,
+                    speed,
+                    ..
+                } => Some(*speed),
+                _ => None,
+            })
+            .collect()
+    }
+
+    use benilla_protocol::messages::MoveMode;
+
+    /// Four players at the spawn, one walked off out of witness range; returns the host, the
+    /// inboxes, the impostor and the crew (the far one last).
+    fn four_with_one_far() -> (GameHost, Vec<UnboundedReceiver<Packet>>, u64, Vec<u64>) {
+        let (host, mut inboxes) = hosted(
+            Settings {
+                min_players: 4,
+                ..quick()
+            },
+            4,
+        );
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        host.moved(crew[2], [-8900.0, -132.0, 83.5]);
+        drain(&mut inboxes);
+        (host, inboxes, imp, crew)
+    }
+
+    #[test]
+    fn a_victim_falls_for_everyone_and_rises_a_ghost_only_ghosts_see_beside_its_corpse() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        let (victim, reporter, far) = (crew[0], crew[1], crew[2]);
+        let inbox = |g: u64| g as usize - 1;
+        let fell_at = host.lock().map.position(victim).unwrap();
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+
+        // Health 0 reaches everyone, near or far: the body lies there for all to find.
+        for g in [imp, victim, reporter, far] {
+            let seen = received(&mut inboxes[inbox(g)]);
+            assert_eq!(
+                health_of(&seen, victim).last(),
+                Some(&0),
+                "{g} sees it fall"
+            );
+            if g == victim {
+                assert_eq!(modes(&seen, victim), [(MoveMode::Root, true)], "rooted");
+                let fell = changes_of(&seen, victim);
+                assert!(fell.iter().any(|f| f.player_release_timer_running()));
+            }
+        }
+
+        // Release Spirit: a corpse where they fell, and a ghost the living no longer see.
+        host.release_spirit(victim);
+        let corpse = guid::corpse(victim);
+        for g in [imp, victim, reporter, far] {
+            let seen = received(&mut inboxes[inbox(g)]);
+            assert!(created(&seen).contains(&corpse), "{g} sees the corpse");
+            let gone = destroyed(&seen).contains(&victim);
+            assert_eq!(
+                gone,
+                g != victim,
+                "{g}: only the living lose sight of the ghost"
+            );
+            if g == victim {
+                let ghost = changes_of(&seen, victim);
+                assert!(ghost.iter().any(|f| f.player_is_ghost()), "flagged a ghost");
+                assert!(ghost.iter().all(|f| !f.unit_is_dead()), "on 1 health");
+                let m = modes(&seen, victim);
+                assert!(
+                    m.contains(&(MoveMode::Root, false))
+                        && m.contains(&(MoveMode::WaterWalk, true))
+                );
+                assert_eq!(run_speeds(&seen), [death::GHOST_SPEEDS[0]]);
+            }
+        }
+        let standing = host.lock().map.position(victim);
+        assert!(
+            standing.is_some_and(|at| among_rules::within(at, fell_at, 1.0)),
+            "no graveyard run: {standing:?} {fell_at:?}"
+        );
+        // A second press changes nothing.
+        host.release_spirit(victim);
+        assert!(received(&mut inboxes[inbox(reporter)]).is_empty());
+
+        // The ghost's steps and casts reach no living client.
+        let step = vec![0u8; 28];
+        host.lock().map.relay_move(
+            victim,
+            benilla_protocol::messages::opcode::MSG_MOVE_HEARTBEAT,
+            &step,
+            None,
+        );
+        assert!(received(&mut inboxes[inbox(reporter)]).is_empty());
+
+        // The living still find and report the body; the meeting clears the corpse for all.
+        host.request(reporter, Request::Report);
+        assert!(matches!(host.lock().game.phase(), Phase::Meeting(_)));
+        for g in [imp, victim, reporter, far] {
+            assert!(destroyed(&received(&mut inboxes[inbox(g)])).contains(&corpse));
+        }
+    }
+
+    #[test]
+    fn a_meeting_raises_the_unreleased_and_the_lobby_brings_everyone_back() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        let (victim, reporter, far) = (crew[0], crew[1], crew[2]);
+        let inbox = |g: u64| g as usize - 1;
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+        drain(&mut inboxes);
+
+        // Reported before release: the body goes with the meeting, no corpse left behind.
+        host.request(reporter, Request::Report);
+        let seen = received(&mut inboxes[inbox(reporter)]);
+        assert!(
+            destroyed(&seen).contains(&victim),
+            "the unreleased rise as ghosts"
+        );
+        assert!(!created(&seen).contains(&guid::corpse(victim)));
+        let mine = received(&mut inboxes[inbox(victim)]);
+        assert!(changes_of(&mine, victim)
+            .iter()
+            .any(|f| f.player_is_ghost()));
+
+        // The living vote the impostor out: ejected, a ghost too, and the crew wins.
+        host.tick(Duration::from_secs(15));
+        for g in [imp, reporter, far] {
+            host.request(g, Request::Vote(Vote::Player(PlayerId(imp))));
+        }
+        host.tick(Duration::from_secs(6));
+        assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
+        assert!(destroyed(&received(&mut inboxes[inbox(reporter)])).contains(&imp));
+
+        // Back in the lobby every ghost lives again, seen by all at full health.
+        drain(&mut inboxes);
+        let host_player = host.lock().game.host().unwrap().0;
+        host.request(host_player, Request::Lobby);
+        let seen = received(&mut inboxes[inbox(reporter)]);
+        for g in [victim, imp] {
+            assert!(created(&seen).contains(&g), "{g} is shown again");
+        }
+        for g in [victim, imp] {
+            let mine = received(&mut inboxes[inbox(g)]);
+            let back = changes_of(&mine, g);
+            assert!(back
+                .iter()
+                .any(|f| f.unit_health() == Some(120) && !f.player_is_ghost()));
+            assert!(modes(&mine, g).contains(&(MoveMode::WaterWalk, false)));
+            assert_eq!(run_speeds(&mine), [death::LIVING_SPEEDS[0]]);
+        }
+    }
+
+    #[test]
+    fn a_wolf_kill_fells_its_victim_like_a_knife() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.request(1, Request::Start);
+        let c = roles(&host).1[0];
+        let home = host.lock().game.layout().creatures[0].at;
+        host.moved(c, [home[0] + 2.0, home[1], home[2]]);
+        drain(&mut inboxes);
+        for _ in 0..1200 {
+            host.tick(Duration::from_millis(100));
+            if !host.lock().game.player(PlayerId(c)).unwrap().alive {
+                break;
+            }
+        }
+        assert!(
+            !host.lock().game.player(PlayerId(c)).unwrap().alive,
+            "the wolf killed"
+        );
+        let seen = received(&mut inboxes[(c as usize) % 3]);
+        assert_eq!(health_of(&seen, c).last(), Some(&0));
+        assert!(modes(&received(&mut inboxes[c as usize - 1]), c).contains(&(MoveMode::Root, true)));
+        // Unreleased after the popup's six minutes, the spirit is released for them.
+        host.tick(AUTO_RELEASE);
+        assert!(created(&received(&mut inboxes[(c as usize) % 3])).contains(&guid::corpse(c)));
     }
 
     #[test]

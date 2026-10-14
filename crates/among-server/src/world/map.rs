@@ -81,7 +81,7 @@ impl Map {
         }
     }
 
-    /// Queue packet for guid, if it is in the world.
+    /// Queue `packet` for `guid`, if it is in the world.
     pub fn send(&self, guid: u64, packet: Packet) {
         if let Some(o) = self.lock().get(&guid) {
             let _ = o.outbox.send(packet);

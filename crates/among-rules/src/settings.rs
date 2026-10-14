@@ -101,7 +101,38 @@ pub struct TaskDef {
     pub name: String,
     pub kind: TaskKind,
     /// A task with no steps is never assigned.
-    pub steps: Vec<Position>,
+    pub steps: Vec<TaskStep>,
+}
+
+/// One step of a task: where it is done and what doing it takes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskStep {
+    pub at: Position,
+    pub action: StepAction,
+}
+
+impl TaskStep {
+    /// A step done by a cast of `secs` seconds at `at` (gathering a node, crafting at a station).
+    pub fn cast(at: Position, secs: f32) -> Self {
+        Self {
+            at,
+            action: StepAction::Cast(Duration::from_secs_f32(secs)),
+        }
+    }
+
+    /// A step done the moment it is used.
+    pub fn instant(at: Position) -> Self {
+        Self {
+            at,
+            action: StepAction::Cast(Duration::ZERO),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum StepAction {
+    /// A cast of this long, standing still; zero completes on use.
+    Cast(Duration),
 }
 
 /// Common tasks are the same for every player in a game; short and long ones are drawn per player.

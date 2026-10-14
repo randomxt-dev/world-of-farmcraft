@@ -145,9 +145,9 @@ pub fn name_query_response(c: &CharacterRecord) -> Packet {
     )
 }
 
-/// SMSG_MESSAGECHAT on the party lane in LANG_ADDON, text prefix, a TAB, payload. The party
-/// shape names the sender twice (vmangos BuildChatPacket); the client holds an addon line until
-/// the sender's name resolves, so sender must be a guid the name query answers.
+/// `SMSG_MESSAGECHAT` on the party lane in `LANG_ADDON`, text `prefix`, a TAB, `payload`. The party
+/// shape names the sender twice (vmangos `BuildChatPacket`); the client holds an addon line until
+/// the sender's name resolves, so `sender` must be a guid the name query answers.
 pub fn addon_message(sender: u64, prefix: &str, payload: &str) -> Packet {
     let text = format!("{prefix}\t{payload}");
     Packet::new(
@@ -164,8 +164,8 @@ pub fn addon_message(sender: u64, prefix: &str, payload: &str) -> Packet {
     )
 }
 
-/// A client's CMSG_MESSAGECHAT: u32 type and language, the target or channel name for a
-/// whisper (6) or channel (14) line, then the text (vmangos Server/Packets/Chat.cpp:3-12).
+/// A client's `CMSG_MESSAGECHAT`: `u32` type and language, the target or channel name for a
+/// whisper (6) or channel (14) line, then the text (vmangos `Server/Packets/Chat.cpp:3-12`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientChat {
     pub chat_type: u32,
@@ -189,7 +189,7 @@ impl ClientChat {
         })
     }
 
-    /// The payload of an addon line under prefix, if this is one.
+    /// The payload of an addon line under `prefix`, if this is one.
     pub fn addon_payload(&self, prefix: &str) -> Option<&str> {
         let (p, payload) = self.text.split_once('\t')?;
         (self.language == LANGUAGE_ADDON && p == prefix).then_some(payload)

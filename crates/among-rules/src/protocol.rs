@@ -167,6 +167,21 @@ pub enum Event {
         player: PlayerId,
         task: TaskId,
     },
+    /// `player` began a task cast of `time`. Public: the world shows the cast; an impostor's
+    /// cover-task cast looks the same and never progresses.
+    CastStarted {
+        player: PlayerId,
+        task: TaskId,
+        time: Duration,
+    },
+    /// The cast ran out; any progress follows as a private [`Event::TaskProgress`].
+    CastFinished {
+        player: PlayerId,
+    },
+    /// The cast broke: the caster moved, a meeting began, or the caster died or left.
+    CastInterrupted {
+        player: PlayerId,
+    },
     /// Crew tasks done of the total still counted (connected crewmates, living or dead).
     TaskBar {
         done: usize,
@@ -192,7 +207,7 @@ pub enum Event {
     VoteCast {
         voter: PlayerId,
     },
-    /// A vote for a player who left is handed back; oter may vote again.
+    /// A vote for a player who left is handed back; `voter` may vote again.
     VoteReturned {
         voter: PlayerId,
     },
@@ -277,6 +292,7 @@ pub enum Reject {
     StationFixed,
     StationBusy,
     AlreadyVoted,
+    AlreadyCasting,
 }
 
 impl fmt::Display for Reject {
@@ -305,6 +321,7 @@ impl fmt::Display for Reject {
             Reject::StationFixed => "station already fixed",
             Reject::StationBusy => "someone else is at that station",
             Reject::AlreadyVoted => "already voted",
+            Reject::AlreadyCasting => "already busy",
         })
     }
 }

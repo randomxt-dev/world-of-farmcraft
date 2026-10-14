@@ -109,6 +109,10 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
     match event {
         Event::Joined { .. } | Event::Left { .. } | Event::BodiesCleared => Vec::new(),
         Event::SettingsChanged | Event::TaskCompleted { .. } => Vec::new(),
+        // Casts are the world's to show, as cast bars and animations.
+        Event::CastStarted { .. } | Event::CastFinished { .. } | Event::CastInterrupted { .. } => {
+            Vec::new()
+        }
         Event::HostChanged { host } => all(Notice::Host(*host)),
         Event::GameStarted { players, impostors } => all(Notice::Started {
             players: *players,

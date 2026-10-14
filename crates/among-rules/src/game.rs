@@ -11,7 +11,7 @@ use crate::protocol::{
 use crate::rng::SplitMix64;
 use crate::settings::{
     distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
-    TaskKind,
+    StepAction, TaskKind,
 };
 
 /// One player's standing in the game.
@@ -28,6 +28,8 @@ pub struct Player {
     /// Until this impostor may kill again.
     pub kill_cooldown: Duration,
     pub emergencies_left: u32,
+    /// A task cast under way.
+    pub casting: Option<Casting>,
 }
 
 impl Player {
@@ -40,6 +42,7 @@ impl Player {
             tasks: Vec::new(),
             kill_cooldown: Duration::ZERO,
             emergencies_left: emergencies,
+            casting: None,
         }
     }
 
@@ -51,6 +54,18 @@ impl Player {
         self.role == Some(Role::Crewmate)
     }
 }
+
+/// A task cast under way: it completes when `remaining` runs out, and breaks if the caster moves
+/// off `from`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Casting {
+    pub task: TaskId,
+    pub remaining: Duration,
+    pub from: Position,
+}
+
+/// How far a caster may drift before the cast breaks; WoW breaks a cast on any step, not a turn.
+const CAST_DRIFT: f32 = 0.1;
 
 /// A task in a player's list and how many of its steps are done.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,7 +86,7 @@ pub enum Phase {
     Lobby,
     Playing,
     Meeting(Meeting),
-    /// The ejection reveal; ejected is already a ghost.
+    /// The ejection reveal; `ejected` is already a ghost.
     Ejecting {
         ejected: Option<PlayerId>,
         remaining: Duration,
@@ -99,7 +114,7 @@ pub enum MeetingStage {
     Voting,
 }
 
-/// The buttons a player's HUD shows as live; see [Game::actions].
+/// The buttons a player's HUD shows as live; see [`Game::actions`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Actions {
     pub kill: bool,
@@ -116,7 +131,7 @@ pub struct ActiveSabotage {
     pub kind: SabotageKind,
     /// Until the impostors win, for a critical sabotage.
     pub remaining: Option<Duration>,
-    /// Indexed like the map's [SabotageDef::stations].
+    /// Indexed like the map's [`SabotageDef::stations`].
     pub stations: Vec<Station>,
 }
 
@@ -218,7 +233,7 @@ impl Game {
         (done, total)
     }
 
-    /// The nearest living crewmate killer may kill right now: what a Kill button would hit.
+    /// The nearest living crewmate `killer` may kill right now: what a Kill button would hit.
     pub fn kill_target(&self, killer: PlayerId) -> Option<PlayerId> {
         let from = self.players.get(&killer)?.position;
         self.nearest(
@@ -228,14 +243,14 @@ impl Game {
         )
     }
 
-    /// The nearest body player may report right now.
+    /// The nearest body `player` may report right now.
     pub fn report_target(&self, player: PlayerId) -> Option<PlayerId> {
         let from = self.players.get(&player)?.position;
         let bodies = self.bodies.iter().map(|b| (b.position, b.victim));
         self.nearest(from, bodies, |&body| Command::Report { player, body })
     }
 
-    /// What a Use button would do for player right now: fix the nearest sabotage station, do
+    /// What a Use button would do for `player` right now: fix the nearest sabotage station, do
     /// the nearest task step, or press the emergency button, whichever legal one is closest.
     pub fn use_target(&self, player: PlayerId) -> Option<Command> {
         let p = self.players.get(&player)?;
@@ -247,9 +262,9 @@ impl Game {
             }
         }
         for t in &p.tasks {
-            if let Some(&at) = self.layout.tasks[t.task.0].steps.get(t.step) {
+            if let Some(step) = self.layout.tasks[t.task.0].steps.get(t.step) {
                 spots.push((
-                    at,
+                    step.at,
                     Command::UseTask {
                         player,
                         task: t.task,
@@ -264,7 +279,7 @@ impl Game {
         self.nearest(p.position, spots, Clone::clone)
     }
 
-    /// Which buttons player has live right now.
+    /// Which buttons `player` has live right now.
     pub fn actions(&self, player: PlayerId) -> Actions {
         let sabotage = [
             SabotageKind::Lights,
@@ -286,7 +301,7 @@ impl Game {
         }
     }
 
-    /// The candidate nearest rom whose command validates.
+    /// The candidate nearest `from` whose command validates.
     fn nearest<T>(
         &self,
         from: Position,
@@ -300,7 +315,7 @@ impl Game {
             .map(|(_, c)| c)
     }
 
-    /// Applies cmd if it is legal now and returns what happened; otherwise changes nothing.
+    /// Applies `cmd` if it is legal now and returns what happened; otherwise changes nothing.
     pub fn apply(&mut self, cmd: Command) -> Result<Vec<Event>, Reject> {
         self.validate(&cmd)?;
         self.execute(cmd);
@@ -338,19 +353,23 @@ impl Game {
             Command::UseTask { player, task } => {
                 self.playing()?;
                 let p = self.connected(player)?;
-                if !p.is_crewmate() {
-                    return Err(Reject::NotCrewmate);
+                // Ghost crewmates still work; a ghost impostor has no one left to fool.
+                if !p.alive && p.is_impostor() {
+                    return Err(Reject::Dead);
+                }
+                if p.casting.is_some() {
+                    return Err(Reject::AlreadyCasting);
                 }
                 let t = p
                     .tasks
                     .iter()
                     .find(|t| t.task == task)
                     .ok_or(Reject::TaskNotAssigned)?;
-                let at = self.layout.tasks[task.0]
+                let step = self.layout.tasks[task.0]
                     .steps
                     .get(t.step)
                     .ok_or(Reject::TaskDone)?;
-                self.in_reach(p.position, *at, self.settings.use_distance)
+                self.in_reach(p.position, step.at, self.settings.use_distance)
             }
             Command::Kill { killer, victim } => {
                 self.playing()?;
@@ -467,7 +486,13 @@ impl Game {
             }
             Command::Start { seed, .. } => self.start(seed),
             Command::Move { player, position } => {
-                self.seat(player).position = position;
+                let p = self.seat(player);
+                p.position = position;
+                if p.casting
+                    .is_some_and(|c| !within(c.from, position, CAST_DRIFT))
+                {
+                    self.interrupt(player);
+                }
                 self.release_out_of_reach(player);
             }
             Command::UseTask { player, task } => self.use_task(player, task),
@@ -565,9 +590,73 @@ impl Game {
         self.push_task_bar();
     }
 
+    /// Start the step's cast, or do the step at once if it takes no time.
     fn use_task(&mut self, player: PlayerId, task: TaskId) {
+        let p = &self.players[&player];
+        let t = p
+            .tasks
+            .iter()
+            .find(|t| t.task == task)
+            .expect("validated task");
+        let StepAction::Cast(time) = self.layout.tasks[task.0].steps[t.step].action;
+        if time.is_zero() {
+            self.advance(player, task);
+            return;
+        }
+        let from = p.position;
+        self.seat(player).casting = Some(Casting {
+            task,
+            remaining: time,
+            from,
+        });
+        self.out.push(Event::CastStarted { player, task, time });
+    }
+
+    /// Break every cast: play stops for a meeting or the end of the game.
+    fn interrupt_all(&mut self) {
+        let casters: Vec<PlayerId> = (self.players.iter())
+            .filter(|(_, p)| p.casting.is_some())
+            .map(|(&id, _)| id)
+            .collect();
+        for player in casters {
+            self.interrupt(player);
+        }
+    }
+
+    fn interrupt(&mut self, player: PlayerId) {
+        if self.seat(player).casting.take().is_some() {
+            self.out.push(Event::CastInterrupted { player });
+        }
+    }
+
+    /// Run every task cast down by `dt`; finished ones advance their step.
+    fn tick_casts(&mut self, dt: Duration) {
+        let mut finished = Vec::new();
+        for (&id, p) in self.players.iter_mut() {
+            let Some(c) = &mut p.casting else { continue };
+            if dt >= c.remaining {
+                finished.push((id, c.task));
+                p.casting = None;
+            } else {
+                c.remaining -= dt;
+            }
+        }
+        for (player, task) in finished {
+            if self.phase != Phase::Playing {
+                return;
+            }
+            self.out.push(Event::CastFinished { player });
+            self.advance(player, task);
+        }
+    }
+
+    /// One step of `task` done; an impostor's cover task never moves.
+    fn advance(&mut self, player: PlayerId, task: TaskId) {
         let steps = self.layout.tasks[task.0].steps.len();
         let p = self.seat(player);
+        if p.is_impostor() {
+            return;
+        }
         let t = p
             .tasks
             .iter_mut()
@@ -589,6 +678,7 @@ impl Game {
     }
 
     fn kill(&mut self, killer: PlayerId, victim: PlayerId) {
+        self.interrupt(victim);
         let v = self.seat(victim);
         v.alive = false;
         let at = v.position;
@@ -609,6 +699,7 @@ impl Game {
         if self.phase == Phase::Lobby {
             self.players.remove(&player);
         } else {
+            self.interrupt(player);
             self.seat(player).connected = false;
             self.release_stations(player);
         }
@@ -641,6 +732,7 @@ impl Game {
     }
 
     fn start_meeting(&mut self, caller: PlayerId, reason: MeetingReason) {
+        self.interrupt_all();
         let discussion = self.settings.discussion_time;
         self.out.push(Event::MeetingCalled {
             caller,
@@ -751,7 +843,7 @@ impl Game {
         self.out.push(Event::ReturnedToLobby);
     }
 
-    /// Runs the clock; a long dt carries through every stage boundary it crosses, in order.
+    /// Runs the clock; a long `dt` carries through every stage boundary it crosses, in order.
     fn tick(&mut self, mut dt: Duration) {
         loop {
             match &mut self.phase {
@@ -778,6 +870,10 @@ impl Game {
                     self.emergency_cooldown = self.emergency_cooldown.saturating_sub(dt);
                     for p in self.players.values_mut() {
                         p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
+                    }
+                    self.tick_casts(dt);
+                    if self.phase != Phase::Playing {
+                        return;
                     }
                     match &mut self.sabotage {
                         None => self.sabotage_cooldown = self.sabotage_cooldown.saturating_sub(dt),
@@ -810,6 +906,7 @@ impl Game {
     }
 
     fn game_over(&mut self, winner: Team, reason: WinReason) {
+        self.interrupt_all();
         let impostors = (self.players.iter())
             .filter(|(_, p)| p.is_impostor())
             .map(|(&id, _)| id)
@@ -868,12 +965,12 @@ impl Game {
         }
     }
 
-    /// Lets go of every station player holds.
+    /// Lets go of every station `player` holds.
     fn release_stations(&mut self, player: PlayerId) {
         self.release_where(|station, _| station == Station::Held(player));
     }
 
-    /// Lets go of the stations player holds that are now out of their reach.
+    /// Lets go of the stations `player` holds that are now out of their reach.
     fn release_out_of_reach(&mut self, player: PlayerId) {
         let Some(from) = self.players.get(&player).map(|p| p.position) else {
             return;

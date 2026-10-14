@@ -50,7 +50,7 @@ fn a_long_task_takes_each_step_in_order_at_its_own_spot() {
         .map(|t| t.task)
         .find(|t| g.layout().tasks[t.0].kind == TaskKind::Long)
         .unwrap();
-    let [first, second] = [0, 1].map(|i| g.layout().tasks[long.0].steps[i]);
+    let [first, second] = [0, 1].map(|i| g.layout().tasks[long.0].steps[i].at);
     put(&mut g, c, second);
     assert_eq!(
         rejected(
@@ -103,16 +103,15 @@ fn a_long_task_takes_each_step_in_order_at_its_own_spot() {
 }
 
 #[test]
-fn only_crewmates_use_their_own_tasks() {
+fn tasks_are_your_own_and_an_impostor_only_pretends() {
     let mut g = started(5, 1);
     let imp = impostors(&g)[0];
     let task = first_task(&g, imp);
     let spot = task_spot(&g, imp, task);
     put(&mut g, imp, spot);
-    assert_eq!(
-        rejected(&mut g, Command::UseTask { player: imp, task }),
-        Reject::NotCrewmate
-    );
+    // An instant cover task: accepted, and nothing happens.
+    assert_eq!(ok(&mut g, Command::UseTask { player: imp, task }), []);
+    assert_eq!(g.task_bar(), (0, 16));
 
     let c = crew(&g)[0];
     let mine: Vec<_> = g.player(c).unwrap().tasks.iter().map(|t| t.task).collect();
@@ -120,7 +119,7 @@ fn only_crewmates_use_their_own_tasks() {
         .map(TaskId)
         .find(|t| !mine.contains(t))
         .unwrap();
-    let spot = g.layout().tasks[other.0].steps[0];
+    let spot = g.layout().tasks[other.0].steps[0].at;
     put(&mut g, c, spot);
     assert_eq!(
         rejected(

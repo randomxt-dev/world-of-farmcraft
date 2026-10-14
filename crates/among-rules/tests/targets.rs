@@ -89,9 +89,17 @@ fn use_picks_the_nearest_legal_task_station_or_button() {
             station: 0
         })
     );
-    // The impostor's tasks are a cover story; the button is the only use for them.
-    put(&mut g, imp, spot);
-    assert_eq!(g.use_target(imp), None);
+    // An impostor's Use fakes their own cover task.
+    let cover = g.player(imp).unwrap().tasks[0].task;
+    let cover_spot = task_spot(&g, imp, cover);
+    put(&mut g, imp, cover_spot);
+    assert_eq!(
+        g.use_target(imp),
+        Some(Command::UseTask {
+            player: imp,
+            task: cover
+        })
+    );
 }
 
 #[test]

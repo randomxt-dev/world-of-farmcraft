@@ -31,7 +31,12 @@ impl Rng {
 /// Spots worth standing on: the button, every task step, every station, and nowhere useful.
 fn spots(layout: &Layout) -> Vec<Position> {
     let mut v = vec![layout.emergency_button, [1000.0, 1000.0, 0.0]];
-    v.extend(layout.tasks.iter().flat_map(|t| t.steps.iter().copied()));
+    v.extend(
+        layout
+            .tasks
+            .iter()
+            .flat_map(|t| t.steps.iter().map(|s| s.at)),
+    );
     v.extend(
         layout
             .sabotages
@@ -105,6 +110,12 @@ fn random_command(rng: &mut Rng, g: &Game, spots: &[Position]) -> Command {
 }
 
 fn check_state(g: &Game) {
+    if !matches!(g.phase(), Phase::Playing) {
+        assert!(
+            g.players().all(|(_, p)| p.casting.is_none()),
+            "a cast outside play"
+        );
+    }
     let living = |role| {
         g.players()
             .filter(|(_, p)| p.connected && p.alive && p.role == Some(role))
@@ -130,18 +141,28 @@ fn check_state(g: &Game) {
 
 #[test]
 fn random_streams_keep_the_invariants() {
-    let layout = layout();
-    let spots = spots(&layout);
+    // Both layouts share every spot.
+    let spots = spots(&layout());
     let mut accepted = 0;
     let mut by_kind: std::collections::BTreeMap<String, usize> = Default::default();
     let mut games_over = 0;
+    let mut casts = [0usize; 3];
     for seed in 1..=200u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let settings = Settings {
             impostors: 1 + rng.below(3),
             ..instant()
         };
-        let mut g = lobby_with(settings, 4 + rng.below(6) as u64);
+        // Odd seeds play instant steps, even ones 2 s casts.
+        let layout = if seed % 2 == 0 {
+            cast_layout(2.0)
+        } else {
+            layout()
+        };
+        let mut g = Game::new(settings, layout);
+        for i in 1..=4 + rng.below(6) as u64 {
+            ok(&mut g, Command::Join { player: id(i) });
+        }
         for _ in 0..3000 {
             let cmd = random_command(&mut rng, &g, &spots);
             let verdict = g.validate(&cmd);
@@ -154,6 +175,12 @@ fn random_streams_keep_the_invariants() {
                     let kind = kind.split([' ', '{']).next().unwrap().to_owned();
                     *by_kind.entry(kind).or_default() += 1;
                     for e in &events {
+                        match e {
+                            Event::CastStarted { .. } => casts[0] += 1,
+                            Event::CastFinished { .. } => casts[1] += 1,
+                            Event::CastInterrupted { .. } => casts[2] += 1,
+                            _ => {}
+                        }
                         if let Some(p) = e.private_to() {
                             assert!(g.player(p).is_some(), "{e:?} for nobody");
                         }
@@ -182,7 +209,13 @@ fn random_streams_keep_the_invariants() {
         }
     }
     // The stream must actually play games, not bounce off the lobby.
-    eprintln!("accepted: {by_kind:?}, games over: {games_over}");
+    eprintln!(
+        "accepted: {by_kind:?}, games over: {games_over}, casts started/finished/broken: {casts:?}"
+    );
+    assert!(
+        casts.iter().all(|&n| n > 10),
+        "casts barely exercised: {casts:?}"
+    );
     // Every kind but Configure, which the stream never sends.
     assert_eq!(
         by_kind.len(),

@@ -21,7 +21,7 @@ pub fn layout() -> Layout {
     let task = |name: &str, kind, steps: &[Position]| TaskDef {
         name: name.into(),
         kind,
-        steps: steps.to_vec(),
+        steps: steps.iter().map(|&at| TaskStep::instant(at)).collect(),
     };
     Layout {
         emergency_button: BUTTON,
@@ -79,6 +79,25 @@ pub fn lobby_with(settings: Settings, n: u64) -> Game {
 
 pub fn lobby(n: u64) -> Game {
     lobby_with(Settings::default(), n)
+}
+
+/// [`layout`] with every task step a cast of `secs` seconds.
+pub fn cast_layout(secs: f32) -> Layout {
+    let mut l = layout();
+    for step in l.tasks.iter_mut().flat_map(|t| t.steps.iter_mut()) {
+        *step = TaskStep::cast(step.at, secs);
+    }
+    l
+}
+
+/// Players `1..=n` on `layout`, started by player 1.
+pub fn started_on(layout: Layout, settings: Settings, n: u64, seed: u64) -> Game {
+    let mut g = Game::new(settings, layout);
+    for i in 1..=n {
+        ok(&mut g, Command::Join { player: id(i) });
+    }
+    ok(&mut g, Command::Start { by: id(1), seed });
+    g
 }
 
 pub fn started_with(settings: Settings, n: u64, seed: u64) -> Game {
@@ -154,7 +173,7 @@ pub fn task_spot(g: &Game, player: PlayerId, task: TaskId) -> Position {
         .iter()
         .find(|t| t.task == task)
         .unwrap();
-    g.layout().tasks[task.0].steps[t.step]
+    g.layout().tasks[task.0].steps[t.step].at
 }
 
 /// Walks `player` to every step of every task and uses it; returns the last use's events.
@@ -163,7 +182,7 @@ pub fn finish_tasks(g: &mut Game, player: PlayerId) -> Vec<Event> {
     let tasks: Vec<_> = g.player(player).unwrap().tasks.clone();
     for t in tasks {
         for step in t.step..g.layout().tasks[t.task.0].steps.len() {
-            let spot = g.layout().tasks[t.task.0].steps[step];
+            let spot = g.layout().tasks[t.task.0].steps[step].at;
             put(g, player, spot);
             last = ok(
                 g,

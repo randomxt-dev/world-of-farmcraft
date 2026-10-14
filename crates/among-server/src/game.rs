@@ -8,7 +8,7 @@ use std::time::Duration;
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
     Actions, Command, Game, Layout, PlayerId, Position, Reject, SabotageDef, SabotageKind,
-    Settings, TaskDef, TaskKind,
+    Settings, TaskDef, TaskKind, TaskStep,
 };
 use rand::RngCore;
 
@@ -186,7 +186,8 @@ impl Inner {
 pub fn placeholder_layout() -> Layout {
     let [x, y, z] = player::SPAWN.position;
     let at = |dx: f32, dy: f32| [x + dx, y + dy, z];
-    let task = |name: &str, kind, steps: Vec<Position>| TaskDef {
+    let cast = |dx: f32, dy: f32| TaskStep::cast(at(dx, dy), 3.0);
+    let task = |name: &str, kind, steps: Vec<TaskStep>| TaskDef {
         name: name.into(),
         kind,
         steps,
@@ -199,23 +200,32 @@ pub fn placeholder_layout() -> Layout {
     let critical = Some(Duration::from_secs(30));
     Layout {
         emergency_button: at(0.0, 0.0),
+        // Gathering and crafting, each a cast of a few seconds; long tasks gather then craft.
         tasks: vec![
-            task("Light the candles", TaskKind::Common, vec![at(10.0, 0.0)]),
-            task("Ring the bell", TaskKind::Common, vec![at(-10.0, 0.0)]),
+            task("Pick Peacebloom", TaskKind::Common, vec![cast(10.0, 0.0)]),
+            task("Cook a Rabbit", TaskKind::Common, vec![cast(-10.0, 0.0)]),
             task(
-                "Carry the hay",
+                "Mine and smelt Copper",
                 TaskKind::Long,
-                vec![at(20.0, 10.0), at(20.0, -10.0)],
+                vec![cast(20.0, 10.0), cast(20.0, -10.0)],
             ),
             task(
-                "Copy the tome",
+                "Weave a Linen Bandage",
                 TaskKind::Long,
-                vec![at(-20.0, 10.0), at(-20.0, -10.0)],
+                vec![cast(-20.0, 10.0), cast(-20.0, -10.0)],
             ),
-            task("Sweep the steps", TaskKind::Short, vec![at(0.0, 10.0)]),
-            task("Feed the horses", TaskKind::Short, vec![at(0.0, -10.0)]),
-            task("Fill the trough", TaskKind::Short, vec![at(10.0, 15.0)]),
-            task("Check the gate", TaskKind::Short, vec![at(-10.0, -15.0)]),
+            task("Pick Silverleaf", TaskKind::Short, vec![cast(0.0, 10.0)]),
+            task("Pick Earthroot", TaskKind::Short, vec![cast(0.0, -10.0)]),
+            task(
+                "Mine a Copper Vein",
+                TaskKind::Short,
+                vec![cast(10.0, 15.0)],
+            ),
+            task(
+                "Sharpen at the anvil",
+                TaskKind::Short,
+                vec![cast(-10.0, -15.0)],
+            ),
         ],
         sabotages: vec![
             sabotage(SabotageKind::Lights, vec![at(8.0, 8.0)], None),

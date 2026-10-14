@@ -36,7 +36,8 @@ mod settings;
 pub mod wire;
 
 pub use game::{
-    Actions, ActiveSabotage, Body, Game, Meeting, MeetingStage, Phase, Player, PlayerTask, Station,
+    Actions, ActiveSabotage, Body, Casting, Game, Meeting, MeetingStage, Phase, Player, PlayerTask,
+    Station,
 };
 pub use protocol::{
     Command, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote, VoteOutcome,
@@ -44,5 +45,5 @@ pub use protocol::{
 };
 pub use settings::{
     distance_squared, max_impostors, within, Layout, Position, SabotageDef, SabotageKind, Settings,
-    TaskDef, TaskKind,
+    StepAction, TaskDef, TaskKind, TaskStep,
 };

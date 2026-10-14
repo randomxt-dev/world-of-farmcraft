@@ -358,12 +358,13 @@ impl Game {
                 if !k.is_impostor() {
                     return Err(Reject::NotImpostor);
                 }
-                let v = (self.players.get(&victim))
-                    .filter(|v| v.connected && v.alive && v.is_crewmate())
-                    .ok_or(Reject::InvalidTarget)?;
+                // Cooldown before target: a refused press says "on cooldown", aimed or not.
                 if !k.kill_cooldown.is_zero() {
                     return Err(Reject::OnCooldown);
                 }
+                let v = (self.players.get(&victim))
+                    .filter(|v| v.connected && v.alive && v.is_crewmate())
+                    .ok_or(Reject::InvalidTarget)?;
                 self.in_reach(k.position, v.position, self.settings.kill_distance)
             }
             Command::Report { player, body } => {

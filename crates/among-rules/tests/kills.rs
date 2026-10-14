@@ -63,6 +63,11 @@ fn kills_wait_for_the_cooldown() {
         victim,
     };
     assert_eq!(rejected(&mut g, kill(crew[0])), Reject::OnCooldown);
+    assert_eq!(
+        rejected(&mut g, kill(imp)),
+        Reject::OnCooldown,
+        "cooldown before target"
+    );
     tick(&mut g, 9.9);
     assert_eq!(rejected(&mut g, kill(crew[0])), Reject::OnCooldown);
     tick(&mut g, 0.1);

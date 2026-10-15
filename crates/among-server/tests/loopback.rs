@@ -1009,3 +1009,89 @@ fn the_impostor_is_sent_its_kill_cooldown_after_a_kill() {
     });
     assert!(cds.contains(&(15692, 25_000)), "{cds:?}");
 }
+
+/// Start a server whose fixed lobby is `K3XQ9P`, plus `extra` player-made lobbies; returns
+/// realmd's `host:port` and the made lobbies' codes.
+fn start_lobbies(extra: usize) -> (String, Vec<String>) {
+    let config = ServerConfig {
+        auth_port: 0,
+        world_port: 0,
+        marks: temp_marks("lobbies"),
+        start_countdown: Duration::ZERO,
+        ..ServerConfig::default()
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let accounts = Accounts::open_lobby("K3XQ9P").unwrap();
+            let server = Server::bind(&config, accounts).await.unwrap();
+            let lobbies = server.lobbies();
+            let codes: Vec<String> = (0..extra).map(|_| lobbies.create().unwrap()).collect();
+            tx.send((server.auth_addr().to_string(), codes)).unwrap();
+            server.serve().await.unwrap();
+        });
+    });
+    rx.recv().unwrap()
+}
+
+#[test]
+fn with_two_lobbies_a_name_ending_in_a_code_logs_on_to_that_lobby() {
+    let (host, codes) = start_lobbies(1);
+    let other = &codes[0];
+    // A new bare name could be for either lobby: SRP needs the verifier before the password.
+    let err = match benilla_protocol::logon(&host, "thrall", "k3xq9p") {
+        Ok(_) => panic!("a bare new name is ambiguous with two lobbies"),
+        Err(e) => e,
+    };
+    let reject = err
+        .downcast_ref::<benilla_protocol::AuthReject>()
+        .expect("a typed refusal");
+    assert_eq!(reject.code, 0x04);
+    // The other lobby's code is no password for the fixed lobby's name.
+    assert!(benilla_protocol::logon(&host, "thrall-k3xq9p", other).is_err());
+
+    let (mut session, _) = enter(&host, "thrall-k3xq9p", "k3xq9p");
+    let roster = session.char_enum().unwrap();
+    assert_eq!(roster[0].name, "Thrall", "the character drops the code");
+    let user = format!("jaina-{other}");
+    let (_jaina, _) = enter(&host, &user, other);
+}
+
+#[test]
+fn players_in_different_lobbies_never_see_each_other() {
+    let (host, codes) = start_lobbies(1);
+    let other = &codes[0];
+    let (mut b1, b1_guid) = enter(&host, &format!("b1-{other}"), other);
+    assert_eq!(wait_for(&mut b1, created_player), b1_guid, "its own body");
+
+    let (mut a1, a1_guid) = enter(&host, "a1-k3xq9p", "k3xq9p");
+    let (mut a2, a2_guid) = enter(&host, "a2-k3xq9p", "k3xq9p");
+    assert_eq!(wait_for(&mut a1, created_player), a1_guid);
+    assert_eq!(
+        wait_for(&mut a1, created_player),
+        a2_guid,
+        "lobby mates meet"
+    );
+    a1.start_forward([-8950.0, -130.0, 83.5], 1.5).unwrap();
+    let mover = wait_for(&mut a2, |p| match p {
+        ServerPacket::PlayerMove { guid, .. } => Some(*guid),
+        _ => None,
+    });
+    assert_eq!(mover, a1_guid);
+
+    // b1 asks its own lobby something; nothing of lobby A's arrives before the answer. A
+    // player-made lobby also surveys for nobody, so the answer is the refusal.
+    b1.send_chat(".mark herb-east").unwrap();
+    let answer = wait_for(&mut b1, |p| match p {
+        ServerPacket::UpdateObject { .. } if created_player(p).is_some() => {
+            panic!("b1 saw a player of another lobby arrive")
+        }
+        ServerPacket::PlayerMove { .. } => panic!("b1 saw a player of another lobby move"),
+        ServerPacket::MessageChat(m) if m.chat_type == 0x0A && m.text.starts_with("Survey") => {
+            Some(m.text.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(answer, "Survey commands are for the server's owner.");
+}

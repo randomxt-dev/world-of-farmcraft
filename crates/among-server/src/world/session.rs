@@ -18,19 +18,14 @@ use super::socket::{self, Outbox, Packet};
 use super::update;
 use crate::accounts::{Accounts, CharacterRecord, CHAR_CREATE_ERROR};
 use crate::game::GameHost;
+use crate::lobbies::{Lobbies, Present};
 use crate::srp::world_proof;
 use crate::survey::{Mark, Survey};
 
 /// `CHAR_DELETE_FAILED` (vmangos `SharedDefines.h`).
 const CHAR_DELETE_FAILED: u8 = 0x3A;
 
-pub async fn run(
-    stream: TcpStream,
-    accounts: Accounts,
-    map: Map,
-    host: GameHost,
-    survey: Survey,
-) -> Result<()> {
+pub async fn run(stream: TcpStream, lobbies: Lobbies, survey: Survey) -> Result<()> {
     stream.set_nodelay(true)?;
     let (mut r, mut w) = stream.into_split();
 
@@ -54,33 +49,28 @@ pub async fn run(
         socket::write_plain(&mut w, &refusal).await?;
         bail!("{account}: build {build} refused");
     }
-    let Some(key) = accounts.session_key(&account) else {
-        socket::write_plain(
-            &mut w,
-            &packets::auth_refused(messages::AUTH_UNKNOWN_ACCOUNT),
-        )
-        .await?;
-        bail!("{account}: no realmd logon");
-    };
-    if world_proof(&account, client_seed, server_seed, &key) != digest {
+    // The lobby is the one whose realmd logon gave the key this digest was made with.
+    let proves = |key: &[u8; 40]| world_proof(&account, client_seed, server_seed, key) == digest;
+    let Some((lobby, key)) = lobbies.logged_on(&account, proves) else {
         socket::write_plain(&mut w, &packets::auth_refused(messages::AUTH_FAILED)).await?;
-        bail!("{account}: session proof mismatch");
-    }
+        bail!("{account}: no realmd logon proves this session");
+    };
 
     let (encrypter, mut decrypter) = HeaderCrypto::from_session_key(key).split();
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(socket::run_writer(w, encrypter, rx));
     tx.send(packets::auth_ok())?;
-    tracing::info!("world: {account} authenticated");
+    tracing::info!("world: {account} authenticated in lobby {}", lobby.code());
 
     let mut session = Session {
         account,
-        accounts,
-        map,
-        host,
+        accounts: lobby.accounts().clone(),
+        map: lobby.map().clone(),
+        host: lobby.host().clone(),
         survey,
         outbox: tx,
         in_world: None,
+        _present: lobby.enter(),
     };
     let result = async {
         loop {
@@ -119,6 +109,8 @@ struct Session {
     outbox: Outbox,
     /// The character in the world, once `CMSG_PLAYER_LOGIN` seated it.
     in_world: Option<CharacterRecord>,
+    /// Keeps the lobby from closing while this session is in it.
+    _present: Present,
 }
 
 impl Session {

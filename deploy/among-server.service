@@ -1,0 +1,24 @@
+# Native-only lobby: realmd on 3724 and the world server on 8085. Installed by deploy/setup.sh.
+[Unit]
+Description=Among Azeroth game server (native clients)
+After=network-online.target
+Wants=network-online.target
+Conflicts=among-host.service
+
+[Service]
+User=among
+WorkingDirectory=/opt/among-azeroth
+EnvironmentFile=/etc/among-azeroth.env
+# Unbraced $VARS split on spaces and vanish when empty: LAYOUT_ARGS and OWNER_ARGS are optional.
+ExecStart=/opt/among-azeroth/among-server --bind 0.0.0.0 --advertise ${PUBLIC_IP} --lobby-code ${LOBBY_CODE} $LAYOUT_ARGS $OWNER_ARGS
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# The survey (`.mark`) is the only thing the server writes.
+ReadWritePaths=/opt/among-azeroth/benilla-config
+
+[Install]
+WantedBy=multi-user.target

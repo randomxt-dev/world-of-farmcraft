@@ -1,5 +1,6 @@
-//! Gather steps: pick your share of a step's nodes, a cast each; a crewmate's pick takes the node
-//! from everyone until the lobby, and a task is dealt to no more crewmates than it has spots.
+//! Gather steps: pick your share of a step's nodes, a cast each; any pick (an impostor's fake one
+//! too) takes the node from everyone until the lobby, and a task is dealt to no more players than
+//! it has spots.
 
 mod common;
 
@@ -8,10 +9,22 @@ use std::time::Duration;
 use among_rules::*;
 use common::*;
 
-/// A 5-player game on [`gather_layout`] (one impostor, four crewmates); everyone's first task is
-/// the shared gathering one, 3 of the 4 [`MEADOW`] nodes as written.
+/// A 5-player game on [`wide_meadow`] (one impostor, four crewmates); everyone's first task is
+/// the shared gathering one, 3 of its 8 nodes as written.
 fn meadow_game() -> (Game, PlayerId, Vec<PlayerId>, TaskId) {
     meadow_game_of(5)
+}
+
+/// [`gather_layout`] with four more nodes far off to the east: the four [`MEADOW`] nodes keep
+/// their spacing, and the eight give five players one each and three players two.
+fn wide_meadow() -> Layout {
+    let mut l = gather_layout();
+    for t in &mut l.tasks {
+        if let Some(StepAction::Gather { nodes, .. }) = t.steps.first_mut().map(|s| &mut s.action) {
+            nodes.extend((0..4).map(|i| [500.0 + 10.0 * i as f32, 700.0, 0.0]));
+        }
+    }
+    l
 }
 
 /// [`instant`] that starts with three and kills back to back.
@@ -24,7 +37,7 @@ fn quick() -> Settings {
 }
 
 fn meadow_game_of(n: u64) -> (Game, PlayerId, Vec<PlayerId>, TaskId) {
-    let g = started_on(gather_layout(), quick(), n, 3);
+    let g = started_on(wide_meadow(), quick(), n, 3);
     let imp = impostors(&g)[0];
     let crew = crew(&g);
     let task = g.player(crew[0]).unwrap().tasks[0].task;
@@ -48,11 +61,11 @@ fn pick(g: &mut Game, player: PlayerId, task: TaskId, at: Position) -> Vec<Event
 
 #[test]
 fn each_holder_gathers_an_even_share_of_the_spots() {
-    // Four crewmates share four nodes: one each, though the layout asks for three.
+    // Five players share eight nodes: one each, though the layout asks for three.
     let (g, _, crew, task) = meadow_game();
     assert_eq!(crew.len(), 4);
     assert_eq!(g.gather_need(task, 0), 1);
-    // Two crewmates (three players) share four: two each.
+    // Three players share eight: two each.
     let (g, _, crew, task) = meadow_game_of(3);
     assert_eq!(crew.len(), 2);
     assert_eq!(g.gather_need(task, 0), 2);
@@ -67,6 +80,11 @@ fn a_pick_takes_the_node_from_the_whole_crew_and_finishes_the_share() {
         events,
         [
             Event::CastFinished { player: c },
+            Event::NodeTaken {
+                task,
+                step: 0,
+                node: 0
+            },
             Event::GatherProgress {
                 player: c,
                 task,
@@ -175,14 +193,66 @@ fn use_points_at_the_nearest_open_node() {
 }
 
 #[test]
-fn an_impostor_gathers_for_show_and_takes_nothing() {
-    let (mut g, imp, crew, task) = meadow_game();
+fn an_impostors_fake_pick_takes_the_node_but_never_finishes() {
+    let (mut g, imp, crew, task) = meadow_game_of(3);
     let events = pick(&mut g, imp, task, MEADOW[0]);
-    assert_eq!(events, [Event::CastFinished { player: imp }]);
-    // The node stands for everyone: the impostor fakes it again, and a crewmate still picks it.
-    assert!(!g.is_taken(task, 0, 0));
-    ok(&mut g, Command::UseTask { player: imp, task });
-    pick(&mut g, crew[0], task, MEADOW[0]);
+    // Gone like a real pick, so watching cannot tell; their cover counts up, and stops there.
+    assert!(events.contains(&Event::NodeTaken {
+        task,
+        step: 0,
+        node: 0
+    }));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::TaskProgress { .. } | Event::TaskCompleted { .. })));
+    assert!(g.is_taken(task, 0, 0));
+    put(&mut g, crew[0], MEADOW[0]);
+    let take = Command::GatherNode {
+        player: crew[0],
+        task,
+        node: 0,
+    };
+    assert_eq!(rejected(&mut g, take), Reject::AlreadyGathered);
+    // The cover's share is two: a second fake pick, then no more, so it cannot strip the field.
+    pick(&mut g, imp, task, MEADOW[1]);
+    put(&mut g, imp, MEADOW[2]);
+    assert_eq!(
+        rejected(&mut g, Command::UseTask { player: imp, task }),
+        Reject::OutOfRange,
+        "no node left within the cover's share"
+    );
+    assert!(!g.is_taken(task, 0, 2));
+}
+
+#[test]
+fn a_pick_breaks_a_rivals_cast_at_the_same_node() {
+    let (mut g, _, crew, task) = meadow_game_of(3);
+    let (first, second) = (crew[0], crew[1]);
+    put(&mut g, first, MEADOW[0]);
+    ok(
+        &mut g,
+        Command::GatherNode {
+            player: first,
+            task,
+            node: 0,
+        },
+    );
+    tick(&mut g, 1.0);
+    put(&mut g, second, MEADOW[0]);
+    ok(
+        &mut g,
+        Command::GatherNode {
+            player: second,
+            task,
+            node: 0,
+        },
+    );
+    let events = tick(&mut g, 1.0);
+    assert!(
+        events.contains(&Event::CastInterrupted { player: second }),
+        "{events:?}"
+    );
+    assert!(g.player(second).unwrap().casting.is_none());
 }
 
 #[test]
@@ -213,7 +283,7 @@ fn a_chosen_node_is_the_one_gathered() {
     // That node is taken; one out of reach, or not on the step, is refused.
     assert_eq!(rejected(&mut g, gather(1)), Reject::AlreadyGathered);
     assert_eq!(rejected(&mut g, gather(2)), Reject::OutOfRange);
-    assert_eq!(rejected(&mut g, gather(4)), Reject::InvalidTarget);
+    assert_eq!(rejected(&mut g, gather(8)), Reject::InvalidTarget);
     // Use still finds the other one in reach.
     ok(&mut g, Command::UseTask { player: c, task });
     assert_eq!(g.player(c).unwrap().casting.unwrap().node, Some(0));

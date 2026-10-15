@@ -778,20 +778,30 @@ fn a_crewmate_gathers_a_herb_by_casting_at_it_and_it_vanishes_for_everyone() {
         _ => None,
     });
     assert_eq!(target, Some(herb));
-    // Five seconds later the herb is picked, then gone from everyone's world. Two crewmates
-    // share the seven spots, so each picks three.
-    let progress = wait_for_secs(me, 8, |p| match p {
-        ServerPacket::MessageChat(m) => {
-            let payload = m.text.strip_prefix(wire::PREFIX)?.strip_prefix('\t')?;
-            match Notice::decode(payload)? {
-                Notice::Gather { picked, count, .. } => Some((picked, count)),
-                _ => None,
+    // Five seconds later the herb is picked, then gone from everyone's world. Three players hold
+    // the task (the impostor's fake picks take spots too), so each picks two of the seven.
+    // The gatherer sees the herb go before its progress line: watch for both at once.
+    let (mut progress, mut gone) = (None, false);
+    wait_for_secs(me, 8, |p| {
+        match p {
+            ServerPacket::DestroyObject { guid } if *guid == herb => gone = true,
+            ServerPacket::MessageChat(m) => {
+                let payload = (m.text.strip_prefix(wire::PREFIX))
+                    .and_then(|t| t.strip_prefix('\t'))
+                    .and_then(Notice::decode);
+                if let Some(Notice::Gather { picked, count, .. }) = payload {
+                    progress = Some((picked, count));
+                }
             }
+            _ => {}
         }
-        _ => None,
+        (gone && progress.is_some()).then_some(())
     });
-    assert_eq!(progress, (1, 3));
-    for (session, _) in &mut players {
+    assert_eq!(progress, Some((1, 2)));
+    for (i, (session, _)) in players.iter_mut().enumerate() {
+        if i == crew {
+            continue;
+        }
         let gone = wait_for(session, |p| match p {
             ServerPacket::DestroyObject { guid } if *guid == herb => Some(*guid),
             _ => None,

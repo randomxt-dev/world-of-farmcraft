@@ -554,10 +554,8 @@ impl Inner {
                 let target = Target::GameObject(guid::node(task, step, index.unwrap_or(0)));
                 self.start_cast(player, spell, time, target);
             }
-            Event::GatherProgress {
-                task, step, node, ..
-            } => {
-                // The picked herb or vein is gone for the whole crew until the lobby.
+            Event::NodeTaken { task, step, node } => {
+                // The picked herb or vein is gone for everyone until the lobby.
                 let g = guid::node(task, step, node);
                 if let Some(create) = self.map.withdraw(g) {
                     self.picked.push((g, create));
@@ -1453,15 +1451,23 @@ fn placeholder() -> (Layout, Look) {
     let [x, y, z] = player::SPAWN.position;
     let at = |dx: f32, dy: f32| [x + dx, y + dy, z];
     // Gathering and mining take 5 s, as Herb Gathering does; crafting 3 s.
-    let herb = |dx, dy, name, display| {
-        (
-            TaskStep::pick(at(dx, dy), 5.0),
-            NodeLook::herb(name, display),
-        )
+    // A lone herb or vein grows as a patch of four spots 4 yd apart, any one of them the task:
+    // a pick takes its spot from everyone, so one spot would serve a single player.
+    let patch = |dx: f32, dy: f32| TaskStep {
+        at: at(dx, dy),
+        action: StepAction::Gather {
+            nodes: [(0.0, 0.0), (4.0, 0.0), (0.0, 4.0), (4.0, 4.0)]
+                .iter()
+                .map(|&(x, y)| at(dx + x, dy + y))
+                .collect(),
+            cast: Duration::from_secs(5),
+            count: 1,
+        },
     };
+    let herb = |dx, dy, name, display| (patch(dx, dy), NodeLook::herb(name, display));
     let vein = |dx, dy| {
         let node = NodeLook::mine("Copper Vein", look::COPPER_VEIN);
-        (TaskStep::pick(at(dx, dy), 5.0), node)
+        (patch(dx, dy), node)
     };
     let craft = |dx, dy, name, display, spell| {
         let node = NodeLook::station(name, display, spell);
@@ -1966,11 +1972,11 @@ mod tests {
             let inner = host.lock();
             let p = inner.game.player(PlayerId(c)).unwrap();
             let layout = inner.game.layout();
-            // A task begun at one node: a station's cast, or a lone herb or vein to pick.
+            // A task begun at one node: a station's cast, or one pick from a herb or vein patch.
             let t = *(p.tasks.iter())
                 .find(|t| match &layout.tasks[t.task.0].steps[0].action {
                     StepAction::Cast(_) => true,
-                    StepAction::Gather { nodes, .. } => nodes.len() == 1,
+                    StepAction::Gather { count, .. } => *count == 1,
                     StepAction::Slay { .. } => false,
                 })
                 .unwrap();
@@ -2242,7 +2248,8 @@ mod tests {
         for t in &mut layout.tasks {
             match &mut t.steps[0].action {
                 StepAction::Cast(_) => t.steps[0].at = spot,
-                StepAction::Gather { nodes, .. } if nodes.len() == 1 => {
+                // A lone herb or vein's patch: its first spot.
+                StepAction::Gather { nodes, count, .. } if *count == 1 => {
                     nodes[0] = spot;
                     t.steps[0].at = spot;
                 }
@@ -2594,7 +2601,8 @@ mod tests {
             "unseen by the living"
         );
         host.tick(Duration::from_secs(6));
-        let picked = (host
+        // Four players share seven spots, one each: the pick finishes the ghost's step.
+        let step = (host
             .lock()
             .game
             .player(PlayerId(ghost))
@@ -2603,8 +2611,8 @@ mod tests {
             .iter())
         .find(|t| t.task == task)
         .unwrap()
-        .picked;
-        assert_eq!(picked, 1, "the herb counts");
+        .step;
+        assert_eq!(step, 1, "the herb counts");
 
         // Back in the lobby its client gets the locks back.
         host.tick(Duration::from_secs(30));

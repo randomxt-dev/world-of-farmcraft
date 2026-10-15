@@ -132,6 +132,8 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
         Event::CastStarted { .. } | Event::CastFinished { .. } | Event::CastInterrupted { .. } => {
             Vec::new()
         }
+        // A picked node is the world's to remove.
+        Event::NodeTaken { .. } => Vec::new(),
         Event::HostChanged { host } => all(Notice::Host(*host)),
         Event::GameStarted { players, impostors } => all(Notice::Started {
             players: *players,

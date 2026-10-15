@@ -192,14 +192,14 @@ pub struct Game {
     sabotage_cooldown: Duration,
     /// Indexed by [`CreatureId`]; empty outside a game.
     creatures: Vec<Creature>,
-    /// Gather nodes a crewmate picked, as `(task, step, node)`: gone for everyone until the lobby.
+    /// Gather nodes picked, as `(task, step, node)`: gone for everyone until the lobby.
     taken: BTreeSet<(TaskId, usize, usize)>,
-    /// How many crewmates hold each task, indexed by [`TaskId`]; empty outside a game.
+    /// How many players hold each task, indexed by [`TaskId`]; empty outside a game.
     holders: Vec<usize>,
     out: Vec<Event>,
 }
 
-/// How many crewmates `task` can be dealt to: its scarcest Gather step's spots, each holder
+/// How many players `task` can be dealt to: its scarcest Gather step's spots, each holder
 /// taking at least one; unlimited for a task with no Gather step.
 fn capacity(task: &TaskDef) -> usize {
     (task.steps.iter())
@@ -230,14 +230,14 @@ impl Game {
         }
     }
 
-    /// Whether node `node` of `task`'s step `step` was picked by a crewmate this game.
+    /// Whether node `node` of `task`'s step `step` was picked this game.
     pub fn is_taken(&self, task: TaskId, step: usize, node: usize) -> bool {
         self.taken.contains(&(task, step, node))
     }
 
     /// How many nodes each holder of `task` gathers at Gather step `step`: the layout's count, cut
-    /// to an even share of the spots among the crewmates holding the task so none runs out; 0 for
-    /// any other step.
+    /// to an even share of the spots among the players holding the task (an impostor's fake picks
+    /// take nodes too) so none runs out; 0 for any other step.
     pub fn gather_need(&self, task: TaskId, step: usize) -> u32 {
         let action = (self.layout.tasks.get(task.0)).and_then(|t| t.steps.get(step));
         let Some(StepAction::Gather { nodes, count, .. }) = action.map(|s| &s.action) else {
@@ -248,9 +248,13 @@ impl Game {
         (*count).min(share.max(1))
     }
 
-    /// Whether node `i` of `t`'s current Gather step is still there for them to pick.
+    /// Whether node `i` of `t`'s current Gather step is still there for them to pick, within
+    /// their share (a crewmate's step moves on at it; an impostor's cover stops there).
     fn node_open(&self, t: &PlayerTask, i: usize) -> bool {
-        i < 64 && t.picked & 1 << i == 0 && !self.is_taken(t.task, t.step, i)
+        i < 64
+            && t.picked & 1 << i == 0
+            && t.picked.count_ones() < self.gather_need(t.task, t.step)
+            && !self.is_taken(t.task, t.step, i)
     }
 
     /// The monsters at the task spots, indexed by [`CreatureId`].
@@ -670,10 +674,9 @@ impl Game {
         impostor_ids.sort();
 
         // Common tasks are drawn once for everyone; long and short ones per player, in id order.
-        // A crewmate's picks take nodes from the crew, so a task is dealt to no more crewmates
-        // than its scarcest Gather step has spots; an impostor's cover takes nothing.
+        // Every pick takes a node from everyone (an impostor's fake one too), so a task is dealt
+        // to no more players than its scarcest Gather step has spots.
         let layout = &self.layout;
-        let crew = n - impostors;
         let mut room: Vec<usize> = layout.tasks.iter().map(capacity).collect();
         let mut draw = |kind: TaskKind, count: usize, need: usize, room: &mut Vec<usize>| {
             let mut ids: Vec<TaskId> = (layout.tasks.iter().enumerate())
@@ -687,36 +690,23 @@ impl Game {
             }
             ids
         };
-        let common = draw(
-            TaskKind::Common,
-            self.settings.common_tasks,
-            crew,
-            &mut room,
-        );
+        let common = draw(TaskKind::Common, self.settings.common_tasks, n, &mut room);
         let mut lists: Vec<(PlayerId, Vec<TaskId>)> = Vec::new();
         for &id in self.players.keys() {
-            let need = usize::from(!impostor_ids.contains(&id));
             let mut tasks = common.clone();
-            tasks.extend(draw(
-                TaskKind::Long,
-                self.settings.long_tasks,
-                need,
-                &mut room,
-            ));
+            tasks.extend(draw(TaskKind::Long, self.settings.long_tasks, 1, &mut room));
             tasks.extend(draw(
                 TaskKind::Short,
                 self.settings.short_tasks,
-                need,
+                1,
                 &mut room,
             ));
             lists.push((id, tasks));
         }
         self.holders = vec![0; self.layout.tasks.len()];
-        for (id, tasks) in &lists {
-            if !impostor_ids.contains(id) {
-                for t in tasks {
-                    self.holders[t.0] += 1;
-                }
+        for (_, tasks) in &lists {
+            for t in tasks {
+                self.holders[t.0] += 1;
             }
         }
         self.taken.clear();
@@ -833,20 +823,32 @@ impl Game {
             return;
         };
         let p = &self.players[&player];
-        // An impostor's gathering is for show.
-        if p.is_impostor() {
-            return;
-        }
+        let impostor = p.is_impostor();
         let i = (p.tasks.iter())
             .position(|t| t.task == task)
             .expect("validated task");
         let step = p.tasks[i].step;
-        // Another crewmate's pick of the same node landed first: this cast found nothing.
+        // Another pick of the same node landed first: this cast found nothing.
         if self.is_taken(task, step, node) {
             return;
         }
         let count = self.gather_need(task, step);
+        // An impostor's fake pick takes the node like a real one, so it is no tell.
         self.taken.insert((task, step, node));
+        self.out.push(Event::NodeTaken { task, step, node });
+        // Whoever else was casting at it finds it gone.
+        let rivals: Vec<PlayerId> = (self.players.iter())
+            .filter(|(&id, p)| {
+                id != player
+                    && p.casting
+                        .is_some_and(|c| c.task == task && c.node == Some(node))
+                    && p.tasks.iter().any(|t| t.task == task && t.step == step)
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        for rival in rivals {
+            self.interrupt(rival);
+        }
         let t = &mut self.seat(player).tasks[i];
         t.picked |= 1 << node;
         let picked = t.picked.count_ones();
@@ -858,7 +860,8 @@ impl Game {
             picked,
             count,
         });
-        if picked >= count {
+        // An impostor's cover counts up for them but never finishes.
+        if picked >= count && !impostor {
             self.advance(player, task);
         }
     }

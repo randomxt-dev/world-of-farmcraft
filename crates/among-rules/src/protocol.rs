@@ -209,16 +209,23 @@ pub enum Event {
     CastInterrupted {
         player: PlayerId,
     },
-    /// Private. One more node gathered toward the current Gather step of `task`.
+    /// Private. One more node gathered toward the current Gather step of `task`; an impostor's
+    /// count is their cover's and never finishes the step.
     GatherProgress {
         player: PlayerId,
         task: TaskId,
-        /// The step the node belongs to, and the node now taken from everyone, an index into
-        /// that step's nodes.
+        /// The step the node belongs to, and the node, an index into that step's nodes.
         step: usize,
         node: usize,
         picked: u32,
         count: u32,
+    },
+    /// A Gather node was picked, by a crewmate or an impostor faking it alike: gone from the
+    /// world for everyone until the lobby.
+    NodeTaken {
+        task: TaskId,
+        step: usize,
+        node: usize,
     },
     /// Private. One more kill toward the current Slay step of `task`.
     SlayProgress {

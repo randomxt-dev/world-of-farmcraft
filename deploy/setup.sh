@@ -41,7 +41,8 @@ fi
 if [ -z "${LOBBY_CODE:-}" ] && [ -f "$envfile" ]; then
     LOBBY_CODE=$(sed -n 's/^LOBBY_CODE=//p' "$envfile")
 fi
-LOBBY_CODE=${LOBBY_CODE:-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 6)}
+# The server's own unambiguous alphabet; pipefail off, since head closing the pipe kills tr.
+LOBBY_CODE=${LOBBY_CODE:-$(set +o pipefail; tr -dc 'A-HJKMNP-Z2-9' </dev/urandom | head -c 6)}
 owner_args=
 [ -n "${OWNER:-}" ] && owner_args="--account $OWNER"
 umask 077
@@ -69,7 +70,8 @@ if [ "$MODE" = host ]; then
     systemctl reload-or-restart caddy
 fi
 
-if ufw status 2>/dev/null | grep -q 'Status: active'; then
+# grep -q would close the pipe early, and pipefail would read ufw's SIGPIPE as inactive.
+if ufw status 2>/dev/null | grep 'Status: active' >/dev/null; then
     ufw allow 22/tcp >/dev/null
     ufw allow 3724/tcp >/dev/null
     ufw allow 8085/tcp >/dev/null

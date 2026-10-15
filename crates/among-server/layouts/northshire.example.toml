@@ -1,8 +1,10 @@
 # Northshire Valley, the first Among Azeroth map.
 #
 # Every quoted name below is a mark to survey: walk there in the game and type `.mark <name>` in
-# chat (`.marks` lists what you have, `.loc` shows where you stand). A spot may also be a literal
-# [x, y, z]. Check the file with:
+# chat. `.marks` lists what you have, `.near` the five closest to you with their distance, `.goto
+# <name>` puts you on one to check or redo it, and `.loc` shows where you stand (lobby host only).
+# A spot may also be a literal [x, y, z]. Check the file, and how many players each gathering
+# serves, with:
 #   cargo run -p among-server -- --check-layout crates/among-server/layouts/northshire.example.toml
 # The spots suggested in the comments are a plan, not measurements: put each mark where it plays
 # well.
@@ -10,8 +12,10 @@
 # Where meetings are called: the Abbey's main hall.
 button = "abbey-hall"
 
-# Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`); a
-# node you picked is spent for you, so you walk on to the next. 7 spots for 5 picks leaves spares.
+# Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`). A
+# pick takes the node from everyone until the lobby (an impostor's fake pick too), so the spots
+# are shared: each holder picks an even share, `count` at most, and a task is dealt to no more
+# players than it has spots. A common task needs a spot per player; more spots, bigger picks.
 # `node` is what a step is worked at: peacebloom, silverleaf, earthroot, copper, campfire, forge
 # or anvil (a copper vein when left out).
 

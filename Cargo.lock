@@ -191,6 +191,7 @@ dependencies = [
  "axum",
  "benilla-formats",
  "clap",
+ "percent-encoding",
  "serde_json",
  "tokio",
  "tower",

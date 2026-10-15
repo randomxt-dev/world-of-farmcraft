@@ -30,6 +30,13 @@ struct Args {
     /// https link for friends; it closes with the host.
     #[arg(long)]
     tunnel: bool,
+    /// Write every `/data` request to this file (time, status, duration, method, name), the
+    /// input to `crates/among-web/read-set.ps1`.
+    #[arg(long)]
+    request_log: Option<PathBuf>,
+    /// Hold every `/data` answer this long, a remote player's round trip on a local run.
+    #[arg(long, hide = true, default_value_t = 0)]
+    data_delay_ms: u64,
     #[command(flatten)]
     server: ServerArgs,
 }
@@ -67,13 +74,18 @@ async fn main() -> Result<()> {
     }
     // The relay dials the game server on this machine, whatever interface it listens on.
     let loopback: Arc<str> = Arc::from("127.0.0.1");
-    let web = wenilla_host::data::router(chain)
+    let data = among_host::cache_missing(wenilla_host::data::router(chain));
+    let web = among_host::delayed(data, std::time::Duration::from_millis(args.data_delay_ms))
         .merge(wenilla_host::ws::router_map([
             (auth_port, Arc::clone(&loopback)),
             (world_port, loopback),
         ]))
         .merge(wenilla_host::static_site::router(&www));
-    let web = among_host::gated(web, code.clone());
+    let mut web = among_host::gated(web, code.clone());
+    if let Some(file) = &args.request_log {
+        web = among_host::request_log(web, file)
+            .with_context(|| format!("creating the request log {}", file.display()))?;
+    }
     let listener = tokio::net::TcpListener::bind(&args.web)
         .await
         .with_context(|| format!("binding the web page on {}", args.web))?;

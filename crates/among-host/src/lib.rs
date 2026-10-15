@@ -2,8 +2,11 @@
 //! own install, so every route needs the lobby code: the invite link `/?lobby=CODE` sets it as a
 //! cookie, and a request carrying neither gets 403.
 
+use std::io::Write;
 use std::net::{IpAddr, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
@@ -45,6 +48,79 @@ async fn gate(State(code): State<String>, request: Request, next: Next) -> Respo
         }
     }
     response
+}
+
+/// `wenilla-host`'s `/data` router with its 404s cacheable like its files: a name absent from the
+/// host's chain stays absent, so a browser asks for it once instead of once per load.
+pub fn cache_missing(data: Router) -> Router {
+    data.layer(axum::middleware::from_fn(mark_missing_immutable))
+}
+
+async fn mark_missing_immutable(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    if response.status() == StatusCode::NOT_FOUND {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, max-age=31536000, immutable"),
+        );
+    }
+    response
+}
+
+/// `router` with every answer held back `delay`: a tunnel's round trip on a local measurement.
+pub fn delayed(router: Router, delay: std::time::Duration) -> Router {
+    if delay.is_zero() {
+        return router;
+    }
+    router.layer(axum::middleware::from_fn(
+        move |request: Request, next: Next| async move {
+            tokio::time::sleep(delay).await;
+            next.run(request).await
+        },
+    ))
+}
+
+/// One line per `/data` request to `file`, `ms since start <TAB> status <TAB> ms taken <TAB>
+/// method <TAB> name`: the browser's real read order, which `crates/among-web/read-set.ps1` cuts
+/// the world entry prefetch from.
+pub fn request_log(router: Router, file: &Path) -> std::io::Result<Router> {
+    let log = Arc::new(RequestLog {
+        out: Mutex::new(std::fs::File::create(file)?),
+        t0: Instant::now(),
+    });
+    Ok(router.layer(axum::middleware::from_fn_with_state(log, log_request)))
+}
+
+struct RequestLog {
+    out: Mutex<std::fs::File>,
+    t0: Instant,
+}
+
+async fn log_request(State(log): State<Arc<RequestLog>>, request: Request, next: Next) -> Response {
+    let Some(raw) = request.uri().path().strip_prefix("/data/") else {
+        return next.run(request).await;
+    };
+    let name = data_name(raw);
+    let method = request.method().clone();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let line = format!(
+        "{:.0}\t{}\t{:.1}\t{method}\t{name}\n",
+        log.t0.elapsed().as_secs_f64() * 1000.0,
+        response.status().as_u16(),
+        started.elapsed().as_secs_f64() * 1000.0,
+    );
+    if let Ok(mut out) = log.out.lock() {
+        let _ = out.write_all(line.as_bytes());
+    }
+    response
+}
+
+/// The chain name in a `/data/` URL tail: percent-decoded, `/` as `\`, as `wenilla-host` reads it.
+fn data_name(raw: &str) -> String {
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8_lossy()
+        .replace('/', "\\")
 }
 
 /// `name`'s value in a `a=1&b=2` query string.
@@ -126,6 +202,15 @@ mod tests {
         let api = "failed to request quick Tunnel: Post \"https://api.trycloudflare.com/tunnel\"";
         assert_eq!(tunnel_url(api), None);
         assert_eq!(tunnel_url("INF Registered tunnel connection"), None);
+    }
+
+    #[test]
+    fn data_names_decode_like_the_host_reads_them() {
+        assert_eq!(
+            data_name("World%5CMaps%5CAzeroth%5CAzeroth_32_48.adt"),
+            "World\\Maps\\Azeroth\\Azeroth_32_48.adt"
+        );
+        assert_eq!(data_name("a/b.blp"), "a\\b.blp");
     }
 
     #[test]

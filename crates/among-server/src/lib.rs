@@ -1,12 +1,13 @@
 //! A minimal WoW 1.12.1 (build 5875) server for Among Azeroth: realmd (SRP6 logon, one realm) and a
-//! world server that seats every player on one map and relays their movement. The stock benilla
-//! client logs in to it unchanged, so movement, camera and controls stay regular WoW.
+//! world server that seats each player on their lobby's map and relays their movement. The stock
+//! benilla client logs in to it unchanged, so movement, camera and controls stay regular WoW.
 
 pub mod accounts;
 mod announce;
 pub mod cli;
 pub mod game;
 pub mod layout_file;
+pub mod lobbies;
 pub mod look;
 pub mod realmd;
 pub mod srp;
@@ -22,14 +23,18 @@ use tokio::net::TcpListener;
 
 pub use accounts::Accounts;
 pub use game::GameHost;
+pub use lobbies::{Lobbies, Lobby};
 pub use survey::Survey;
 
 /// Where `.mark` saves the survey unless told otherwise: our folder inside the gitignored
 /// `benilla-config/` (CLAUDE.md: our files live there), relative to the working directory.
 pub const DEFAULT_MARKS: &str = "benilla-config/among/marks.toml";
 
-/// How often the game clock advances: kill and sabotage cooldowns, meeting timers, deadlines.
-const TICK: Duration = Duration::from_millis(100);
+/// How often empty player-made lobbies are looked for and closed.
+const SWEEP: Duration = Duration::from_secs(30);
+
+/// How long a player-made lobby may stand empty before it closes.
+pub const IDLE_CLOSE: Duration = Duration::from_secs(10 * 60);
 
 /// Where the server listens and what it advertises.
 #[derive(Clone, Debug)]
@@ -52,6 +57,10 @@ pub struct ServerConfig {
     pub marks: PathBuf,
     /// How long the start is counted down in chat before the game begins.
     pub start_countdown: std::time::Duration,
+    /// Live lobbies at most, the operator's own included.
+    pub max_lobbies: usize,
+    /// How long a player-made lobby may stand empty before it closes.
+    pub idle_close: Duration,
 }
 
 impl Default for ServerConfig {
@@ -67,6 +76,8 @@ impl Default for ServerConfig {
             look: game::placeholder_look(),
             marks: DEFAULT_MARKS.into(),
             start_countdown: game::START_COUNTDOWN,
+            max_lobbies: 8,
+            idle_close: IDLE_CLOSE,
         }
     }
 }
@@ -77,15 +88,12 @@ pub struct Server {
     world: TcpListener,
     realm_name: String,
     advertise: Option<String>,
-    accounts: Accounts,
-    settings: among_rules::Settings,
-    layout: among_rules::Layout,
-    look: look::Look,
+    lobbies: Lobbies,
     marks: PathBuf,
-    start_countdown: std::time::Duration,
 }
 
 impl Server {
+    /// Bind both ports and open the operator's lobby for `accounts`.
     pub async fn bind(config: &ServerConfig, accounts: Accounts) -> Result<Self> {
         let auth = TcpListener::bind((config.bind.as_str(), config.auth_port))
             .await
@@ -98,17 +106,24 @@ impl Server {
                     config.bind, config.world_port
                 )
             })?;
+        let lobbies = Lobbies::new(
+            lobbies::Template {
+                settings: config.settings.clone(),
+                layout: config.layout.clone(),
+                look: config.look.clone(),
+                start_countdown: config.start_countdown,
+            },
+            config.max_lobbies.max(1),
+            config.idle_close,
+        );
+        lobbies.add_fixed(accounts);
         Ok(Self {
             auth,
             world,
             realm_name: config.realm_name.clone(),
             advertise: config.advertise.clone(),
-            accounts,
-            settings: config.settings.clone(),
-            layout: config.layout.clone(),
-            look: config.look.clone(),
+            lobbies,
             marks: config.marks.clone(),
-            start_countdown: config.start_countdown,
         })
     }
 
@@ -125,6 +140,11 @@ impl Server {
             .expect("a bound listener has an address")
     }
 
+    /// The live lobbies, for a host that creates them and checks codes.
+    pub fn lobbies(&self) -> Lobbies {
+        self.lobbies.clone()
+    }
+
     /// Serve until a listener fails.
     pub async fn serve(self) -> Result<()> {
         tracing::info!(
@@ -139,22 +159,16 @@ impl Server {
         };
         let survey = Survey::open(&self.marks)?;
         tracing::info!("among-server: survey marks in {}", survey.path().display());
-        let map = world::Map::default();
-        let host = GameHost::new(self.settings, self.layout, self.look, map.clone());
-        host.set_start_countdown(self.start_countdown);
-        let clock = host.clone();
+        let sweeper = self.lobbies.clone();
         tokio::spawn(async move {
-            let mut every = tokio::time::interval(TICK);
-            let mut last = tokio::time::Instant::now();
+            let mut every = tokio::time::interval(SWEEP);
             loop {
-                let now = every.tick().await;
-                clock.tick(now - last);
-                last = now;
+                sweeper.sweep(every.tick().await);
             }
         });
         tokio::try_join!(
-            realmd::serve(self.auth, self.accounts.clone(), realm),
-            world::serve(self.world, self.accounts, map, host, survey),
+            realmd::serve(self.auth, self.lobbies.clone(), realm),
+            world::serve(self.world, self.lobbies, survey),
         )?;
         Ok(())
     }

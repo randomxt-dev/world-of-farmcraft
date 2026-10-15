@@ -39,6 +39,8 @@ struct Inner {
     next_guid: u64,
     /// An open lobby's shared password: any unknown name logs in with it and is registered.
     lobby_code: Option<NormalizedString>,
+    /// A player-made lobby: nobody in it surveys, since the marks file is the operator's.
+    created: bool,
 }
 
 /// The account table, shared by realmd and the world server.
@@ -70,11 +72,14 @@ impl Accounts {
         Ok(())
     }
 
-    /// Whether `user` may survey: an operator's account when there are any, else whoever holds
-    /// the lobby (`lobby_host`), so a guest who inherits the host seat cannot rewrite the marks.
+    /// Whether `user` may survey: nobody in a player-made lobby, else an operator's account when
+    /// there are any, else whoever holds the lobby (`lobby_host`), so a guest who inherits the
+    /// host seat cannot rewrite the marks.
     pub fn may_survey(&self, user: &str, lobby_host: bool) -> bool {
         let inner = self.lock();
-        if inner.accounts.values().any(|a| a.operator) {
+        if inner.created {
+            false
+        } else if inner.accounts.values().any(|a| a.operator) {
             inner.accounts.get(user).is_some_and(|a| a.operator)
         } else {
             lobby_host
@@ -87,6 +92,26 @@ impl Accounts {
         let accounts = Self::default();
         accounts.lock().lobby_code = Some(code);
         Ok(accounts)
+    }
+
+    /// A lobby a player made: open with `code`, and nobody in it surveys.
+    pub fn created_lobby(code: &str) -> anyhow::Result<Self> {
+        let accounts = Self::open_lobby(code)?;
+        accounts.lock().created = true;
+        Ok(accounts)
+    }
+
+    /// The open lobby's code, uppercased.
+    pub fn lobby_code(&self) -> Option<String> {
+        self.lock()
+            .lobby_code
+            .as_ref()
+            .map(|c| c.as_ref().to_owned())
+    }
+
+    /// Whether `user` has an account here: an operator's, or a guest's that logged on.
+    pub fn knows(&self, user: &str) -> bool {
+        self.lock().accounts.contains_key(user)
     }
 
     /// The account's salt and verifier; in an open lobby an unknown name gets a fresh one made
@@ -129,6 +154,7 @@ impl Accounts {
         let Inner {
             accounts,
             next_guid,
+            lobby_code,
             ..
         } = &mut *inner;
         let Some(account) = accounts.get_mut(user) else {
@@ -138,7 +164,7 @@ impl Accounts {
             *next_guid += 1;
             account.characters.push(CharacterRecord {
                 guid: *next_guid,
-                name: default_name(user),
+                name: default_name(without_code(user, lobby_code.as_ref())),
                 race: 1,
                 class: random_human_class(),
                 gender: 0,
@@ -217,6 +243,13 @@ pub fn new_lobby_code() -> String {
 /// `CHAR_CREATE_ERROR` (0x2F, vmangos `SharedDefines.h`), the generic create failure.
 pub const CHAR_CREATE_ERROR: u8 = 0x2F;
 
+/// `THRALL-K3XQ9P` → `THRALL` in lobby `K3XQ9P`: a name that named its lobby, without the code.
+fn without_code<'a>(user: &'a str, code: Option<&NormalizedString>) -> &'a str {
+    code.and_then(|c| user.strip_suffix(c.as_ref())?.strip_suffix('-'))
+        .filter(|base| !base.is_empty())
+        .unwrap_or(user)
+}
+
 /// `AMONG1` → `Among1`: the roster's capitalised form of an account name.
 fn default_name(user: &str) -> String {
     let lower = user.to_ascii_lowercase();
@@ -275,6 +308,24 @@ mod tests {
             "a guest in the host seat may not"
         );
         assert!(open.may_survey("OWNER", false));
+    }
+
+    #[test]
+    fn a_name_that_named_its_lobby_gets_a_character_without_the_code() {
+        let accounts = Accounts::open_lobby("K3XQ9P").unwrap();
+        let joining = accounts.verifier("THRALL-K3XQ9P").unwrap();
+        accounts.admit("THRALL-K3XQ9P", &joining, [7; 40]);
+        assert_eq!(accounts.characters("THRALL-K3XQ9P")[0].name, "Thrall");
+        assert_eq!(without_code("-K3XQ9P", None), "-K3XQ9P");
+    }
+
+    #[test]
+    fn nobody_surveys_in_a_created_lobby() {
+        let created = Accounts::created_lobby("K3XQ9P").unwrap();
+        let guest = created.verifier("GUEST").unwrap();
+        created.admit("GUEST", &guest, [1; 40]);
+        assert!(!created.may_survey("GUEST", true));
+        assert_eq!(created.lobby_code().as_deref(), Some("K3XQ9P"));
     }
 
     #[test]

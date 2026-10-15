@@ -42,6 +42,9 @@ pub struct ServerArgs {
     /// Seconds the start is counted down in chat; 0 starts on the press.
     #[arg(long, value_name = "SECONDS", default_value_t = 5)]
     pub countdown: u64,
+    /// Live lobbies at most, this one included; players may create the rest.
+    #[arg(long, default_value_t = 8)]
+    pub max_lobbies: usize,
 }
 
 /// A configured server, ready to bind.
@@ -93,6 +96,8 @@ impl ServerArgs {
                 look,
                 marks: self.marks,
                 start_countdown: std::time::Duration::from_secs(self.countdown),
+                max_lobbies: self.max_lobbies,
+                idle_close: crate::IDLE_CLOSE,
             },
             accounts,
             lobby_code,

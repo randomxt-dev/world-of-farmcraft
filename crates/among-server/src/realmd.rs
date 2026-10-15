@@ -8,7 +8,7 @@ use benilla_srp::{NormalizedString, GENERATOR, LARGE_SAFE_PRIME_LITTLE_ENDIAN};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::accounts::Accounts;
+use crate::lobbies::Lobbies;
 use crate::srp::ServerChallenge;
 
 const CMD_AUTH_LOGON_CHALLENGE: u8 = 0x00;
@@ -48,14 +48,14 @@ impl RealmConfig {
     }
 }
 
-/// Accept logons forever.
-pub async fn serve(listener: TcpListener, accounts: Accounts, realm: RealmConfig) -> Result<()> {
+/// Accept logons forever, each into the lobby [`Lobbies::route`] picks for it.
+pub async fn serve(listener: TcpListener, lobbies: Lobbies, realm: RealmConfig) -> Result<()> {
     loop {
         let (stream, peer) = listener.accept().await.context("accepting a logon")?;
-        let accounts = accounts.clone();
+        let lobbies = lobbies.clone();
         let realm = realm.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(stream, peer, accounts, realm).await {
+            if let Err(e) = handle(stream, peer, lobbies, realm).await {
                 tracing::info!("realmd {peer}: {e:#}");
             }
         });
@@ -65,7 +65,7 @@ pub async fn serve(listener: TcpListener, accounts: Accounts, realm: RealmConfig
 async fn handle(
     mut stream: TcpStream,
     peer: SocketAddr,
-    accounts: Accounts,
+    lobbies: Lobbies,
     realm: RealmConfig,
 ) -> Result<()> {
     stream.set_nodelay(true)?;
@@ -93,6 +93,18 @@ async fn handle(
             .await?;
         bail!("build {} refused", challenge.build);
     }
+    // SRP commits to one verifier here, before the password is proved: the name and the
+    // connection pick the lobby, whose code is then the password.
+    let Some(lobby) = lobbies.route(&challenge.account, peer) else {
+        stream
+            .write_all(&[CMD_AUTH_LOGON_CHALLENGE, 0, RESULT_UNKNOWN_ACCOUNT])
+            .await?;
+        bail!(
+            "no lobby for {}: with several open, a native name ends in -CODE",
+            challenge.account
+        );
+    };
+    let accounts = lobby.accounts().clone();
     let (Ok(user), Some(verifier)) = (
         NormalizedString::new(&challenge.account),
         accounts.verifier(&challenge.account),
@@ -128,7 +140,11 @@ async fn handle(
     reply.extend_from_slice(&verified.server_proof);
     reply.extend_from_slice(&0u32.to_le_bytes()); // hardware_survey_id
     stream.write_all(&reply).await?;
-    tracing::info!("realmd {peer}: {} logged on", challenge.account);
+    tracing::info!(
+        "realmd {peer}: {} logged on to lobby {}",
+        challenge.account,
+        lobby.code()
+    );
 
     // ── CMD_REALM_LIST, as often as the client asks (the realm screen refreshes every 5 s) ──
     loop {

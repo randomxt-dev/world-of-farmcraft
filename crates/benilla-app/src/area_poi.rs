@@ -8,7 +8,7 @@ use benilla_formats::AreaPoiCatalog;
 
 /// The `AreaPOI.dbc` rows, in file order.
 #[derive(Resource)]
-pub(crate) struct AreaPoiRes(pub(crate) AreaPoiCatalog);
+pub struct AreaPoiRes(pub(crate) AreaPoiCatalog);
 
 /// Startup: load the catalog off the patch chain.
 fn load_area_poi(mut commands: Commands, assets: Option<Res<WorldAssets>>) {

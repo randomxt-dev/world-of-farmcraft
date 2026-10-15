@@ -5,6 +5,7 @@ pub mod abilities;
 pub mod ability_text;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod install;
+pub mod landmarks;
 pub mod lua_hooks;
 pub mod quest_watch;
 
@@ -19,5 +20,6 @@ impl PluginGroup for AmongAzerothPlugins {
             .add(lua_hooks::LuaHooksPlugin)
             .add(ability_text::AbilityTextPlugin)
             .add(quest_watch::QuestWatchPlugin)
+            .add(landmarks::NoLandmarksPlugin)
     }
 }

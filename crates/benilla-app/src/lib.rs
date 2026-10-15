@@ -209,6 +209,8 @@ pub use bevy::app::AppExit;
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use net::Objects;
 pub use target::Interact;
+// Among Azeroth: removing this catalog takes the city landmarks off the map and minimap.
+pub use area_poi::AreaPoiRes;
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

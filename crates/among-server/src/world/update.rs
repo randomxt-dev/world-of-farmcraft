@@ -77,6 +77,16 @@ pub struct Living {
 /// swim back 2.5 yd/s, and a turn rate of π rad/s.
 pub const BASE_SPEEDS: [f32; 6] = [2.5, 7.0, 4.5, 4.722_222, 2.5, std::f32::consts::PI];
 
+/// Among Azeroth's players move at 1.5x the base, every speed but the turn rate.
+pub const PLAYER_SPEEDS: [f32; 6] = [
+    BASE_SPEEDS[0] * 1.5,
+    BASE_SPEEDS[1] * 1.5,
+    BASE_SPEEDS[2] * 1.5,
+    BASE_SPEEDS[3] * 1.5,
+    BASE_SPEEDS[4] * 1.5,
+    BASE_SPEEDS[5],
+];
+
 /// One `CREATE_OBJECT2` of a player with a `LIVING` block, wrapped as a whole update body.
 pub fn create_player(guid: u64, is_self: bool, living: &Living, fields: &Fields) -> Vec<u8> {
     // vmangos's player flags: `0x71` for the receiver's own body, `0x70` for anyone else's.

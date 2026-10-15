@@ -385,7 +385,7 @@ impl Session {
             None => "Usage: .speed <0.5 to 10>, 1 is normal".to_owned(),
             Some(_) if self.host.in_game() => "Not during a game.".to_owned(),
             Some(m) => {
-                let speed = update::BASE_SPEEDS[1] * m;
+                let speed = update::PLAYER_SPEEDS[1] * m;
                 let counter = self.map.next_counter(guid).unwrap_or(0);
                 self.send(packets::force_run_speed(guid, counter, speed))?;
                 self.map.set_run_speed(guid, speed);

@@ -118,12 +118,12 @@ stations = ["abbey-library"]
 [[sabotages]]
 kind = "oxygen"
 stations = ["well", "stable-trough"]          # two stops far apart
-deadline = 30.0
+deadline = 180.0
 
 [[sabotages]]
 kind = "reactor"
 stations = ["mine-prop-a", "mine-prop-b"]     # held together: two players in the mine
-deadline = 30.0
+deadline = 180.0
 
 # --- Monsters (they fight back, and they kill for real) -----------------------------------------
 

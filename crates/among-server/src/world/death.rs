@@ -4,7 +4,7 @@
 use benilla_protocol::messages::opcode;
 
 use super::socket::Packet;
-use super::update::{self, Fields, BASE_SPEEDS};
+use super::update::{self, Fields, PLAYER_SPEEDS};
 use super::wire::Body;
 use crate::accounts::CharacterRecord;
 
@@ -25,10 +25,11 @@ const TYPE_CORPSE: u32 = 0x01 | 0x80;
 /// `CORPSE_FLAG_UNK2`, which vmangos's `Player::CreateCorpse` sets on every fresh corpse.
 const CORPSE_FLAG_UNK2: u32 = 0x04;
 
-/// Spell 8326 Ghost's speeds (`Spell.dbc`: +25% run, +25% swim): `[run, swim]` in yd/s.
-pub const GHOST_SPEEDS: [f32; 2] = [BASE_SPEEDS[1] * 1.25, BASE_SPEEDS[3] * 1.25];
+/// Spell 8326 Ghost's speeds (`Spell.dbc`: +25% run, +25% swim) over the living's: `[run, swim]`
+/// in yd/s.
+pub const GHOST_SPEEDS: [f32; 2] = [PLAYER_SPEEDS[1] * 1.25, PLAYER_SPEEDS[3] * 1.25];
 /// The living's `[run, swim]`.
-pub const LIVING_SPEEDS: [f32; 2] = [BASE_SPEEDS[1], BASE_SPEEDS[3]];
+pub const LIVING_SPEEDS: [f32; 2] = [PLAYER_SPEEDS[1], PLAYER_SPEEDS[3]];
 
 /// An acked movement change (`SMSG_FORCE_MOVE_ROOT` and kin): packed guid, then the counter.
 fn move_mode(op: u16, guid: u64, counter: u32) -> Packet {

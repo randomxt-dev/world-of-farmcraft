@@ -78,6 +78,8 @@ struct Inner {
     quest_logs: HashMap<PlayerId, quests::Told>,
     /// The beacons standing over stations still to fix.
     beacons: std::collections::HashSet<Fixture>,
+    /// Each player's map flag as last sent: the station it marks, and how long ago it went.
+    markers: HashMap<PlayerId, (Option<Position>, Duration)>,
 }
 
 impl GameHost {
@@ -113,6 +115,7 @@ impl GameHost {
             ballots: HashMap::new(),
             quest_logs: HashMap::new(),
             beacons: std::collections::HashSet::new(),
+            markers: HashMap::new(),
         })))
     }
 
@@ -283,6 +286,7 @@ impl GameHost {
         let mut inner = self.lock();
         inner.count_down(dt);
         let _ = inner.apply(Command::Tick { dt });
+        inner.refresh_markers(dt);
         let mut due = Vec::new();
         for (&player, (life, lain)) in &mut inner.fallen {
             if *life == Life::Dead {
@@ -479,6 +483,24 @@ fn fixture_look(template: FixtureTemplate) -> crate::look::NodeLook {
 /// `d` in whole milliseconds, as the wire carries it.
 fn millis(d: Duration) -> u32 {
     d.as_millis().min(u32::MAX.into()) as u32
+}
+
+/// How often a standing map flag is re-sent, inside the client's 480 s expiry.
+const MARKER_REFRESH: Duration = Duration::from_secs(300);
+
+/// Yards between two points on the ground, as the map flag's arrival check measures.
+fn flat_distance(a: Position, b: Position) -> f32 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
+
+/// A sabotage station's map flag tooltip.
+fn station_label(kind: SabotageKind) -> &'static str {
+    match kind {
+        SabotageKind::Lights => "Sabotage: fix the lights",
+        SabotageKind::Comms => "Sabotage: fix communications",
+        SabotageKind::Oxygen => "Sabotage: fix the oxygen",
+        SabotageKind::Reactor => "Sabotage: hold the reactor",
+    }
 }
 
 /// A refusal as red error text: "Too far away".
@@ -1136,6 +1158,44 @@ impl Inner {
         self.beacons = want;
     }
 
+    /// Point each connected player's map flag at the nearest station of the running sabotage
+    /// still to fix. The client keeps one flag, drops it after 480 s or within 10 yd, and has no
+    /// clear: a flag is re-sent before it expires, and cleared by a flag at the player's feet.
+    fn refresh_markers(&mut self, dt: Duration) {
+        // A held reactor station already has its player: the flag sends the rest elsewhere.
+        let mut open: Vec<(SabotageKind, Position)> = Vec::new();
+        if let Some(s) = self.game.sabotage() {
+            let def = (self.game.layout().sabotages.iter()).find(|d| d.kind == s.kind);
+            for (n, st) in s.stations.iter().enumerate() {
+                if let (Station::Open, Some(&at)) = (st, def.and_then(|d| d.stations.get(n))) {
+                    open.push((s.kind, at));
+                }
+            }
+        }
+        let players: Vec<(PlayerId, Position)> = (self.game.players())
+            .filter(|(_, p)| p.connected)
+            .map(|(id, p)| (id, p.position))
+            .collect();
+        for (id, here) in players {
+            let want = (open.iter())
+                .min_by(|a, b| flat_distance(a.1, here).total_cmp(&flat_distance(b.1, here)))
+                .copied();
+            let (sent, age) = self.markers.entry(id).or_insert((None, Duration::ZERO));
+            *age += dt;
+            let now = want.map(|(_, at)| at);
+            if now == *sent && (now.is_none() || *age < MARKER_REFRESH) {
+                continue;
+            }
+            let packet = match want {
+                Some((kind, at)) => packets::gossip_poi(at[0], at[1], station_label(kind)),
+                None => packets::gossip_poi(here[0], here[1], ""),
+            };
+            self.map.send(id.0, packet);
+            *sent = now;
+            *age = Duration::ZERO;
+        }
+    }
+
     /// Work at a task node: the step it stands for, if that is the player's current step; at a
     /// Gather step's node, gather that one.
     fn node_command(&self, player: PlayerId, object: u64) -> Result<Command, Reject> {
@@ -1598,7 +1658,7 @@ fn placeholder() -> (Layout, Look) {
         stations,
         deadline,
     };
-    let critical = Some(Duration::from_secs(30));
+    let critical = Some(Duration::from_secs(180));
     let layout = Layout {
         emergency_button: at(0.0, 0.0),
         tasks: (tasks.iter())
@@ -2261,6 +2321,56 @@ mod tests {
         assert!(
             !destroyed(&received(&mut inboxes[crew[0] as usize - 1])).contains(&station.guid()),
             "the station itself stays"
+        );
+    }
+
+    /// The map flags `seen` holds, as (x, y, tooltip).
+    fn map_flags(seen: &[ServerPacket]) -> Vec<([f32; 2], String)> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::GossipPoi(poi) => Some((poi.pos, poi.name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_sabotage_flags_its_station_on_every_map_until_it_is_fixed() {
+        let settings = Settings {
+            sabotage_cooldown: Duration::ZERO,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 3);
+        host.request(1, Request::Start);
+        let (imp, crew) = roles(&host);
+        let at = placeholder_layout().sabotages[0].stations[0];
+        host.tick(Duration::from_millis(100));
+        drain(&mut inboxes);
+
+        host.request(imp, Request::Sabotage(SabotageKind::Lights));
+        host.tick(Duration::from_millis(100));
+        for g in [imp, crew[0], crew[1]] {
+            assert_eq!(
+                map_flags(&received(&mut inboxes[g as usize - 1])),
+                [([at[0], at[1]], "Sabotage: fix the lights".to_owned())]
+            );
+        }
+        // Unchanged, it is not sent again until it would expire.
+        host.tick(Duration::from_secs(10));
+        assert!(map_flags(&received(&mut inboxes[crew[1] as usize - 1])).is_empty());
+
+        host.moved(crew[0], at);
+        host.use_object(crew[0], Fixture::Station(SabotageKind::Lights, 0).guid());
+        assert!(
+            host.lock().game.sabotage().is_none(),
+            "the lights are fixed"
+        );
+        host.tick(Duration::from_millis(100));
+        // Fixed: the flag is cleared by one at the player's own feet.
+        let here = host.lock().game.player(PlayerId(crew[1])).unwrap().position;
+        assert_eq!(
+            map_flags(&received(&mut inboxes[crew[1] as usize - 1])),
+            [([here[0], here[1]], String::new())]
         );
     }
 

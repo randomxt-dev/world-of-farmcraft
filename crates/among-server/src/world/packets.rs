@@ -171,6 +171,23 @@ pub fn addon_message(sender: u64, prefix: &str, payload: &str) -> Packet {
     )
 }
 
+/// `SMSG_GOSSIP_POI`: the receiver's one map flag at world `x, y`, drawn on the world map and the
+/// minimap, with a gold rim arrow when out of minimap range. Flags 99 and the red flag icon 6 are
+/// what vmangos sends; `data` 0 ranks it before every `AreaPOI.dbc` landmark.
+pub fn gossip_poi(x: f32, y: f32, name: &str) -> Packet {
+    Packet::new(
+        opcode::SMSG_GOSSIP_POI,
+        Body::default()
+            .u32(99)
+            .f32(x)
+            .f32(y)
+            .u32(6)
+            .u32(0)
+            .cstring(name)
+            .done(),
+    )
+}
+
 /// `SMSG_MESSAGECHAT` as a system line (`CHAT_MSG_SYSTEM`, the shape GM command replies take):
 /// one sender guid (0), universal language, the text.
 pub fn system_message(text: &str) -> Packet {

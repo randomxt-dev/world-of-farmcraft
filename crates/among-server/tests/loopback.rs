@@ -749,8 +749,12 @@ fn typing_speed_in_chat_makes_you_run_faster() {
         ServerPacket::ForceSpeedChange { guid, speed, .. } => Some((*guid, *speed)),
         _ => None,
     });
-    assert_eq!((to, speed), (guid, 21.0), "3 x the 7 yd/s base run speed");
-    assert_eq!(wait_system_line(&mut me), "Run speed x3 (21.0 yd/s)");
+    assert_eq!(
+        (to, speed),
+        (guid, 31.5),
+        "3 x the 10.5 yd/s player run speed"
+    );
+    assert_eq!(wait_system_line(&mut me), "Run speed x3 (31.5 yd/s)");
     me.send_chat(".speed 50").unwrap();
     assert_eq!(
         wait_system_line(&mut me),

@@ -8,7 +8,7 @@ use super::items;
 use super::packets::{self, Location};
 use super::socket::Packet;
 use super::spells;
-use super::update::{self, Fields, Living, BASE_SPEEDS};
+use super::update::{self, Fields, Living, PLAYER_SPEEDS};
 use crate::accounts::CharacterRecord;
 
 /// Northshire Abbey's steps, the human start (vmangos `playercreateinfo`: map 0, zone 12).
@@ -30,14 +30,14 @@ pub enum Life {
     Ghost,
 }
 
-/// A fresh body at [`SPAWN`], standing still at base speeds.
+/// A fresh body at [`SPAWN`], standing still at [`PLAYER_SPEEDS`].
 pub fn spawn_living() -> Living {
     Living {
         movement_flags: 0,
         time: 0,
         position: SPAWN.position,
         orientation: SPAWN.orientation,
-        speeds: BASE_SPEEDS,
+        speeds: PLAYER_SPEEDS,
     }
 }
 
@@ -74,6 +74,9 @@ const VISIBLE_ITEM_STRIDE: u16 = 12;
 /// `PLAYER_FIELD_INV_SLOT_HEAD`, then two words (an item guid) per equipment slot.
 const PLAYER_FIELD_INV_SLOT_HEAD: u16 = 486;
 const PLAYER_NEXT_LEVEL_XP: u16 = 717;
+/// `PLAYER_EXPLORED_ZONES_1`: 64 words, bit n set for `AreaTable.dbc` exploreFlag n.
+const PLAYER_EXPLORED_ZONES_1: u16 = 1111;
+const EXPLORED_ZONE_WORDS: u16 = 64;
 const PLAYER_FIELD_BYTES: u16 = 1222;
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER`.
@@ -209,6 +212,10 @@ pub fn fields(c: &CharacterRecord, is_self: bool, life: Life) -> Fields {
         }
     }
     if is_self {
+        // Every area counts as explored, so the world map opens with Northshire drawn in full.
+        for i in 0..EXPLORED_ZONE_WORDS {
+            f.u32(PLAYER_EXPLORED_ZONES_1 + i, u32::MAX);
+        }
         for w in items::carried(c.guid) {
             f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(w.slot), w.guid);
         }
@@ -338,6 +345,6 @@ pub fn read_pose(movement: &[u8]) -> Option<Living> {
         time: word(1)?,
         position: [float(2)?, float(3)?, float(4)?],
         orientation: float(5)?,
-        speeds: BASE_SPEEDS,
+        speeds: PLAYER_SPEEDS,
     })
 }

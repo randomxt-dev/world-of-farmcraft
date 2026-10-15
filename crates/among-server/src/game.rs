@@ -2040,10 +2040,12 @@ mod tests {
         out
     }
 
+    /// Three players start, no first kill wait, and everyone keeps the class they joined as.
     fn quick() -> Settings {
         Settings {
             min_players: 3,
             initial_kill_cooldown: Duration::ZERO,
+            random_classes: false,
             ..Settings::default()
         }
     }
@@ -2277,26 +2279,20 @@ mod tests {
         assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
         drain(&mut inboxes);
         host.request(1, Request::Lobby);
-        // Back in the lobby everyone has rotated on to paladin, with its crewmate bar once.
-        let paladin = sent(spells::main_bar(Class::Paladin, false));
-        for (i, inbox) in inboxes.iter_mut().enumerate() {
-            assert_eq!(
-                bars(&received(inbox)),
-                std::slice::from_ref(&paladin),
-                "player {}",
-                i + 1
-            );
+        assert_eq!(
+            bars(&received(&mut inboxes[imp as usize - 1])),
+            [sent(warrior(false))]
+        );
+        for c in &crew {
+            assert!(bars(&received(&mut inboxes[*c as usize - 1])).is_empty());
         }
     }
 
     #[test]
-    fn back_in_the_lobby_each_player_is_shown_as_the_next_class() {
+    fn a_dealt_class_swaps_the_body_the_book_the_bar_and_the_name() {
         let (host, mut inboxes) = hosted(quick(), 3);
-        host.request(1, Request::Start);
-        let (imp, _) = roles(&host);
-        host.request(imp, Request::Kill);
         drain(&mut inboxes);
-        host.request(1, Request::Lobby);
+        host.lock().change_class(PlayerId(1), Class::Paladin);
         let mine = received(&mut inboxes[0]);
         let theirs = received(&mut inboxes[1]);
 
@@ -2324,6 +2320,10 @@ mod tests {
             );
         }
         assert!(!removed.contains(&spells::KILL) && !learned.contains(&spells::KILL));
+        let paladin: Vec<u32> = (spells::main_bar(Class::Paladin, false).into_iter())
+            .filter(|&s| s != 0)
+            .collect();
+        assert_eq!(bars(&mine), [paladin]);
 
         // Player 1's body is a paladin on a full mana bar, to themself and to the others.
         for seen in [&mine, &theirs] {
@@ -2342,8 +2342,24 @@ mod tests {
         });
         assert_eq!(named, Some(2));
         assert_eq!(host.lock().map.character(1).map(|c| c.class), Some(2));
-        let max = host.lock().game.settings().kits.get(Class::Paladin).health;
-        assert_eq!(host.lock().max_health(PlayerId(1)), max);
+    }
+
+    #[test]
+    fn at_the_start_every_body_shows_the_class_the_rules_dealt() {
+        let settings = Settings {
+            random_classes: true,
+            ..quick()
+        };
+        let (host, mut inboxes) = hosted(settings, 3);
+        drain(&mut inboxes);
+        host.request(1, Request::Start);
+        let inner = host.lock();
+        for (id, p) in inner.game.players() {
+            let shown = inner.map.character(id.0).map(|c| c.class);
+            assert_eq!(shown, Some(p.class.wow_id()), "{id:?}");
+            let max = inner.game.settings().kits.get(p.class).health;
+            assert_eq!(inner.health.get(&id), Some(&(max, max)), "{id:?}");
+        }
     }
 
     #[test]
@@ -2942,14 +2958,12 @@ mod tests {
         for g in [victim, imp] {
             assert!(created(&seen).contains(&g), "{g} is shown again");
         }
-        // Warriors rotate on to paladins in the lobby, and stand on the paladin's pool.
-        let full = Some(among_rules::Kits::default().get(Class::Paladin).health);
         for g in [victim, imp] {
             let mine = received(&mut inboxes[inbox(g)]);
             let back = changes_of(&mine, g);
             assert!(back
                 .iter()
-                .any(|f| f.unit_health() == full && !f.player_is_ghost()));
+                .any(|f| f.unit_health() == Some(120) && !f.player_is_ghost()));
             assert!(modes(&mine, g).contains(&(MoveMode::WaterWalk, false)));
             assert_eq!(run_speeds(&mine), [death::LIVING_SPEEDS[0]]);
         }

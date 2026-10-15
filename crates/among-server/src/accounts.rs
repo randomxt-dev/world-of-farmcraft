@@ -140,7 +140,7 @@ impl Accounts {
                 guid: *next_guid,
                 name: default_name(user),
                 race: 1,
-                class: 1,
+                class: random_human_class(),
                 gender: 0,
                 skin: 0,
                 face: 0,
@@ -190,6 +190,17 @@ impl Accounts {
     pub fn character(&self, user: &str, guid: u64) -> Option<CharacterRecord> {
         self.characters(user).into_iter().find(|c| c.guid == guid)
     }
+}
+
+/// The classes a 1.12 human may be (`CharBaseInfo.dbc`): warrior, paladin, rogue, priest, mage,
+/// warlock. The auto-made character draws one, so its starting gear exists.
+const HUMAN_CLASSES: [u8; 6] = [1, 2, 4, 5, 8, 9];
+
+fn random_human_class() -> u8 {
+    use rand::seq::SliceRandom;
+    *HUMAN_CLASSES
+        .choose(&mut rand::thread_rng())
+        .expect("non-empty")
 }
 
 /// A fresh lobby code: six letters and digits with the look-alikes (0/O, 1/I/L) left out, so it

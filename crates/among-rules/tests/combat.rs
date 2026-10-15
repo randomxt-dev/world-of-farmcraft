@@ -12,8 +12,12 @@ const WOLF: CreatureId = CreatureId(0);
 const OTHER_WOLF: CreatureId = CreatureId(1);
 
 /// Players `1..` with these classes on [`combat_layout`], everyone at the button (far from the
-/// den), started with `settings`.
+/// den), started with `settings` and no random classes dealt.
 fn arena(settings: Settings, classes: &[Class], seed: u64) -> Game {
+    let settings = Settings {
+        random_classes: false,
+        ..settings
+    };
     let mut g = Game::new(settings, combat_layout());
     for (i, &class) in classes.iter().enumerate() {
         ok(
@@ -77,10 +81,10 @@ fn creatures_spawn_at_the_start() {
     }));
     assert_eq!(g.creatures().len(), 2);
     assert!(g.creatures().iter().all(|c| c.alive && c.health == 40));
-    assert_eq!(
-        health(&g, id(1)),
-        Settings::default().kits.get(Class::Mage).health
-    );
+    // Each player starts on the full pool of the class they were dealt.
+    for (i, p) in g.players() {
+        assert_eq!(health(&g, i), Settings::default().kits.get(p.class).health);
+    }
 }
 
 #[test]

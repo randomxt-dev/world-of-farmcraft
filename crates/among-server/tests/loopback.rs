@@ -397,9 +397,27 @@ fn self_create_with_items(
 
 #[test]
 fn a_client_wears_its_starting_gear_and_learns_each_item() {
-    let host = start_server();
+    // among1 plays a human warrior, made up front (a fresh account's own class is random).
+    let accounts = Accounts::default();
+    accounts.register("among1", "secret1").unwrap();
+    accounts.register("among2", "secret2").unwrap();
+    let warrior = among_server::accounts::CharacterRecord {
+        guid: 0,
+        name: "Among".into(),
+        race: 1,
+        class: 1,
+        gender: 0,
+        skin: 0,
+        face: 0,
+        hair_style: 0,
+        hair_color: 0,
+        facial_hair: 0,
+        level: 1,
+    };
+    accounts.create_character("AMONG1", warrior).unwrap();
+    let host = start_server_for(accounts, Settings::default(), temp_marks("gear"));
     let (mut one, one_guid) = enter(&host, "among1", "secret1");
-    // A fresh account's human warrior: the recruit kit and the Mining Pick, ahead of the body.
+    // The human warrior's recruit kit and the Mining Pick, ahead of the body.
     let (items, me) = wait_for(&mut one, |p| self_create_with_items(p, one_guid));
     let entries: Vec<Option<u32>> = items.iter().map(|(_, e)| *e).collect();
     assert_eq!(

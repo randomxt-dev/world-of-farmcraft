@@ -775,10 +775,23 @@ impl Game {
         self.taken.clear();
         self.traps.clear();
 
+        // Each player is dealt the round's class after roles and tasks, so those draws stand.
+        let mut dealt = Vec::new();
+        if self.settings.random_classes {
+            for (&id, p) in &mut self.players {
+                let class = Class::ALL[rng.below(Class::ALL.len())];
+                if class != p.class {
+                    p.class = class;
+                    dealt.push(Event::ClassChanged { player: id, class });
+                }
+            }
+        }
+
         self.out.push(Event::GameStarted {
             players: n,
             impostors,
         });
+        self.out.extend(dealt);
         for (id, tasks) in lists {
             let impostor = impostor_ids.contains(&id);
             let role = if impostor {
@@ -1206,24 +1219,17 @@ impl Game {
         self.taken.clear();
         self.holders.clear();
         self.traps.clear();
-        // Each player steps on to the next class, so a lobby plays every class over nine rounds.
-        let mut rotated = Vec::new();
-        for (&id, p) in &mut self.players {
+        for p in self.players.values_mut() {
             *p = Player {
                 position: p.position,
-                ..Player::new(p.class.next(), &self.settings)
+                ..Player::new(p.class, &self.settings)
             };
-            rotated.push(Event::ClassChanged {
-                player: id,
-                class: p.class,
-            });
         }
         self.emergency_cooldown = Duration::ZERO;
         self.sabotage = None;
         self.sabotage_cooldown = Duration::ZERO;
         self.phase = Phase::Lobby;
         self.out.push(Event::ReturnedToLobby);
-        self.out.extend(rotated);
     }
 
     /// Runs the clock; a long `dt` carries through every stage boundary it crosses, in order.

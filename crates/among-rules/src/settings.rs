@@ -66,6 +66,8 @@ pub struct Settings {
     pub trap_radius: f32,
     /// How long a freezing trap waits before it crumbles.
     pub trap_lifetime: Duration,
+    /// Deal every player a random class at each start; off, each keeps the class they joined as.
+    pub random_classes: bool,
 }
 
 impl Default for Settings {
@@ -98,6 +100,7 @@ impl Default for Settings {
             // A 1.12 freezing trap's own trigger radius, in yards.
             trap_radius: 2.5,
             trap_lifetime: Duration::from_secs(60),
+            random_classes: true,
         }
     }
 }

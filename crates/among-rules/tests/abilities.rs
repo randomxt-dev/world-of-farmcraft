@@ -8,10 +8,11 @@ use std::time::Duration;
 use among_rules::*;
 use common::*;
 
-/// No cooldowns in the way, ability ones included.
+/// No cooldowns in the way, ability ones included, and each player keeps the class they join as.
 fn ready() -> Settings {
     Settings {
         initial_ability_cooldown: Duration::ZERO,
+        random_classes: false,
         ..instant()
     }
 }
@@ -72,7 +73,11 @@ fn under(g: &Game, p: PlayerId, effect: Effect) -> bool {
 
 #[test]
 fn an_ability_waits_for_its_cooldown_and_the_first_for_the_game_start() {
-    let mut g = Game::new(instant(), layout());
+    let settings = Settings {
+        random_classes: false,
+        ..instant()
+    };
+    let mut g = Game::new(settings, layout());
     for i in 1..=5 {
         let class = if i == 1 {
             Class::Shaman

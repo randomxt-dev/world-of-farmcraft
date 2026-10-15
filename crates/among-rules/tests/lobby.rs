@@ -295,44 +295,73 @@ fn after_game_over_the_host_returns_everyone_connected_to_the_lobby() {
     ok(&mut g, Command::Start { by: host, seed: 6 });
 }
 
-#[test]
-fn every_return_to_the_lobby_moves_each_player_on_to_the_next_class() {
-    let mut g = started(8, 5);
-    for player in impostors(&g) {
-        ok(&mut g, Command::Leave { player });
-    }
-    let host = g.host().unwrap();
-    let events = ok(&mut g, Command::ReturnToLobby { by: host });
-    let changed: Vec<(PlayerId, Class)> = (events.iter())
+/// The classes dealt as `(player, class)` among `events`.
+fn dealt(events: &[Event]) -> Vec<(PlayerId, Class)> {
+    (events.iter())
         .filter_map(|e| match *e {
             Event::ClassChanged { player, class } => Some((player, class)),
             _ => None,
         })
-        .collect();
-    let seated: Vec<PlayerId> = g.players().map(|(id, _)| id).collect();
-    assert_eq!(changed.iter().map(|&(p, _)| p).collect::<Vec<_>>(), seated);
-    let kits = Kits::default();
-    for (id, p) in g.players() {
+        .collect()
+}
+
+#[test]
+fn every_start_deals_each_player_a_random_class_from_the_seed() {
+    let mut seen = std::collections::BTreeSet::new();
+    for seed in 0..20 {
+        let mut g = lobby(8);
+        let events = ok(&mut g, Command::Start { by: id(1), seed });
+        let changed = dealt(&events);
+        let kits = Kits::default();
+        for (id, p) in g.players() {
+            seen.insert(p.class);
+            // Only a class unlike the joined warrior is announced.
+            assert_eq!(
+                changed.contains(&(id, p.class)),
+                p.class != Class::Warrior,
+                "{id:?}"
+            );
+            assert_eq!(p.health, kits.get(p.class).health, "{id:?}: the dealt pool");
+        }
+
+        // The same seed deals the same classes.
+        let mut again = lobby(8);
         assert_eq!(
-            p.class,
-            Class::Paladin,
-            "{id:?}: warrior steps on to paladin"
-        );
-        assert!(changed.contains(&(id, Class::Paladin)));
-        assert_eq!(
-            p.health,
-            kits.get(Class::Paladin).health,
-            "{id:?}: the new pool"
+            dealt(&ok(&mut again, Command::Start { by: id(1), seed })),
+            changed
         );
     }
+    assert_eq!(seen.len(), Class::ALL.len(), "every class turns up");
+}
 
-    ok(&mut g, Command::Start { by: host, seed: 6 });
-    let alive: Vec<PlayerId> = g.players().map(|(id, _)| id).collect();
+#[test]
+fn the_lobby_keeps_the_last_class_and_the_next_start_deals_again() {
+    let mut g = started(8, 5);
+    let before: Vec<Class> = g.players().map(|(_, p)| p.class).collect();
     for player in impostors(&g) {
         ok(&mut g, Command::Leave { player });
     }
     let host = g.host().unwrap();
-    ok(&mut g, Command::ReturnToLobby { by: host });
-    assert!(g.players().all(|(_, p)| p.class == Class::Hunter));
-    assert!(g.players().all(|(id, _)| alive.contains(&id)));
+    assert_eq!(
+        ok(&mut g, Command::ReturnToLobby { by: host }),
+        [Event::ReturnedToLobby]
+    );
+    let kept: Vec<Class> = g.players().map(|(_, p)| p.class).collect();
+    assert!(kept.iter().all(|c| before.contains(c)));
+    let events = ok(&mut g, Command::Start { by: host, seed: 6 });
+    for (player, class) in dealt(&events) {
+        assert_eq!(g.player(player).unwrap().class, class);
+    }
+}
+
+#[test]
+fn with_random_classes_off_everyone_keeps_the_class_they_joined_as() {
+    let settings = Settings {
+        random_classes: false,
+        ..Settings::default()
+    };
+    let mut g = lobby_with(settings, 8);
+    let events = ok(&mut g, Command::Start { by: id(1), seed: 3 });
+    assert!(dealt(&events).is_empty());
+    assert!(g.players().all(|(_, p)| p.class == Class::Warrior));
 }

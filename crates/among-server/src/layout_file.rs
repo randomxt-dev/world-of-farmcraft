@@ -334,7 +334,7 @@ pub fn summary(l: &Layout) -> String {
     out
 }
 
-/// One line per task that gathers: its scarcest step's spots, which cap how many crewmates it is
+/// One line per task that gathers: its scarcest step's spots, which cap how many players it is
 /// dealt to (a pick takes a node from everyone), and how many hold it at the layout's full count.
 fn gathering(l: &Layout) -> Vec<String> {
     (l.tasks.iter())
@@ -347,12 +347,12 @@ fn gathering(l: &Layout) -> Vec<String> {
                 .min_by_key(|&(spots, _)| spots)?;
             let full = spots / count.max(1) as usize;
             let common = if t.kind == TaskKind::Common {
-                " (common: left out of games with more crewmates)"
+                " (common: left out of games with more players)"
             } else {
                 ""
             };
             Some(format!(
-                "gather {:?}: {spots} spots, dealt to at most {spots} crewmates{common}; \
+                "gather {:?}: {spots} spots, dealt to at most {spots} players{common}; \
                  {count} each for up to {full}, fewer each past that",
                 t.name
             ))
@@ -538,13 +538,13 @@ mod tests {
 
     /// The shipped Northshire example parses once every mark it names is surveyed.
     #[test]
-    fn the_summary_says_how_many_crewmates_each_gathering_serves() {
+    fn the_summary_says_how_many_players_each_gathering_serves() {
         let l = parse(SMALL, &marks(&["hall", "herb", "den", "pump"])).unwrap();
         let text = summary(&l);
         let gather: Vec<&str> = text.lines().filter(|l| l.starts_with("gather")).collect();
         assert_eq!(gather.len(), 1, "{text}");
         assert!(
-            gather[0].contains("1 spots, dealt to at most 1 crewmates"),
+            gather[0].contains("1 spots, dealt to at most 1 players"),
             "{text}"
         );
     }

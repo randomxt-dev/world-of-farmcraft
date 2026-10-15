@@ -26,7 +26,7 @@ use crate::accounts::Accounts;
 use crate::game::GameHost;
 use crate::survey::Survey;
 
-pub use map::Map;
+pub use map::{destroy, Map};
 pub use socket::Packet;
 
 /// Accept world connections forever; every session shares one [`Map`] and one match.

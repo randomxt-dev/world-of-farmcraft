@@ -25,10 +25,16 @@ pub const UPDATEFLAG_LIVING: u8 = 0x20;
 pub const UPDATEFLAG_HAS_POSITION: u8 = 0x40;
 
 /// A sparse descriptor: field index to raw `u32` value.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Fields(BTreeMap<u16, u32>);
 
 impl Fields {
+    /// Every field of `other` written over these.
+    pub fn merge(&mut self, other: &Fields) -> &mut Self {
+        self.0.extend(&other.0);
+        self
+    }
+
     pub fn u32(&mut self, index: u16, v: u32) -> &mut Self {
         self.0.insert(index, v);
         self

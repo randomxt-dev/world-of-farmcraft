@@ -69,6 +69,14 @@ pub fn station(kind: SabotageKind) -> NodeLook {
     }
 }
 
+/// `GameObjectDisplayInfo.dbc` 3071: `G_FreezingTrap.mdx`, gameobject 2561's look.
+const FREEZING_TRAP: u32 = 3071;
+
+/// A hunter's freezing trap, as only its owner sees it.
+pub fn trap() -> NodeLook {
+    NodeLook::station("Freezing Trap", FREEZING_TRAP, 0)
+}
+
 /// The column over a station still to fix while its sabotage runs; a right-click on it is one on
 /// the station beneath.
 pub fn beacon(kind: SabotageKind) -> NodeLook {

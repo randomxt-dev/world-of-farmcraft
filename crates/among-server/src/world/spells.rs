@@ -159,6 +159,15 @@ pub fn spell_cooldown(caster: u64, cooldowns: &[(u32, u32)]) -> Packet {
     Packet::new(opcode::SMSG_SPELL_COOLDOWN, b.done())
 }
 
+/// `SMSG_CLEAR_COOLDOWN`: `spell`'s cooldown on `caster`'s client ends outright, so a shorter one
+/// sent after replaces the borrowed spell's own.
+pub fn clear_cooldown(caster: u64, spell: u32) -> Packet {
+    Packet::new(
+        opcode::SMSG_CLEAR_COOLDOWN,
+        Body::default().u32(spell).u64(caster).done(),
+    )
+}
+
 /// `SMSG_NOTIFICATION`: one line of text for the receiver.
 pub fn notification(text: &str) -> Packet {
     Packet::new(
@@ -190,7 +199,7 @@ mod tests {
         };
         assert_eq!(
             spell_ids,
-            [6603, 133, 6468, 20374, 28084, 15692, 9874, 2366, 2575]
+            [6603, 133, 6468, 20374, 28084, 15692, 9874, 29848, 2366, 2575]
         );
         assert!(cooldowns.is_empty());
 
@@ -205,17 +214,21 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let crew = bar(false);
-        assert_eq!(crew.len(), 5, "the client reads only the occupied slots");
+        assert_eq!(crew.len(), 6, "the client reads only the occupied slots");
         assert_eq!(crew[0], (0, ATTACK, 0));
         assert_eq!(crew[1], (1, 1752, 0), "Sinister Strike on key 2");
         assert_eq!(crew[2], (2, REPORT, 0));
         assert_eq!(crew[3], (3, VOTE, 0));
         assert_eq!(crew[4], (4, SKIP_VOTE, 0));
+        assert_eq!(crew[5], (7, 1784, 0), "Stealth on key 8");
         assert!(crew.iter().all(|&(_, s, _)| s != KILL && s != SABOTAGE));
 
         let impostor = bar(true);
-        assert_eq!(impostor[..5], crew[..]);
-        assert_eq!(impostor[5..], [(5, KILL, 0), (6, SABOTAGE, 0)]);
+        assert_eq!(impostor[..5], crew[..5]);
+        assert_eq!(
+            impostor[5..],
+            [(5, KILL, 0), (6, SABOTAGE, 0), (7, 1784, 0)]
+        );
     }
 
     #[test]

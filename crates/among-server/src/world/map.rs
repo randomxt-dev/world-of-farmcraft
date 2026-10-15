@@ -2,7 +2,7 @@
 //! the gameobjects and creatures the match shows. A move from one player is relayed to every other
 //! as the same `MSG_MOVE_*`, prefixed with the mover's packed guid, as vmangos's
 //! `MovementHandler` broadcasts it. A ghost is shown only to other ghosts, as vmangos's
-//! `GHOST_VISIBILITY_GHOST` keeps it from the living.
+//! `GHOST_VISIBILITY_GHOST` keeps it from the living, and a stealthed player only to the dead.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,7 +11,7 @@ use benilla_protocol::messages::opcode;
 
 use super::player::{self, Life};
 use super::socket::{Outbox, Packet};
-use super::update::Living;
+use super::update::{Fields, Living};
 use super::wire::Body;
 use crate::accounts::CharacterRecord;
 
@@ -20,14 +20,22 @@ struct Occupant {
     outbox: Outbox,
     living: Living,
     life: Life,
+    /// Stealthed: unseen by the living.
+    hidden: bool,
+    /// The descriptor fields effects and death dress the body in ([`player::bearing`]).
+    bearing: Fields,
     /// The last counter a forced movement change (`SMSG_FORCE_*`) carried, which the ack echoes.
     counter: u32,
 }
 
-/// Whether a client in `viewer`'s state is shown a player in `subject`'s: anyone not a ghost, and
-/// ghosts to ghosts.
-fn sees(viewer: Life, subject: Life) -> bool {
-    subject != Life::Ghost || viewer == Life::Ghost
+/// Whether a client in `viewer`'s state is shown a player in `subject`'s, `hidden` if stealthed:
+/// anyone not a ghost, ghosts to ghosts, and the stealthed to the dead alone.
+fn sees(viewer: Life, subject: Life, hidden: bool) -> bool {
+    match subject {
+        Life::Ghost => viewer == Life::Ghost,
+        _ if hidden => viewer != Life::Alive,
+        _ => true,
+    }
 }
 
 /// Whether a listener in `listener`'s state hears a speaker in `speaker`'s: the living are heard
@@ -42,11 +50,18 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Occupant {
     fn create(&self) -> Packet {
-        player::create_packet(&self.character, &self.living, false, self.life)
+        player::create_wearing(
+            &self.character,
+            &self.living,
+            false,
+            self.life,
+            &self.bearing,
+        )
     }
 }
 
-fn destroy(guid: u64) -> Packet {
+/// `SMSG_DESTROY_OBJECT`: the object leaves the receiver's world.
+pub fn destroy(guid: u64) -> Packet {
     Packet::new(opcode::SMSG_DESTROY_OBJECT, guid.to_le_bytes().to_vec())
 }
 
@@ -117,12 +132,10 @@ impl Map {
     /// a ghost's casts reach only ghosts. A guid that is no player reaches everyone.
     pub fn broadcast_about(&self, subject: u64, packet: &Packet) {
         let world = self.lock();
-        let life = world
-            .occupants
-            .get(&subject)
-            .map_or(Life::Alive, |o| o.life);
+        let (life, hidden) =
+            (world.occupants.get(&subject)).map_or((Life::Alive, false), |o| (o.life, o.hidden));
         for (&guid, o) in &world.occupants {
-            if guid == subject || sees(o.life, life) {
+            if guid == subject || sees(o.life, life, hidden) {
                 let _ = o.outbox.send(packet.clone());
             }
         }
@@ -138,19 +151,54 @@ impl Map {
         };
         let was = std::mem::replace(&mut me.life, life);
         let me = &world.occupants[&guid];
+        let hidden = me.hidden;
         let _ = me.outbox.send(change.clone());
         for (&other, o) in world.occupants.iter().filter(|(&g, _)| g != guid) {
-            let _ = match (sees(o.life, was), sees(o.life, life)) {
+            let _ = match (sees(o.life, was, hidden), sees(o.life, life, hidden)) {
                 (true, true) => o.outbox.send(change.clone()),
                 (true, false) => o.outbox.send(destroy(guid)),
                 (false, true) => o.outbox.send(me.create()),
                 (false, false) => Ok(()),
             };
-            let _ = match (sees(was, o.life), sees(life, o.life)) {
+            let _ = match (sees(was, o.life, o.hidden), sees(life, o.life, o.hidden)) {
                 (true, false) => me.outbox.send(destroy(other)),
                 (false, true) => me.outbox.send(o.create()),
                 _ => Ok(()),
             };
+        }
+    }
+
+    /// `guid` is now stealthed, or seen again: they vanish from, or appear to, the living.
+    pub fn set_hidden(&self, guid: u64, hidden: bool) {
+        let mut world = self.lock();
+        let Some(me) = world.occupants.get_mut(&guid) else {
+            return;
+        };
+        let was = std::mem::replace(&mut me.hidden, hidden);
+        let me = &world.occupants[&guid];
+        for (_, o) in world.occupants.iter().filter(|(&g, _)| g != guid) {
+            let _ = match (sees(o.life, me.life, was), sees(o.life, me.life, hidden)) {
+                (true, false) => o.outbox.send(destroy(guid)),
+                (false, true) => o.outbox.send(me.create()),
+                _ => Ok(()),
+            };
+        }
+    }
+
+    /// `guid` now wears `bearing` ([`player::bearing`]): they and everyone who sees them are sent
+    /// the change, and later creates of them carry it.
+    pub fn set_bearing(&self, guid: u64, bearing: Fields) {
+        let mut world = self.lock();
+        let Some(me) = world.occupants.get_mut(&guid) else {
+            return;
+        };
+        me.bearing = bearing;
+        let me = &world.occupants[&guid];
+        let change = player::bearing_change(guid, &me.bearing);
+        for (&other, o) in &world.occupants {
+            if other == guid || sees(o.life, me.life, me.hidden) {
+                let _ = o.outbox.send(change.clone());
+            }
         }
     }
 
@@ -171,10 +219,10 @@ impl Map {
         let _ = me
             .outbox
             .send(super::meeting::teleport(guid, me.counter, at, facing));
-        let life = me.life;
+        let (life, hidden) = (me.life, me.hidden);
         let seen = super::meeting::teleported(guid, at, facing);
         for (&other, o) in &world.occupants {
-            if other != guid && sees(o.life, life) {
+            if other != guid && sees(o.life, life, hidden) {
                 let _ = o.outbox.send(seen.clone());
                 let _ = o.outbox.send(seen.clone());
             }
@@ -206,7 +254,7 @@ impl Map {
         let newcomer = player::create_packet(&character, &living, false, Life::Alive);
         for other in occupants.values() {
             let _ = other.outbox.send(newcomer.clone());
-            if sees(Life::Alive, other.life) {
+            if sees(Life::Alive, other.life, other.hidden) {
                 let _ = outbox.send(other.create());
             }
         }
@@ -217,6 +265,8 @@ impl Map {
                 outbox,
                 living,
                 life: Life::Alive,
+                hidden: false,
+                bearing: Fields::default(),
                 counter: 0,
             },
         );
@@ -233,9 +283,10 @@ impl Map {
             };
         }
         let relay = Packet::new(op, Body::default().packed_guid(guid).bytes(movement).done());
-        let life = occupants.get(&guid).map_or(Life::Alive, |o| o.life);
+        let (life, hidden) =
+            (occupants.get(&guid)).map_or((Life::Alive, false), |o| (o.life, o.hidden));
         for (&other, occupant) in occupants.iter() {
-            if other != guid && sees(occupant.life, life) {
+            if other != guid && sees(occupant.life, life, hidden) {
                 let _ = occupant.outbox.send(relay.clone());
             }
         }
@@ -333,6 +384,15 @@ mod tests {
             );
             assert!(hears(Life::Ghost, speaker) && hears(Life::Dead, speaker));
         }
+    }
+
+    #[test]
+    fn the_stealthed_are_seen_by_the_dead_alone_and_ghosts_by_ghosts() {
+        assert!(!sees(Life::Alive, Life::Alive, true));
+        assert!(sees(Life::Dead, Life::Alive, true) && sees(Life::Ghost, Life::Alive, true));
+        assert!(sees(Life::Alive, Life::Alive, false));
+        assert!(!sees(Life::Alive, Life::Ghost, false) && !sees(Life::Dead, Life::Ghost, false));
+        assert!(sees(Life::Ghost, Life::Ghost, false));
     }
 
     #[test]

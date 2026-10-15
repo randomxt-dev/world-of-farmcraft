@@ -88,14 +88,17 @@ pub enum Fixture {
     /// Station `n` of the sabotage `kind`, as the layout lists them.
     Station(SabotageKind, usize),
     Beacon(SabotageKind, usize),
+    /// The freezing trap of the hunter whose guid's low 24 bits are these; only they see it.
+    Trap(u64),
 }
 
-/// A fixture's template: the button, or a kind's station or beacon.
+/// A fixture's template: the button, or a kind's station or beacon, or a freezing trap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FixtureTemplate {
     Button,
     Station(SabotageKind),
     Beacon(SabotageKind),
+    Trap,
 }
 
 const FIXTURE_ENTRIES: u32 = 0xF0_0000;
@@ -117,6 +120,7 @@ impl FixtureTemplate {
                 FixtureTemplate::Button => 0,
                 FixtureTemplate::Station(k) => 0x10 + kind_index(k),
                 FixtureTemplate::Beacon(k) => 0x20 + kind_index(k),
+                FixtureTemplate::Trap => 0x30,
             }
     }
 
@@ -127,6 +131,7 @@ impl FixtureTemplate {
             0 => Some(FixtureTemplate::Button),
             0x10..=0x13 => kind(0x10).map(FixtureTemplate::Station),
             0x20..=0x23 => kind(0x20).map(FixtureTemplate::Beacon),
+            0x30 => Some(FixtureTemplate::Trap),
             _ => None,
         }
     }
@@ -138,13 +143,20 @@ impl Fixture {
             Fixture::Button => FixtureTemplate::Button,
             Fixture::Station(k, _) => FixtureTemplate::Station(k),
             Fixture::Beacon(k, _) => FixtureTemplate::Beacon(k),
+            Fixture::Trap(_) => FixtureTemplate::Trap,
         }
+    }
+
+    /// The trap `owner` sets.
+    pub fn trap(owner: u64) -> Self {
+        Fixture::Trap(owner & 0xFF_FFFF)
     }
 
     pub fn guid(self) -> u64 {
         let low = match self {
             Fixture::Button => 1,
             Fixture::Station(_, n) | Fixture::Beacon(_, n) => n as u64 + 1,
+            Fixture::Trap(owner) => owner,
         };
         make_low(HIGH_GAMEOBJECT, self.template().entry().into(), low)
     }
@@ -156,6 +168,7 @@ impl Fixture {
             FixtureTemplate::Button => Fixture::Button,
             FixtureTemplate::Station(k) => Fixture::Station(k, n),
             FixtureTemplate::Beacon(k) => Fixture::Beacon(k, n),
+            FixtureTemplate::Trap => Fixture::Trap(n as u64 + 1),
         })
     }
 }
@@ -194,6 +207,7 @@ mod tests {
             Fixture::Button,
             Fixture::Station(SabotageKind::Oxygen, 1),
             Fixture::Beacon(SabotageKind::Reactor, 0),
+            Fixture::trap(7),
         ];
         for f in all {
             let g = f.guid();

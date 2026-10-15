@@ -1,7 +1,7 @@
 //! A player as the world shows it: where it spawns, the descriptor it is created with, the packets
 //! that seat it at login, and the movement a client sends for it.
 
-use among_rules::Class;
+use among_rules::{Class, Effect};
 use benilla_protocol::messages::opcode;
 
 use super::items;
@@ -124,6 +124,94 @@ pub fn display_id(race: u8, gender: u8) -> u32 {
     } else {
         female
     }
+}
+
+/// Creature 12861 "Wisp (Ghost Visual Only)", which vmangos's 20584 turns a night-elf ghost into.
+pub const WISP_DISPLAY: u32 = 1825;
+/// Creature 16372 "Polymorphed Sheep", Polymorph's transform.
+pub const SHEEP_DISPLAY: u32 = 856;
+/// Ghost Wolf's form display (vmangos), the coyote-skinned wolf at its 0.8 scale.
+pub const GHOST_WOLF_DISPLAY: u32 = 4613;
+const GHOST_WOLF_SCALE: f32 = 0.8;
+/// `UNIT_FLAG_STUNNED`: no turning, no casting; a trap's frozen catch.
+const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
+/// `UNIT_FLAG_FLEEING`: the client gives up control of the body and greys the bar; fear.
+const UNIT_FLAG_FLEEING: u32 = 0x0080_0000;
+/// `AFLAG_EFF_INDEX_0`: one live effect, and no cancel bit, so a re-press casts (and is refused
+/// on cooldown) rather than sending a `CMSG_CANCEL_AURA` the server does not take.
+const EFFECT_AURA_FLAGS: u32 = 0x02;
+
+/// Every effect, with the aura slot it shows in: buffs from 0, debuffs from 40, clear of Ghost's
+/// slot 32 and the words it shares.
+const EFFECT_SLOTS: [(Effect, u16); 9] = [
+    (Effect::Stealth, 0),
+    (Effect::Shield, 1),
+    (Effect::GhostWolf, 2),
+    (Effect::DivineShield, 3),
+    (Effect::Polymorph, 40),
+    (Effect::Fear, 41),
+    (Effect::Slow, 42),
+    (Effect::Frozen, 43),
+    (Effect::Rooted, 44),
+];
+
+/// What a player looks like beyond life and death: the display (a ghost's wisp, a sheep, a ghost
+/// wolf, else their race's), its scale, the unit flags effects set, and each effect's aura. Every
+/// field is written in each state, so an update of them alone undoes the last.
+pub fn bearing(c: &CharacterRecord, life: Life, effects: &[Effect]) -> Fields {
+    let under = |e| life == Life::Alive && effects.contains(&e);
+    let (display, scale) = if life == Life::Ghost {
+        (WISP_DISPLAY, 1.0)
+    } else if under(Effect::Polymorph) {
+        (SHEEP_DISPLAY, 1.0)
+    } else if under(Effect::GhostWolf) {
+        (GHOST_WOLF_DISPLAY, GHOST_WOLF_SCALE)
+    } else {
+        (display_id(c.race, c.gender), 1.0)
+    };
+    let mut flags = UNIT_FLAG_PVP_ATTACKABLE;
+    if under(Effect::Frozen) {
+        flags |= UNIT_FLAG_STUNNED;
+    }
+    if under(Effect::Fear) {
+        flags |= UNIT_FLAG_FLEEING;
+    }
+    let mut f = Fields::default();
+    f.u32(UNIT_FIELD_DISPLAYID, display)
+        .f32(OBJECT_FIELD_SCALE_X, scale)
+        .u32(UNIT_FIELD_FLAGS, flags);
+    let mut aura_flags: std::collections::BTreeMap<u16, u32> = Default::default();
+    let mut levels: std::collections::BTreeMap<u16, u32> = Default::default();
+    for (effect, slot) in EFFECT_SLOTS {
+        let on = under(effect);
+        f.u32(
+            UNIT_FIELD_AURA + slot,
+            if on {
+                among_spells::effect_aura(effect)
+            } else {
+                0
+            },
+        );
+        // Eight 4-bit flag slots and four 1-byte levels per word.
+        let flag_word = aura_flags.entry(slot / 8).or_default();
+        let level_word = levels.entry(slot / 4).or_default();
+        if on {
+            *flag_word |= EFFECT_AURA_FLAGS << (slot % 8 * 4);
+            *level_word |= 1 << (slot % 4 * 8);
+        }
+    }
+    for (word, v) in aura_flags {
+        f.u32(UNIT_FIELD_AURAFLAGS + word, v);
+    }
+    for (word, v) in levels {
+        f.u32(UNIT_FIELD_AURALEVELS + word, v);
+    }
+    f
+}
+
+/// The values update that shows `guid` wearing `bearing`.
+pub fn bearing_change(guid: u64, bearing: &Fields) -> Packet {
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(guid, bearing))
 }
 
 /// The race's player faction template (`ChrRaces.dbc` `FactionID`).
@@ -276,6 +364,17 @@ pub fn life_change(guid: u64, life: Life, max: u32) -> Packet {
 /// The `SMSG_UPDATE_OBJECT` that creates `c` at `living` in `life`; `is_self` marks the
 /// receiver's own body, which comes after its worn items as vmangos builds it.
 pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: Life) -> Packet {
+    create_wearing(c, living, is_self, life, &Fields::default())
+}
+
+/// [`create_packet`] with `bearing` (see [`bearing`]) written over the descriptor.
+pub fn create_wearing(
+    c: &CharacterRecord,
+    living: &Living,
+    is_self: bool,
+    life: Life,
+    bearing: &Fields,
+) -> Packet {
     let mut blocks = Vec::new();
     if is_self {
         let gear = items::starting_gear(c.race, c.class, c.guid);
@@ -287,7 +386,7 @@ pub fn create_packet(c: &CharacterRecord, living: &Living, is_self: bool, life: 
         c.guid,
         is_self,
         living,
-        &fields(c, is_self, life),
+        fields(c, is_self, life).merge(bearing),
     ));
     Packet::new(opcode::SMSG_UPDATE_OBJECT, update::join(&blocks))
 }

@@ -17,17 +17,26 @@ const MIRROR_TIMER: u32 = 2;
 pub const VOTE_TEXT: u32 = 1;
 /// The vote menu's greeting, for male and female readers alike.
 const VOTE_GREETING: &str = "Who is the impostor? Choose with care: the one most voted is ejected.";
-/// How far from the table's centre the seats stand, in yards.
+/// The fewest yards from the table's centre a seat stands: clear of the button's model.
 const SEAT_RADIUS: f32 = 3.5;
+/// Yards of ring per seat, so neighbours stand apart rather than overlap however many sit.
+const SEAT_SPACING: f32 = 2.0;
+
+/// How far from the centre a ring of `n` seats stands: [`SEAT_SPACING`] of ring each, at least
+/// [`SEAT_RADIUS`].
+pub fn seat_radius(n: usize) -> f32 {
+    (n as f32 * SEAT_SPACING / TAU).max(SEAT_RADIUS)
+}
 
 /// `n` seats in a ring around `centre`, each facing it: `(position, orientation)`.
 pub fn seats(centre: [f32; 3], n: usize) -> Vec<([f32; 3], f32)> {
+    let radius = seat_radius(n);
     (0..n)
         .map(|i| {
             let angle = TAU * i as f32 / n.max(1) as f32;
             let at = [
-                centre[0] + SEAT_RADIUS * angle.cos(),
-                centre[1] + SEAT_RADIUS * angle.sin(),
+                centre[0] + radius * angle.cos(),
+                centre[1] + radius * angle.sin(),
                 centre[2],
             ];
             // Facing the centre: the angle back toward it.
@@ -168,6 +177,17 @@ mod tests {
             let ahead = [at[0] + facing.cos(), at[1] + facing.sin()];
             let closer = ((ahead[0] - centre[0]).powi(2) + (ahead[1] - centre[1]).powi(2)).sqrt();
             assert!(closer < d);
+        }
+    }
+
+    #[test]
+    fn a_crowded_table_widens_its_ring_to_keep_neighbours_apart() {
+        assert_eq!(seat_radius(4), SEAT_RADIUS);
+        for n in [10, 15, 30] {
+            let ring = seats([0.0; 3], n);
+            let (a, b) = (ring[0].0, ring[1].0);
+            let gap = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
+            assert!(gap >= SEAT_SPACING * 0.95, "{n} seats: {gap} yd apart");
         }
     }
 

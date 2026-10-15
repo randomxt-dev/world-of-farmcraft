@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use among_rules::wire::{self, Notice, Request, To};
 use among_rules::{
-    Actions, Class, Command, CreatureId, Event, Game, Layout, MeetingReason, Phase, PlayerId,
-    Position, Reject, SabotageDef, SabotageKind, Settings, Station, StepAction, TaskDef, TaskId,
-    TaskKind, TaskStep, Vote,
+    Ability, Actions, Class, Command, CreatureId, Effect, Event, Game, Layout, MeetingReason,
+    Phase, PlayerId, Position, Reject, SabotageDef, SabotageKind, Settings, Station, StepAction,
+    TaskDef, TaskId, TaskKind, TaskStep, Vote,
 };
 use rand::RngCore;
 
@@ -20,6 +20,7 @@ use crate::world::creatures::{self, Shown};
 use crate::world::guid::{Fixture, FixtureTemplate};
 use crate::world::player::Life;
 use crate::world::spells::{self, CastRequest, Target};
+use crate::world::update::Fields;
 use crate::world::{combat, death, guid, meeting, objects, packets, player, quests, Map, Packet};
 
 /// A kill's strike is shown only this close to it: to the killer, the victim and any witness.
@@ -80,6 +81,30 @@ struct Inner {
     beacons: std::collections::HashSet<Fixture>,
     /// Each player's map flag as last sent: the station it marks, and how long ago it went.
     markers: HashMap<PlayerId, (Option<Position>, Duration)>,
+    /// Each player's body as the world was last shown it.
+    postures: HashMap<PlayerId, Posture>,
+}
+
+/// A player's body as last shown: what it wears ([`player::bearing`]), whether it is stealthed,
+/// rooted (a death, a meeting's seat, an effect), and its run speed.
+#[derive(Clone, Debug, PartialEq)]
+struct Posture {
+    bearing: Fields,
+    hidden: bool,
+    rooted: bool,
+    run: f32,
+}
+
+impl Default for Posture {
+    /// A body fresh in the world: its race's own look, seen, free, at the living's speed.
+    fn default() -> Self {
+        Self {
+            bearing: Fields::default(),
+            hidden: false,
+            rooted: false,
+            run: death::LIVING_SPEEDS[0],
+        }
+    }
 }
 
 impl GameHost {
@@ -116,6 +141,7 @@ impl GameHost {
             quest_logs: HashMap::new(),
             beacons: std::collections::HashSet::new(),
             markers: HashMap::new(),
+            postures: HashMap::new(),
         })))
     }
 
@@ -209,6 +235,9 @@ impl GameHost {
                     }
                     (Reject::InvalidTarget, _) if cast.spell == spells::VOTE => {
                         "Target a player to vote for them".into()
+                    }
+                    (Reject::InvalidTarget, _) if inner.is_ability(player, cast.spell) => {
+                        "Target another living player".into()
                     }
                     _ => sentence(r),
                 };
@@ -477,6 +506,7 @@ fn fixture_look(template: FixtureTemplate) -> crate::look::NodeLook {
         FixtureTemplate::Button => crate::look::button(),
         FixtureTemplate::Station(kind) => crate::look::station(kind),
         FixtureTemplate::Beacon(kind) => crate::look::beacon(kind),
+        FixtureTemplate::Trap => crate::look::trap(),
     }
 }
 
@@ -577,6 +607,7 @@ impl Inner {
         self.refresh_beacons();
         self.refresh_cooldowns();
         self.refresh_health();
+        self.refresh_bodies();
         Ok(events)
     }
 
@@ -711,6 +742,71 @@ impl Inner {
                     self.become_ghost(player, None);
                 }
             }
+            Event::AbilityUsed {
+                player,
+                ability,
+                target,
+            } => self.show_ability(player, ability, target),
+            Event::EffectStarted {
+                player,
+                effect,
+                duration,
+                by,
+            } => {
+                self.refresh_body(player);
+                let line = self.effect_line(effect, duration, by, player);
+                self.map.send(player.0, packets::system_message(&line));
+            }
+            Event::EffectEnded { player, effect } => {
+                self.refresh_body(player);
+                if effect == Effect::Stealth {
+                    let line = "You step out of the shadows.";
+                    self.map.send(player.0, packets::system_message(line));
+                }
+            }
+            Event::TrapSet { owner, at } => {
+                // Only its hunter sees a trap, as 1.12's own are stealthed from everyone else.
+                let f = Fixture::trap(owner.0);
+                let entry = f.template().entry();
+                let create = objects::create_node(f.guid(), entry, &crate::look::trap(), at, 0.0);
+                self.map.send(owner.0, create);
+            }
+            Event::TrapGone { owner } => {
+                let g = Fixture::trap(owner.0).guid();
+                self.map.send(owner.0, crate::world::destroy(g));
+            }
+            Event::TrapSprung { owner, victim } => {
+                let g = Fixture::trap(owner.0).guid();
+                self.map.send(owner.0, crate::world::destroy(g));
+                let line = format!("{} is caught in your freezing trap.", self.name(victim));
+                self.map.send(owner.0, packets::system_message(&line));
+            }
+            Event::KillBlocked {
+                killer,
+                victim,
+                shielder,
+            } => {
+                // The strike shows as a kill's does; the shield takes it.
+                let target = Target::Unit(victim.0);
+                let start = spells::spell_start(killer.0, spells::KILL, 0, target);
+                let go = spells::spell_go(killer.0, spells::KILL, target);
+                let at = self.game.player(victim).map_or([0.0; 3], |p| p.position);
+                for witness in self.witnesses(at, &[killer, victim]) {
+                    self.map.send(witness.0, start.clone());
+                    self.map.send(witness.0, go.clone());
+                }
+                self.shown.insert(killer, spells::KILL);
+                self.map
+                    .send(victim.0, meeting::headline("Your shield saved you!"));
+                let line = "A shield stopped a killing blow on you.";
+                self.map.send(victim.0, packets::system_message(line));
+                let line = "A shield stopped your kill.";
+                self.map.send(killer.0, packets::system_message(line));
+                if shielder != victim {
+                    let line = format!("Your shield on {} stopped a kill.", self.name(victim));
+                    self.map.send(shielder.0, packets::system_message(&line));
+                }
+            }
             _ => {}
         }
         self.show_fight(event);
@@ -721,6 +817,8 @@ impl Inner {
         if let Some(counter) = self.map.next_counter(victim.0) {
             self.map.send(victim.0, death::root(victim.0, counter));
         }
+        self.posture(victim).rooted = true;
+        self.dress(victim, Life::Dead);
         let change = player::life_change(victim.0, Life::Dead, self.max_health(victim));
         self.map.set_life(victim.0, Life::Dead, change);
         self.health.remove(&victim);
@@ -756,7 +854,11 @@ impl Inner {
             self.corpses.push(corpse);
         }
         let [run, swim] = death::GHOST_SPEEDS;
-        self.force_moves(g, was == Life::Dead, true, run, swim);
+        // A seat at the table or an effect may hold the ejected, as death holds the fallen.
+        let rooted = self.posture(player).rooted;
+        self.force_moves(g, rooted, true, run, swim);
+        // The wisp first, so a ghost seeing them for the first time sees the wisp.
+        self.dress(player, Life::Ghost);
         self.send_node_templates(g, Life::Ghost);
         let change = player::life_change(g, Life::Ghost, self.max_health(player));
         self.map.set_life(g, Life::Ghost, change);
@@ -771,7 +873,10 @@ impl Inner {
         };
         let g = player.0;
         let [run, swim] = death::LIVING_SPEEDS;
-        self.force_moves(g, was == Life::Dead, false, run, swim);
+        let rooted = self.posture(player).rooted;
+        self.force_moves(g, rooted, false, run, swim);
+        // Their own body again before the living are shown it.
+        self.dress(player, Life::Alive);
         if was == Life::Ghost {
             self.send_node_templates(g, Life::Alive);
         }
@@ -783,7 +888,7 @@ impl Inner {
 
     /// The acked movement changes of a death or a revival: an unroot if `unroot`, water or land
     /// walking, and the run and swim speeds, which later creates carry.
-    fn force_moves(&self, g: u64, unroot: bool, water_walk: bool, run: f32, swim: f32) {
+    fn force_moves(&mut self, g: u64, unroot: bool, water_walk: bool, run: f32, swim: f32) {
         let next = || self.map.next_counter(g).unwrap_or(0);
         if unroot {
             self.map.send(g, death::unroot(g, next()));
@@ -793,6 +898,142 @@ impl Inner {
         self.map.send(g, death::force_swim_speed(g, next(), swim));
         self.map.set_run_speed(g, run);
         self.map.set_swim_speed(g, swim);
+        let posture = self.posture(PlayerId(g));
+        posture.rooted = false;
+        posture.run = run;
+    }
+
+    /// `player`'s body as last shown.
+    fn posture(&mut self, player: PlayerId) -> &mut Posture {
+        self.postures.entry(player).or_default()
+    }
+
+    /// Dress `player`'s body for `life` and their effects now ([`player::bearing`]), if it changed.
+    fn dress(&mut self, player: PlayerId, life: Life) {
+        let Some(c) = self.map.character(player.0) else {
+            return;
+        };
+        let effects: Vec<Effect> = (self.game.player(player))
+            .map(|p| p.effects.keys().copied().collect())
+            .unwrap_or_default();
+        let bearing = player::bearing(&c, life, &effects);
+        if self.posture(player).bearing != bearing {
+            self.posture(player).bearing = bearing.clone();
+            self.map.set_bearing(player.0, bearing);
+        }
+    }
+
+    /// Show every player's body as the rules hold it: see [`Inner::refresh_body`].
+    fn refresh_bodies(&mut self) {
+        let ids: Vec<PlayerId> = (self.game.players())
+            .filter(|(_, p)| p.connected)
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            self.refresh_body(id);
+        }
+    }
+
+    /// Show `player`'s body as the rules hold it: their look and auras, stealth, and for the
+    /// living a root (an effect, or a seat at the meeting table from the call to the end of the
+    /// ejection) and their effects' run speed.
+    fn refresh_body(&mut self, player: PlayerId) {
+        let g = player.0;
+        if self.map.position(g).is_none() {
+            return;
+        }
+        let Some(p) = self.game.player(player) else {
+            return;
+        };
+        let life = self.fallen.get(&player).map_or(Life::Alive, |f| f.0);
+        let seated = matches!(
+            self.game.phase(),
+            Phase::Meeting(_) | Phase::Ejecting { .. }
+        );
+        let alive = life == Life::Alive;
+        let hidden = alive && p.is_hidden();
+        let rooted = alive && (seated || p.is_rooted());
+        let run = death::LIVING_SPEEDS[0] * p.speed();
+        self.dress(player, life);
+        if self.posture(player).hidden != hidden {
+            self.posture(player).hidden = hidden;
+            self.map.set_hidden(g, hidden);
+        }
+        if !alive {
+            return;
+        }
+        if self.posture(player).rooted != rooted {
+            self.posture(player).rooted = rooted;
+            if let Some(counter) = self.map.next_counter(g) {
+                let change = if rooted {
+                    death::root(g, counter)
+                } else {
+                    death::unroot(g, counter)
+                };
+                self.map.send(g, change);
+            }
+        }
+        if (self.posture(player).run - run).abs() > 1e-3 {
+            self.posture(player).run = run;
+            if let Some(counter) = self.map.next_counter(g) {
+                self.map.send(g, packets::force_run_speed(g, counter, run));
+            }
+            self.map.set_run_speed(g, run);
+        }
+    }
+
+    /// An ability's cast, shown to everyone who sees its user as the borrowed spell (Power Word:
+    /// Shield as the real one), with the user's cooldown sweep set to the rules' own.
+    fn show_ability(&mut self, player: PlayerId, ability: Ability, target: Option<PlayerId>) {
+        let button = spells::ability_spell(ability);
+        let spell = match ability {
+            Ability::PowerWordShield => spells::POWER_WORD_SHIELD,
+            _ => button,
+        };
+        let target = target.map_or(Target::Caster, |t| Target::Unit(t.0));
+        let start = spells::spell_start(player.0, spell, 0, target);
+        self.map.broadcast_about(player.0, &start);
+        let go = spells::spell_go(player.0, spell, target);
+        self.map.broadcast_about(player.0, &go);
+        self.shown.insert(player, spell);
+        // The cast starts the borrowed spell's own cooldown (Divine Shield's is 5 min): clear it,
+        // and forget the last sweep, so the refresh sends the rules' cooldown afresh.
+        self.map
+            .send(player.0, spells::clear_cooldown(player.0, button));
+        self.cooldowns.remove(&player);
+    }
+
+    /// What `bearer` reads in chat when `effect` lands on them for `duration`, from `by`.
+    fn effect_line(
+        &self,
+        effect: Effect,
+        duration: Duration,
+        by: PlayerId,
+        bearer: PlayerId,
+    ) -> String {
+        let secs = duration.as_secs_f32().ceil();
+        let by = if by == bearer {
+            String::new()
+        } else {
+            self.name(by)
+        };
+        match effect {
+            Effect::Stealth => {
+                format!("You are stealthed for {secs} s: the living cannot see you until you act.")
+            }
+            Effect::Shield => format!("{by} shields you: the next kill on you fails ({secs} s)."),
+            Effect::GhostWolf => format!("Ghost Wolf: you run faster for {secs} s."),
+            Effect::DivineShield => {
+                format!("Divine Shield: no kill or ability touches you for {secs} s.")
+            }
+            Effect::Polymorph => {
+                format!("{by} polymorphs you: a sheep for {secs} s, unable to act.")
+            }
+            Effect::Fear => format!("{by} fears you: {secs} s unable to move or act."),
+            Effect::Slow => format!("{by} hamstrings you: half speed for {secs} s."),
+            Effect::Frozen => format!("A freezing trap holds you for {secs} s."),
+            Effect::Rooted => format!("{by} roots you in place for {secs} s."),
+        }
     }
 
     /// Seat every living player in a ring around the meeting table (the emergency button),
@@ -856,6 +1097,7 @@ impl Inner {
             spells::KILL => p.kill_cooldown,
             spells::SABOTAGE => self.game.sabotage_cooldown(),
             s if s == spells::class_spell(p.class) => p.spell_cooldown,
+            s if s == spells::class_ability(p.class) => p.ability_cooldown,
             _ => return None,
         };
         (!left.is_zero()).then_some(left)
@@ -1090,6 +1332,16 @@ impl Inner {
                 Some(kind) => Request::Sabotage(kind),
                 None => return Err(no_sabotage(g, player)),
             },
+            // The ability lands on the player the client aimed at, or on its user.
+            spell if self.is_ability(player, spell) => {
+                let target = match cast.target {
+                    Target::Unit(unit) if g.player(PlayerId(unit)).is_some() => {
+                        Some(PlayerId(unit))
+                    }
+                    _ => None,
+                };
+                return Ok(Command::UseAbility { player, target });
+            }
             spell if spell == self.class_spell(player) => {
                 return match cast.target {
                     Target::Unit(unit) => guid::creature_id(unit)
@@ -1124,7 +1376,14 @@ impl Inner {
                     _ => Err(Reject::NoSabotage),
                 }
             }
+            // A trap is sprung by stepping on it, not by a click.
+            Fixture::Trap(_) => Err(Reject::InvalidTarget),
         }
+    }
+
+    /// Whether `spell` is `player`'s class ability button.
+    fn is_ability(&self, player: PlayerId, spell: u32) -> bool {
+        (self.game.player(player)).is_some_and(|p| spells::class_ability(p.class) == spell)
     }
 
     /// Show a beacon over each station of the running sabotage still to fix, and take down the
@@ -1372,7 +1631,10 @@ impl Inner {
         let now: Vec<(PlayerId, Vec<(u32, Duration)>)> = (g.players())
             .filter(|(_, p)| p.connected)
             .map(|(id, p)| {
-                let mut cds = vec![(spells::class_spell(p.class), p.spell_cooldown)];
+                let mut cds = vec![
+                    (spells::class_spell(p.class), p.spell_cooldown),
+                    (spells::class_ability(p.class), p.ability_cooldown),
+                ];
                 if playing && p.is_impostor() {
                     cds.push((spells::KILL, p.kill_cooldown));
                     if g.sabotage().is_none() {
@@ -3191,5 +3453,225 @@ mod tests {
             fake.details
         );
         assert_eq!(parse(host.quest_query(crew[0], task).unwrap()).title, name);
+    }
+
+    /// A started game with player `i + 1` fighting as WoW class `classes[i]`, no cooldowns in the
+    /// way; everyone stands at the spawn.
+    fn started_as(classes: &[u8]) -> (GameHost, Vec<UnboundedReceiver<Packet>>) {
+        let settings = Settings {
+            initial_ability_cooldown: Duration::ZERO,
+            ..quick()
+        };
+        let map = Map::default();
+        let host = GameHost::new(
+            settings,
+            placeholder_layout(),
+            placeholder_look(),
+            map.clone(),
+        );
+        host.set_start_countdown(Duration::ZERO);
+        let mut inboxes = Vec::new();
+        for (i, &class) in classes.iter().enumerate() {
+            let guid = i as u64 + 1;
+            let (tx, rx) = unbounded_channel();
+            let character = CharacterRecord {
+                guid,
+                name: format!("P{guid}"),
+                race: 1,
+                class,
+                gender: 0,
+                skin: 0,
+                face: 0,
+                hair_style: 0,
+                hair_color: 0,
+                facial_hair: 0,
+                level: 1,
+            };
+            map.enter(character, tx, player::spawn_living());
+            host.join(guid, class);
+            inboxes.push(rx);
+        }
+        host.request(1, Request::Start);
+        drain(&mut inboxes);
+        (host, inboxes)
+    }
+
+    /// The display ids `seen` gives `guid`, in order.
+    fn displays(seen: &[ServerPacket], guid: u64) -> Vec<i32> {
+        (changes_of(seen, guid).iter())
+            .filter_map(|f| f.unit_displayid())
+            .collect()
+    }
+
+    /// The live aura spells of the last values update `seen` gives `guid`.
+    fn auras(seen: &[ServerPacket], guid: u64) -> Vec<(u8, u32)> {
+        (changes_of(seen, guid).last())
+            .map(|f| f.unit_auras().map(|a| (a.slot, a.spell_id)).collect())
+            .unwrap_or_default()
+    }
+
+    fn system_lines(seen: &[ServerPacket]) -> Vec<String> {
+        (seen.iter())
+            .filter_map(|p| match p {
+                ServerPacket::MessageChat(m) if !m.is_addon() && m.chat_type != 0x58 => {
+                    Some(m.text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    const MAGE: u8 = 8;
+    const ROGUE: u8 = 4;
+    const HUNTER: u8 = 3;
+    const PRIEST: u8 = 5;
+    const WARRIOR: u8 = 1;
+
+    #[test]
+    fn a_polymorph_press_makes_a_sheep_everyone_sees_until_it_wears_off() {
+        let (host, mut inboxes) = started_as(&[MAGE, WARRIOR, WARRIOR]);
+        cast(&host, 1, 29848, Target::Unit(2));
+        let watcher = received(&mut inboxes[2]);
+        assert_eq!(displays(&watcher, 2), [player::SHEEP_DISPLAY as i32]);
+        assert_eq!(auras(&watcher, 2), [(40, 29848)]);
+        assert_eq!(launches(&watcher, 29848), [1], "the cast is seen");
+        let sheep = received(&mut inboxes[1]);
+        assert!(system_lines(&sheep)
+            .iter()
+            .any(|l| l == "P1 polymorphs you: a sheep for 10 s, unable to act."));
+        assert_eq!(run_speeds(&sheep), [death::LIVING_SPEEDS[0] * 0.5]);
+        host.tick(Duration::from_secs(10));
+        let watcher = received(&mut inboxes[2]);
+        assert_eq!(displays(&watcher, 2), [49], "back to a human");
+        assert!(auras(&watcher, 2).is_empty());
+        assert_eq!(
+            run_speeds(&received(&mut inboxes[1])),
+            [death::LIVING_SPEEDS[0]]
+        );
+    }
+
+    #[test]
+    fn an_ability_press_without_a_target_says_to_pick_one() {
+        let (host, mut inboxes) = started_as(&[MAGE, WARRIOR, WARRIOR]);
+        cast(&host, 1, 29848, Target::Caster);
+        assert_eq!(
+            notifications(received(&mut inboxes[0])),
+            ["Target another living player"]
+        );
+    }
+
+    #[test]
+    fn the_ability_cooldown_replaces_the_borrowed_spells_own() {
+        let (host, mut inboxes) = started_as(&[MAGE, WARRIOR, WARRIOR]);
+        cast(&host, 1, 29848, Target::Unit(2));
+        let seen = received(&mut inboxes[0]);
+        let clear = (seen.iter()).position(|p| {
+            matches!(
+                p,
+                ServerPacket::ClearCooldown {
+                    spell_id: 29848,
+                    caster: 1
+                }
+            )
+        });
+        let sweep = (seen.iter()).position(|p| matches!(p, ServerPacket::SpellCooldownList { .. }));
+        assert!(
+            clear.unwrap() < sweep.unwrap(),
+            "cleared, then the rules' sweep"
+        );
+    }
+
+    #[test]
+    fn stealth_takes_the_rogue_from_the_living_until_it_runs_out() {
+        let (host, mut inboxes) = started_as(&[ROGUE, WARRIOR, WARRIOR]);
+        cast(&host, 1, 1784, Target::Caster);
+        assert_eq!(destroyed(&received(&mut inboxes[1])), [1]);
+        assert_eq!(auras(&received(&mut inboxes[0]), 1), [(0, 1784)]);
+        host.tick(Duration::from_secs(30));
+        assert!(created(&received(&mut inboxes[1])).contains(&1));
+    }
+
+    #[test]
+    fn a_freezing_trap_shows_to_its_hunter_alone_and_holds_whoever_steps_on_it() {
+        let (host, mut inboxes) = started_as(&[HUNTER, WARRIOR, WARRIOR]);
+        host.moved(1, [-8940.0, -132.0, 83.5]);
+        cast(&host, 1, 1499, Target::Caster);
+        let trap = Fixture::trap(1).guid();
+        assert!(created(&received(&mut inboxes[0])).contains(&trap));
+        assert!(!created(&received(&mut inboxes[1])).contains(&trap));
+        host.moved(2, [-8941.0, -132.0, 83.5]);
+        let caught = received(&mut inboxes[1]);
+        assert!(modes(&caught, 2).contains(&(MoveMode::Root, true)));
+        let flags = changes_of(&caught, 2).last().unwrap().unit_flags();
+        assert_ne!(flags & 0x0004_0000, 0, "stunned in the ice");
+        assert!(destroyed(&received(&mut inboxes[0])).contains(&trap));
+    }
+
+    #[test]
+    fn a_shield_takes_the_kill_and_nobody_falls() {
+        let (host, mut inboxes) = started_as(&[PRIEST, PRIEST, PRIEST, PRIEST]);
+        let (imp, crew) = roles(&host);
+        let (priest, victim) = (crew[0], crew[1]);
+        cast(&host, priest, 1908, Target::Unit(victim));
+        let seen = received(&mut inboxes[imp as usize - 1]);
+        assert_eq!(launches(&seen, spells::POWER_WORD_SHIELD), [priest]);
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+        assert!(host.lock().game.player(PlayerId(victim)).unwrap().alive);
+        let mine = received(&mut inboxes[victim as usize - 1]);
+        assert!(mine.iter().any(|p| matches!(p,
+            ServerPacket::MessageChat(m) if m.text == "Your shield saved you!")));
+        assert!(health_of(&mine, victim).iter().all(|&h| h > 0));
+        assert!(system_lines(&received(&mut inboxes[priest as usize - 1]))
+            .contains(&format!("Your shield on P{victim} stopped a kill.")));
+    }
+
+    #[test]
+    fn a_meeting_holds_the_living_in_their_seats_and_lets_them_go_after() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        let (victim, reporter) = (crew[0], crew[1]);
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+        drain(&mut inboxes);
+        host.request(reporter, Request::Report);
+        for g in [imp, reporter, crew[2]] {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            assert_eq!(modes(&seen, g), [(MoveMode::Root, true)], "{g} held");
+        }
+        // The ghost is not pulled in or held: its release unroots it once.
+        let ghost = received(&mut inboxes[victim as usize - 1]);
+        assert!(!modes(&ghost, victim).contains(&(MoveMode::Root, true)));
+        assert!(!ghost
+            .iter()
+            .any(|p| matches!(p, ServerPacket::Teleport { .. })));
+        // Everyone skips; after the reveal, play resumes from the seats.
+        for g in [imp, reporter, crew[2]] {
+            host.tick(Duration::ZERO);
+            cast(&host, g, spells::SKIP_VOTE, Target::Caster);
+        }
+        host.tick(Duration::from_secs(15));
+        for g in [imp, reporter, crew[2]] {
+            cast(&host, g, spells::SKIP_VOTE, Target::Caster);
+        }
+        drain(&mut inboxes);
+        host.tick(Duration::from_secs(6));
+        for g in [imp, reporter, crew[2]] {
+            let seen = received(&mut inboxes[g as usize - 1]);
+            assert_eq!(modes(&seen, g), [(MoveMode::Root, false)], "{g} free");
+            assert!(!seen
+                .iter()
+                .any(|p| matches!(p, ServerPacket::Teleport { .. })));
+        }
+    }
+
+    #[test]
+    fn a_ghost_is_a_wisp_to_itself_and_other_ghosts() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        let victim = crew[0];
+        cast(&host, imp, spells::KILL, Target::Unit(victim));
+        host.release_spirit(victim);
+        let mine = received(&mut inboxes[victim as usize - 1]);
+        assert_eq!(
+            displays(&mine, victim).last(),
+            Some(&(player::WISP_DISPLAY as i32))
+        );
     }
 }

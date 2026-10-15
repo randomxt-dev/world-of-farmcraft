@@ -32,6 +32,23 @@ foreach ($f in 'index.html', 'wasi_stubs.js', 'boot.js', 'platform.js', 'bridge.
     $src = Join-Path 'web' $f
     if (Test-Path $src) { Copy-Item $src $dist }
 }
+# The world-entry prefetch also warms Northshire (read-set.ps1's cut of a request log): its
+# terrain, buildings, doodads and textures, which the client otherwise fetches one at a time
+# under the loading screen.
+$readSet = Join-Path $PSScriptRoot 'northshire-manifest.json'
+$worldManifest = Join-Path $dist 'world-manifest.json'
+if ((Test-Path $readSet) -and (Test-Path $worldManifest)) {
+    $world = Get-Content -Raw $worldManifest | ConvertFrom-Json
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $names = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($name in @($world.names) + @((Get-Content -Raw $readSet | ConvertFrom-Json).names)) {
+        if ($seen.Add($name)) { $names.Add($name) }
+    }
+    $lines = $names | ForEach-Object { $_ | ConvertTo-Json }
+    $json = "{`n`"version`": $($world.version),`n`"names`": [`n" + ($lines -join ",`n") + "`n]`n}`n"
+    [IO.File]::WriteAllText($worldManifest, $json, (New-Object Text.UTF8Encoding($false)))
+    "world-manifest.json: $($names.Count) names"
+}
 New-Item -ItemType Directory -Force (Join-Path $dist 'examples') | Out-Null
 Copy-Item 'web\examples\*.js' (Join-Path $dist 'examples')
 

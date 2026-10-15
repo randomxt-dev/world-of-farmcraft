@@ -15,6 +15,10 @@ pub const USE: u32 = 6602;
 pub const REPORT: u32 = 6468;
 /// Self Destruct: the Sabotage button.
 pub const SABOTAGE: u32 = 9874;
+/// "Tag: Arrow" (Hunter's Mark's crosshair, `Ability_Hunter_SniperShot`): vote for the target.
+/// Instant and ungated, and its implicit target 25 takes any unit, so the client sends the
+/// selected player.
+pub const VOTE: u32 = 20374;
 /// Negative Charge: skip the vote.
 pub const SKIP_VOTE: u32 = 28084;
 
@@ -45,9 +49,9 @@ pub fn class_school(class: Class) -> u8 {
 }
 
 /// Slots on the main bar.
-pub const BAR_SLOTS: usize = 6;
+pub const BAR_SLOTS: usize = 7;
 
-/// The main bar, slots 0-5 (keys 1-6): fight, the buttons everyone has, then the impostor's two;
+/// The main bar, slots 0-6 (keys 1-7): fight, the buttons everyone has, then the impostor's two;
 /// 0 is an empty slot, so a crewmate's bar shows no Kill or Sabotage.
 pub fn main_bar(class: Class, impostor: bool) -> [u32; BAR_SLOTS] {
     let (kill, sabotage) = if impostor { (KILL, SABOTAGE) } else { (0, 0) };
@@ -55,6 +59,7 @@ pub fn main_bar(class: Class, impostor: bool) -> [u32; BAR_SLOTS] {
         ATTACK,
         class_spell(class),
         REPORT,
+        VOTE,
         SKIP_VOTE,
         kill,
         sabotage,

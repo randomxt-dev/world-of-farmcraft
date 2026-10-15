@@ -73,6 +73,13 @@ pub fn abilities(settings: &Settings) -> Vec<Ability> {
                 .into(),
         ),
         button(
+            spells::VOTE,
+            "Tag: Arrow",
+            "Vote",
+            None,
+            "During a meeting's vote, vote to eject your target.".into(),
+        ),
+        button(
             spells::SKIP_VOTE,
             "Negative Charge",
             "Skip Vote",

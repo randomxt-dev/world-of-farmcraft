@@ -204,19 +204,35 @@ impl GameHost {
                     (Reject::OnCooldown, Some(left)) => {
                         format!("Ready in {} s", left.as_secs_f32().ceil())
                     }
+                    (Reject::InvalidTarget, _) if cast.spell == spells::VOTE => {
+                        "Target a player to vote for them".into()
+                    }
                     _ => sentence(r),
                 };
                 map.send(guid, spells::notification(&why));
             }
-            Ok(_) => match inner.shown.get(&player) {
-                Some(&shown) if shown == cast.spell => {}
-                // Shown as another spell (a task's gathering cast): free the pressed one.
-                Some(_) => map.send(guid, spells::cast_ok(cast.spell)),
-                None => {
-                    map.send(guid, spells::spell_start(guid, cast.spell, 0, cast.target));
-                    map.send(guid, spells::spell_go(guid, cast.spell, cast.target));
+            Ok(_) => {
+                // The voter alone reads whom they voted for, as a system line in their chat.
+                let receipt = match (cast.spell, cast.target) {
+                    (spells::VOTE, Target::Unit(target)) => {
+                        Some(format!("You voted for {}.", inner.name(PlayerId(target))))
+                    }
+                    (spells::SKIP_VOTE, _) => Some("You voted to skip.".to_owned()),
+                    _ => None,
+                };
+                if let Some(line) = receipt {
+                    map.send(guid, packets::system_message(&line));
                 }
-            },
+                match inner.shown.get(&player) {
+                    Some(&shown) if shown == cast.spell => {}
+                    // Shown as another spell (a task's gathering cast): free the pressed one.
+                    Some(_) => map.send(guid, spells::cast_ok(cast.spell)),
+                    None => {
+                        map.send(guid, spells::spell_start(guid, cast.spell, 0, cast.target));
+                        map.send(guid, spells::spell_go(guid, cast.spell, cast.target));
+                    }
+                }
+            }
         }
     }
 
@@ -1038,6 +1054,15 @@ impl Inner {
                 _ => Request::Kill,
             },
             spells::REPORT => Request::Report,
+            // Vote names the player the client aimed at; no target, or oneself, is no vote.
+            spells::VOTE => match cast.target {
+                Target::Unit(target)
+                    if target != player.0 && g.player(PlayerId(target)).is_some() =>
+                {
+                    Request::Vote(Vote::Player(PlayerId(target)))
+                }
+                _ => return Err(Reject::InvalidTarget),
+            },
             spells::SKIP_VOTE => Request::Vote(Vote::Skip),
             spells::SABOTAGE => match g.sabotage_target(player) {
                 Some(kind) => Request::Sabotage(kind),
@@ -2734,6 +2759,30 @@ mod tests {
         );
         assert_eq!(host.vote_by_name(crew[1], Some("skip")), "Already voted.");
         assert_eq!(host.vote_by_name(imp, Some("SKIP")), "You voted to skip.");
+    }
+
+    #[test]
+    fn the_vote_button_votes_for_the_target_and_tells_only_the_voter() {
+        let (host, mut inboxes, imp, crew) = four_with_one_far();
+        cast(&host, imp, spells::KILL, Target::Unit(crew[0]));
+        host.request(crew[1], Request::Report);
+        host.tick(Duration::from_secs(15));
+        drain(&mut inboxes);
+        let voter = crew[1] as usize - 1;
+        for aim in [Target::Caster, Target::Unit(crew[1])] {
+            cast(&host, crew[1], spells::VOTE, aim);
+            assert!(
+                received(&mut inboxes[voter]).iter().any(|p| matches!(p,
+                    ServerPacket::Notification { text } if text == "Target a player to vote for them")),
+                "{aim:?}"
+            );
+        }
+        cast(&host, crew[1], spells::VOTE, Target::Unit(imp));
+        assert!(chat_lines(&mut inboxes[voter]).contains(&format!("You voted for P{imp}.")));
+        let other = crew[2] as usize - 1;
+        assert!(!(chat_lines(&mut inboxes[other]).iter()).any(|l| l.starts_with("You voted")));
+        cast(&host, imp, spells::SKIP_VOTE, Target::Caster);
+        assert!(chat_lines(&mut inboxes[imp as usize - 1]).contains(&"You voted to skip.".into()));
     }
 
     #[test]

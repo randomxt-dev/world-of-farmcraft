@@ -34,6 +34,13 @@ struct Args {
     /// Caddy); the invite then names it instead of localhost, tunnels and Tailscale.
     #[arg(long, value_name = "URL")]
     public_url: Option<String>,
+    /// Write every `/data` request to this file (time, status, duration, method, name), the
+    /// input to `crates/among-web/read-set.ps1`.
+    #[arg(long)]
+    request_log: Option<PathBuf>,
+    /// Hold every `/data` answer this long, a remote player's round trip on a local run.
+    #[arg(long, hide = true, default_value_t = 0)]
+    data_delay_ms: u64,
     #[command(flatten)]
     server: ServerArgs,
 }
@@ -72,13 +79,18 @@ async fn main() -> Result<()> {
     }
     // The relay dials the game server on this machine, whatever interface it listens on.
     let lobbies = server.lobbies();
-    let web = wenilla_host::data::router(chain)
+    let data = among_host::cache_missing(wenilla_host::data::router(chain));
+    let web = among_host::delayed(data, std::time::Duration::from_millis(args.data_delay_ms))
         .merge(among_host::relay::router(
             lobbies.clone(),
             [auth_port, world_port],
         ))
         .merge(wenilla_host::static_site::router(&www));
-    let web = among_host::app(web, lobbies, among_host::Limiter::default());
+    let mut web = among_host::app(web, lobbies, among_host::Limiter::default());
+    if let Some(file) = &args.request_log {
+        web = among_host::request_log(web, file)
+            .with_context(|| format!("creating the request log {}", file.display()))?;
+    }
     let listener = tokio::net::TcpListener::bind(&args.web)
         .await
         .with_context(|| format!("binding the web page on {}", args.web))?;

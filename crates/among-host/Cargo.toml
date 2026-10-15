@@ -21,9 +21,11 @@ benilla-formats = { path = "../benilla-formats", default-features = false }
 axum = { version = "0.8", features = ["ws"] }
 # The relay's two directions, as wenilla's own relay splits them.
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util", "time"] }
 # `tailscale status --json`, for the invite's HTTPS name.
 serde_json = "1"
+# `--request-log` writes `/data` names decoded the way wenilla-host decodes them.
+percent-encoding = "2.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

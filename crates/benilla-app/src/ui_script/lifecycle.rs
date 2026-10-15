@@ -193,6 +193,8 @@ enum EntryStage {
 /// runs, so a single slow file still makes progress; the budget only decides whether a *second*
 /// step starts. The frames it yields to are the loading cover's, cheap to render.
 const ENTRY_LOAD_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+/// wenilla: the browser's slice while the cover is up, whose frames draw only the cover.
+const COVERED_WEB_LOAD_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// What the load reads out of the world before its first file, carried across the slices.
 #[derive(Default)]
@@ -417,7 +419,12 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
                 return;
             }
         }
-        if frame_start.elapsed() >= ENTRY_LOAD_FRAME_BUDGET {
+        let budget = if covering && cfg!(target_arch = "wasm32") {
+            COVERED_WEB_LOAD_FRAME_BUDGET
+        } else {
+            ENTRY_LOAD_FRAME_BUDGET
+        };
+        if frame_start.elapsed() >= budget {
             break; // resume next frame
         }
     }

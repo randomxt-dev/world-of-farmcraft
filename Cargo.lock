@@ -193,6 +193,7 @@ dependencies = [
  "benilla-formats",
  "clap",
  "futures-util",
+ "percent-encoding",
  "serde_json",
  "tokio",
  "tower",

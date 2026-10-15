@@ -230,7 +230,9 @@ impl Chain {
 
     /// The chain file's Data URL scheme address — the client half of the Lane A ↔ Lane H contract.
     fn url_for(&self, name: &str) -> String {
-        format!("{}/{}", self.base, crate::web::encode_name(name))
+        // wenilla: `\` whatever the caller wrote, so a file is one URL and one HTTP cache entry.
+        let name = name.replace('/', "\\");
+        format!("{}/{}", self.base, crate::web::encode_name(&name))
     }
 
     /// The index's key for a name: MPQ hashing's equivalence — case-insensitive, `/` ≡ `\`.

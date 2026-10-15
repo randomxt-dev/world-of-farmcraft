@@ -64,13 +64,12 @@ pub const MPQ_SOURCE: &str = "mpq";
 /// A Bevy [`AssetReader`] over the MPQ patch chain; every clone shares the one open [`Chain`].
 #[derive(Clone)]
 pub struct MpqAssetReader {
-    // On `wasm32` this field is written (by `open`, so a caller building one behaves identically
-    // on both targets) but never read: `read` below talks to the web host directly with an async
-    // `fetch` rather than through `Chain`'s synchronous `XMLHttpRequest`, because `AssetReader` is
-    // already async everywhere Bevy calls it and blocking the main thread inside an `async fn`
-    // would be silly when it doesn't have to (`Chain::read`'s sync XHR exists for the ~60 call
-    // sites that read the chain synchronously off the main thread, which this isn't one of).
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    // On `wasm32` this field answers only the name index and the URL: `read` below talks to the
+    // web host directly with an async `fetch` rather than through `Chain`'s synchronous
+    // `XMLHttpRequest`, because `AssetReader` is already async everywhere Bevy calls it and
+    // blocking the main thread inside an `async fn` would be silly when it doesn't have to
+    // (`Chain::read`'s sync XHR exists for the ~60 call sites that read the chain synchronously
+    // off the main thread, which this isn't one of).
     chain: Arc<Chain>,
 }
 
@@ -102,9 +101,8 @@ impl AssetReader for MpqAssetReader {
         Ok(VecReader::new(bytes))
     }
 
-    // The web target has no filesystem, so there is no `Chain::contains` pre-check to make cheaply
-    // — a fetch is the only way to find out either answer, so `read` just does the one fetch and
-    // turns a 404 into `NotFound` (see `wasm_fetch`).
+    // The web target has no filesystem: the chain's name index stands in for the native
+    // `contains` pre-check, and the one fetch turns a 404 into `NotFound` (see `wasm_fetch`).
     #[cfg(target_arch = "wasm32")]
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let raw = path
@@ -114,11 +112,11 @@ impl AssetReader for MpqAssetReader {
         // archive name the web host resolves.
         let stripped = strip_sampler_marker(raw);
         let internal = stripped.as_deref().unwrap_or(raw);
-        let url = format!(
-            "{}/{}",
-            benilla_formats::web::data_base(),
-            benilla_formats::web::encode_name(internal)
-        );
+        // wenilla: the chain's name index answers an absent name (`_s.blp` probes) without a 404.
+        let url = self
+            .chain
+            .url_for_name(internal)
+            .ok_or_else(|| AssetReaderError::NotFound(path.to_path_buf()))?;
         let bytes = wasm_fetch(&url).await.map_err(|e| match e {
             WasmFetchError::NotFound => AssetReaderError::NotFound(path.to_path_buf()),
             WasmFetchError::Other(msg) => {

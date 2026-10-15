@@ -8,6 +8,7 @@ pub mod install;
 pub mod landmarks;
 pub mod lua_hooks;
 pub mod quest_watch;
+pub mod sabotage_view;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 
@@ -20,6 +21,7 @@ impl PluginGroup for AmongAzerothPlugins {
             .add(lua_hooks::LuaHooksPlugin)
             .add(ability_text::AbilityTextPlugin)
             .add(quest_watch::QuestWatchPlugin)
+            .add(sabotage_view::SabotageViewPlugin)
             .add(landmarks::NoLandmarksPlugin)
     }
 }

@@ -54,7 +54,8 @@ pub struct Survey {
     marks: Arc<Mutex<BTreeMap<String, Mark>>>,
 }
 
-const USAGE: &str = "Survey: .loc, .mark <name>, .unmark <name>, .marks, .speed <x>";
+const USAGE: &str =
+    "Survey: .loc, .mark <name>, .unmark <name>, .marks, .near, .goto <name>, .speed <x>";
 
 impl Survey {
     /// The survey saved at `path`, with whatever marks it already holds.
@@ -100,9 +101,16 @@ impl Survey {
                 }
             }
             ("marks", None, false) => list(&marks),
+            ("near", None, false) => nearest(&marks, &here, 5),
             _ => vec![USAGE.into()],
         };
         Some(reply)
+    }
+
+    /// The mark named `name`, for `.goto`.
+    pub fn get(&self, name: &str) -> Option<Mark> {
+        let marks = self.marks.lock().unwrap_or_else(PoisonError::into_inner);
+        marks.get(name).copied()
     }
 
     /// "" when the marks reached the file, else why not, as a suffix for the reply.
@@ -133,6 +141,28 @@ fn describe(m: &Mark) -> String {
     )
 }
 
+/// The `n` marks nearest `here` on its map, with their distance in yards: what to fix where you
+/// stand.
+fn nearest(marks: &BTreeMap<String, Mark>, here: &Mark, n: usize) -> Vec<String> {
+    let mut near: Vec<(f32, &str)> = (marks.iter())
+        .filter(|(_, m)| m.map == here.map)
+        .map(|(name, m)| {
+            let d = (0..3)
+                .map(|i| (m.at[i] - here.at[i]).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            (d, name.as_str())
+        })
+        .collect();
+    if near.is_empty() {
+        return vec!["No marks on this map.".into()];
+    }
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (near.iter().take(n))
+        .map(|(d, name)| format!("{name}: {d:.1} yd"))
+        .collect()
+}
+
 /// The mark names, a few per line so each chat line stays short.
 fn list(marks: &BTreeMap<String, Mark>) -> Vec<String> {
     if marks.is_empty() {
@@ -160,6 +190,24 @@ mod tests {
         at: [-8949.95, -132.493, 83.5312],
         facing: 1.5,
     };
+
+    #[test]
+    fn near_lists_the_closest_marks_first_with_their_distance() {
+        let s = temp_survey("near");
+        let at = |dx: f32| Mark {
+            at: [HERE.at[0] + dx, HERE.at[1], HERE.at[2]],
+            ..HERE
+        };
+        s.command(".mark far", at(30.0)).unwrap();
+        s.command(".mark close", at(3.0)).unwrap();
+        s.command(".mark mid", at(12.5)).unwrap();
+        assert_eq!(
+            s.command(".near", HERE).unwrap(),
+            ["close: 3.0 yd", "mid: 12.5 yd", "far: 30.0 yd"]
+        );
+        assert_eq!(s.get("mid"), Some(at(12.5)));
+        assert_eq!(s.get("nowhere"), None);
+    }
 
     #[test]
     fn plain_chat_is_not_a_command() {

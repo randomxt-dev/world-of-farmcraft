@@ -691,6 +691,29 @@ fn only_the_lobby_host_may_survey() {
 }
 
 #[test]
+fn goto_takes_the_host_back_to_a_mark() {
+    let marks = temp_marks("goto");
+    let host = start_server_full(1, Settings::default(), marks);
+    let (mut me, guid) = enter(&host, "among1", "secret1");
+    assert!(wait_system_line(&mut me).starts_with("You host this game"));
+    me.start_forward([-8930.5, -120.25, 84.0], 0.5).unwrap();
+    me.send_chat(".mark herb-north").unwrap();
+    assert!(wait_system_line(&mut me).starts_with("Marked herb-north"));
+    me.start_forward([-8960.0, -140.0, 84.0], 0.0).unwrap();
+    me.send_chat(".goto herb-north").unwrap();
+    let to = wait_for(&mut me, |p| match p {
+        ServerPacket::Teleport {
+            guid: g, position, ..
+        } if *g == guid => Some([position.x, position.y, position.z]),
+        _ => None,
+    });
+    assert_eq!(to, [-8930.5, -120.25, 84.0]);
+    assert_eq!(wait_system_line(&mut me), "Went to herb-north.");
+    me.send_chat(".goto nowhere").unwrap();
+    assert_eq!(wait_system_line(&mut me), "No mark named nowhere.");
+}
+
+#[test]
 fn typing_mark_in_chat_records_where_you_stand() {
     let marks = temp_marks("survey");
     let host = start_server_full(1, Settings::default(), marks.clone());

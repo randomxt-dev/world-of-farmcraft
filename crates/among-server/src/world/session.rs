@@ -333,8 +333,10 @@ impl Session {
                 "Only the lobby host can use survey commands.",
             ));
         }
-        if let Some(".speed") = words.next() {
-            return self.set_speed(guid, words.next(), words.next().is_some());
+        match words.next() {
+            Some(".speed") => return self.set_speed(guid, words.next(), words.next().is_some()),
+            Some(".goto") => return self.goto(guid, words.next()),
+            _ => {}
         }
         let Some(pose) = self.map.pose(guid) else {
             return Ok(());
@@ -350,6 +352,23 @@ impl Session {
             self.send(packets::system_message(&line))?;
         }
         Ok(())
+    }
+
+    /// `.goto <mark>`: stand on a surveyed mark to check or redo it, never during a game.
+    fn goto(&self, guid: u64, name: Option<&str>) -> Result<()> {
+        let reply = match name.map(|n| (n, self.survey.get(n))) {
+            None => "Usage: .goto <mark>".to_owned(),
+            Some(_) if self.host.in_game() => "Not during a game.".to_owned(),
+            Some((n, None)) => format!("No mark named {n}."),
+            Some((n, Some(mark))) if mark.map != player::SPAWN.map => {
+                format!("{n} is on map {}, not this one.", mark.map)
+            }
+            Some((n, Some(mark))) => {
+                self.map.teleport(guid, mark.at, mark.facing);
+                format!("Went to {n}.")
+            }
+        };
+        self.send(packets::system_message(&reply))
     }
 
     /// `.speed [multiplier]`: run faster for surveying, never during a game.

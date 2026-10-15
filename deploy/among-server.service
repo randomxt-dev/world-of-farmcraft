@@ -10,7 +10,8 @@ User=among
 WorkingDirectory=/opt/among-azeroth
 EnvironmentFile=/etc/among-azeroth.env
 # Unbraced $VARS split on spaces and vanish when empty: LAYOUT_ARGS and OWNER_ARGS are optional.
-ExecStart=/opt/among-azeroth/among-server --bind 0.0.0.0 --advertise ${PUBLIC_IP} --lobby-code ${LOBBY_CODE} $LAYOUT_ARGS $OWNER_ARGS
+# `::` is dual-stack on Linux: IPv6 and IPv4 both reach the game, so a domain with AAAA works.
+ExecStart=/opt/among-azeroth/among-server --bind :: --advertise ${PUBLIC_IP} --lobby-code ${LOBBY_CODE} $LAYOUT_ARGS $OWNER_ARGS
 Restart=always
 RestartSec=2
 NoNewPrivileges=yes

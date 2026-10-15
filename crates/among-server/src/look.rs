@@ -104,13 +104,88 @@ pub fn named(name: &str) -> Option<NodeLook> {
     })
 }
 
-/// A creature's model and level.
+/// A creature's model, size, level, type and the weapon it holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreatureLook {
     /// `CreatureDisplayInfo.dbc` id.
     pub display: u32,
+    /// `OBJECT_FIELD_SCALE_X`, which the client sizes the model by alone: the display's native
+    /// scale (`CreatureModelData.modelScale` x `CreatureDisplayInfo.scale`) for a faithful size.
     pub scale: f32,
     pub level: u32,
+    pub kind: CreatureType,
+    /// The main-hand weapon it wields, shown with no item behind it.
+    pub weapon: Option<Weapon>,
+}
+
+/// `CREATURE_TYPE_*`: what the tooltip names and what a spell's target-type check reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreatureType {
+    Beast = 1,
+    Humanoid = 7,
+}
+
+/// The kinds a layout file may give a creature, by `kind = "<name>"`.
+pub const CREATURE_TYPE_NAMES: [&str; 2] = ["beast", "humanoid"];
+
+impl CreatureType {
+    /// The type a layout file names.
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "beast" => Some(Self::Beast),
+            "humanoid" => Some(Self::Humanoid),
+            _ => None,
+        }
+    }
+}
+
+/// A creature's virtual weapon: what vmangos `Creature::SetVirtualItem` copies from the item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Weapon {
+    /// `ItemDisplayInfo.dbc` id.
+    pub display: u32,
+    pub class: u8,
+    pub subclass: u8,
+    /// Keys the draw and stow sound only.
+    pub material: u8,
+    pub inventory_type: u8,
+    pub sheath: u8,
+}
+
+/// The weapons a layout file may name, by `weapon = "<name>"` ("none" for bare hands).
+pub const WEAPON_NAMES: [&str; 3] = ["none", "staff", "sword"];
+
+impl Weapon {
+    /// Item 5276 "Monster - Staff, 3 Piece Taped Staff": a two-hand staff (class 2, subclass
+    /// 10, inventory type 17, sheath 2), material 2 wood assumed.
+    pub const TAPED_STAFF: Self = Self {
+        display: 5010,
+        class: 2,
+        subclass: 10,
+        material: 2,
+        inventory_type: 17,
+        sheath: 2,
+    };
+    /// Item 1896 "Monster - Sword, Short Basic": a one-hand sword (class 2, subclass 7,
+    /// inventory type 13, sheath 3), material 1 metal assumed.
+    pub const SHORT_SWORD: Self = Self {
+        display: 1593,
+        class: 2,
+        subclass: 7,
+        material: 1,
+        inventory_type: 13,
+        sheath: 3,
+    };
+
+    /// The weapon a layout file names: `Some(None)` for "none", `None` for an unknown name.
+    pub fn named(name: &str) -> Option<Option<Self>> {
+        match name {
+            "none" => Some(None),
+            "staff" => Some(Some(Self::TAPED_STAFF)),
+            "sword" => Some(Some(Self::SHORT_SWORD)),
+            _ => None,
+        }
+    }
 }
 
 /// The dressing for one [`Layout`]: per task, per step, the node (`None` for a Slay step, which
@@ -140,7 +215,7 @@ impl Look {
 }
 
 impl Look {
-    /// Every cast step a copper vein to mine, every creature a wolf: a look that fits
+    /// Every cast step a copper vein to mine, every creature its name's look: a look that fits
     /// any layout.
     pub fn plain(layout: &Layout) -> Self {
         Self {
@@ -159,19 +234,52 @@ impl Look {
             creatures: layout
                 .creatures
                 .iter()
-                .map(|_| CreatureLook::wolf())
+                .map(|c| CreatureLook::named(&c.name))
                 .collect(),
         }
     }
 }
 
 impl CreatureLook {
-    /// A young wolf: `CreatureDisplayInfo` 447.
+    /// Young Wolf (299): display 447 at its native 0.4, level 1, a beast.
     pub fn wolf() -> Self {
         Self {
             display: 447,
+            scale: 0.4,
+            level: 1,
+            kind: CreatureType::Beast,
+            weapon: None,
+        }
+    }
+
+    /// Kobold Vermin (6): display 10913 at its native 0.7, level 1, a humanoid with a staff.
+    pub fn kobold() -> Self {
+        Self {
+            display: 10913,
+            scale: 0.7,
+            level: 1,
+            kind: CreatureType::Humanoid,
+            weapon: Some(Weapon::TAPED_STAFF),
+        }
+    }
+
+    /// Defias Thug (38): the male display 5035 at 1.0, level 3, a humanoid with a short sword.
+    pub fn defias() -> Self {
+        Self {
+            display: 5035,
             scale: 1.0,
-            level: 2,
+            level: 3,
+            kind: CreatureType::Humanoid,
+            weapon: Some(Weapon::SHORT_SWORD),
+        }
+    }
+
+    /// The look a creature has by its name, as its 1.12 entry does; any other name is a wolf.
+    pub fn named(name: &str) -> Self {
+        match name {
+            "Kobold Vermin" => Self::kobold(),
+            "Defias Thug" => Self::defias(),
+            _ => Self::wolf(),
         }
     }
 }
@@ -203,5 +311,48 @@ impl NodeLook {
             display,
             spell,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_creature_looks_like_its_name_and_anything_else_like_a_wolf() {
+        let young_wolf = CreatureLook::named("Young Wolf");
+        assert_eq!((young_wolf.display, young_wolf.level), (447, 1));
+        assert_eq!(young_wolf.scale, 0.4, "the wolf model's native size");
+        assert_eq!(young_wolf.kind, CreatureType::Beast);
+        assert_eq!(young_wolf.weapon, None);
+
+        let kobold = CreatureLook::named("Kobold Vermin");
+        assert_eq!(
+            (kobold.display, kobold.level, kobold.scale),
+            (10913, 1, 0.7)
+        );
+        assert_eq!(kobold.kind, CreatureType::Humanoid);
+        assert_eq!(kobold.weapon.map(|w| w.display), Some(5010));
+
+        let defias = CreatureLook::named("Defias Thug");
+        assert_eq!((defias.display, defias.level, defias.scale), (5035, 3, 1.0));
+        assert_eq!(defias.kind, CreatureType::Humanoid);
+        assert_eq!(defias.weapon.map(|w| w.display), Some(1593));
+
+        assert_eq!(CreatureLook::named("Mangy Wolf"), CreatureLook::wolf());
+        assert_eq!(CreatureLook::named(""), CreatureLook::wolf());
+    }
+
+    #[test]
+    fn every_listed_kind_and_weapon_name_is_known() {
+        for name in CREATURE_TYPE_NAMES {
+            assert!(CreatureType::named(name).is_some(), "{name}");
+        }
+        for name in WEAPON_NAMES {
+            assert!(Weapon::named(name).is_some(), "{name}");
+        }
+        assert_eq!(CreatureType::named("dragon"), None);
+        assert_eq!(Weapon::named("axe"), None);
+        assert_eq!(Weapon::named("none"), Some(None));
     }
 }

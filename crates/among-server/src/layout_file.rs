@@ -12,7 +12,7 @@ use among_rules::{
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
-use crate::look::{self, CreatureLook, Look, NodeKind, NodeLook};
+use crate::look::{self, CreatureLook, CreatureType, Look, NodeKind, NodeLook, Weapon};
 use crate::survey::Mark;
 
 #[derive(Debug, Deserialize)]
@@ -67,13 +67,20 @@ struct SabotageEntry {
     deadline: Option<f32>,
 }
 
-/// A beast at `at` ([`CreatureDef::beast`]), with any stat overridden.
+/// A beast at `at` ([`CreatureDef::beast`]), with any stat overridden; it looks as its name's
+/// 1.12 creature does ([`CreatureLook::named`]) unless `display`, `level`, `scale`, `kind`
+/// ([`look::CREATURE_TYPE_NAMES`]) or `weapon` ([`look::WEAPON_NAMES`]) say otherwise.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CreatureEntry {
     id: String,
     name: String,
     at: Spot,
+    display: Option<u32>,
+    level: Option<u32>,
+    scale: Option<f32>,
+    kind: Option<String>,
+    weapon: Option<String>,
     health: Option<u32>,
     damage: Option<u32>,
     swing: Option<f32>,
@@ -113,6 +120,7 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
 
     let mut creature_ids: BTreeMap<&str, CreatureId> = BTreeMap::new();
     let mut creatures = Vec::new();
+    let mut creature_looks = Vec::new();
     for (i, c) in file.creatures.iter().enumerate() {
         let what = format!("creature {:?}", c.id);
         if creature_ids.insert(&c.id, CreatureId(i)).is_some() {
@@ -130,6 +138,7 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
             respawn: secs(c.respawn, base.respawn),
             ..base
         });
+        creature_looks.push(creature_look(c, &what)?);
     }
 
     let mut tasks = Vec::new();
@@ -255,7 +264,7 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
 
     let look = Look {
         steps: step_looks,
-        creatures: creatures.iter().map(|_| CreatureLook::wolf()).collect(),
+        creatures: creature_looks,
     };
     let layout = Layout {
         emergency_button: spot(&file.button, "button")?,
@@ -264,6 +273,44 @@ pub fn parse_with_look(text: &str, marks: &BTreeMap<String, Mark>) -> Result<(La
         creatures,
     };
     Ok((layout, look))
+}
+
+/// A creature's look: its name's, with whatever the entry overrides.
+fn creature_look(c: &CreatureEntry, what: &str) -> Result<CreatureLook> {
+    let base = CreatureLook::named(&c.name);
+    let look = CreatureLook {
+        display: c.display.unwrap_or(base.display),
+        level: c.level.unwrap_or(base.level),
+        scale: c.scale.unwrap_or(base.scale),
+        kind: match &c.kind {
+            None => base.kind,
+            Some(k) => CreatureType::named(k).ok_or_else(|| {
+                anyhow!(
+                    "{what}: kind {k:?} is not one of {}",
+                    look::CREATURE_TYPE_NAMES.join(", ")
+                )
+            })?,
+        },
+        weapon: match &c.weapon {
+            None => base.weapon,
+            Some(w) => Weapon::named(w).ok_or_else(|| {
+                anyhow!(
+                    "{what}: weapon {w:?} is not one of {}",
+                    look::WEAPON_NAMES.join(", ")
+                )
+            })?,
+        },
+    };
+    if look.display == 0 {
+        bail!("{what}: display 0 is no model");
+    }
+    if !(1..=255).contains(&look.level) {
+        bail!("{what}: level {} is not 1 to 255", look.level);
+    }
+    if !(look.scale.is_finite() && look.scale > 0.0) {
+        bail!("{what}: scale {} is not above 0", look.scale);
+    }
+    Ok(look)
 }
 
 /// Where the first of a Slay step's creatures spawns: the area the step points to by default.
@@ -536,7 +583,75 @@ mod tests {
         );
     }
 
-    /// The shipped Northshire example parses once every mark it names is surveyed.
+    #[test]
+    fn a_creature_looks_like_its_name_unless_the_file_says_otherwise() {
+        let text = r#"button = "hall"
+            [[creatures]]
+            id = "w"
+            name = "Young Wolf"
+            at = "hall"
+            [[creatures]]
+            id = "k"
+            name = "Kobold Vermin"
+            at = "hall"
+            [[creatures]]
+            id = "d"
+            name = "Defias Thug"
+            at = "hall"
+            [[creatures]]
+            id = "x"
+            name = "Grell"
+            at = "hall"
+            [[creatures]]
+            id = "y"
+            name = "Defias Thug"
+            at = "hall"
+            display = 5036
+            level = 4
+            scale = 1.1
+            kind = "beast"
+            weapon = "none""#;
+        let (l, look) = parse_with_look(text, &marks(&["hall"])).unwrap();
+        assert!(look.covers(&l));
+        assert_eq!(look.creatures[0], CreatureLook::wolf());
+        assert_eq!(look.creatures[1], CreatureLook::kobold());
+        assert_eq!(look.creatures[2], CreatureLook::defias());
+        assert_eq!(look.creatures[3], CreatureLook::wolf(), "an unknown name");
+        assert_eq!(
+            look.creatures[4],
+            CreatureLook {
+                display: 5036,
+                level: 4,
+                scale: 1.1,
+                kind: CreatureType::Beast,
+                weapon: None,
+            }
+        );
+        let staff = text.replace("weapon = \"none\"", "weapon = \"staff\"");
+        let (_, look) = parse_with_look(&staff, &marks(&["hall"])).unwrap();
+        assert_eq!(look.creatures[4].weapon, Some(Weapon::TAPED_STAFF));
+
+        let err = |from: &str, to: &str| {
+            let text = text.replace(from, to);
+            format!("{:#}", parse(&text, &marks(&["hall"])).unwrap_err())
+        };
+        let e = err("kind = \"beast\"", "kind = \"dragon\"");
+        assert!(
+            e.contains("creature \"y\": kind \"dragon\"") && e.contains("humanoid"),
+            "{e}"
+        );
+        let e = err("weapon = \"none\"", "weapon = \"axe\"");
+        assert!(e.contains("weapon \"axe\"") && e.contains("sword"), "{e}");
+        let e = err("scale = 1.1", "scale = 0.0");
+        assert!(e.contains("scale 0 is not above 0"), "{e}");
+        let e = err("level = 4", "level = 0");
+        assert!(e.contains("level 0 is not 1 to 255"), "{e}");
+        let e = err("display = 5036", "display = 0");
+        assert!(e.contains("display 0"), "{e}");
+        let e = err("display = 5036", "model = 5036");
+        assert!(e.contains("model"), "unknown keys are refused: {e}");
+    }
+
     #[test]
     fn the_summary_says_how_many_players_each_gathering_serves() {
         let l = parse(SMALL, &marks(&["hall", "herb", "den", "pump"])).unwrap();
@@ -549,6 +664,7 @@ mod tests {
         );
     }
 
+    /// The shipped Northshire example parses once every mark it names is surveyed.
     #[test]
     fn the_northshire_example_is_a_valid_layout() {
         let text = include_str!("../layouts/northshire.example.toml");
@@ -576,5 +692,11 @@ mod tests {
             .any(|t| matches!(t.steps[0].action, StepAction::Gather { count: 5, .. })));
         assert_eq!(l.sabotages.len(), 4);
         assert!(!l.creatures.is_empty());
+        // Every creature wears its name's look, written out in the file.
+        assert!(text.matches("display = ").count() >= l.creatures.len());
+        for (c, look) in l.creatures.iter().zip(&look.creatures) {
+            assert_eq!(*look, CreatureLook::named(&c.name), "{}", c.name);
+        }
+        assert!(l.creatures.iter().any(|c| c.name == "Kobold Vermin"));
     }
 }

@@ -17,19 +17,25 @@ pub(super) const UNIT_FIELD_HEALTH: u16 = 22;
 pub(super) const UNIT_FIELD_MAXHEALTH: u16 = 28;
 const UNIT_FIELD_LEVEL: u16 = 34;
 const UNIT_FIELD_FACTIONTEMPLATE: u16 = 35;
+/// Three weapon display ids: main hand, off hand, ranged.
+const UNIT_VIRTUAL_ITEM_SLOT_DISPLAY: u16 = 37;
+/// Two words per weapon slot: class, subclass, material and inventory type bytes, then sheath.
+const UNIT_VIRTUAL_ITEM_INFO: u16 = 40;
 const UNIT_FIELD_BASEATTACKTIME: u16 = 126;
 const UNIT_FIELD_BOUNDINGRADIUS: u16 = 129;
 const UNIT_FIELD_COMBATREACH: u16 = 130;
 const UNIT_FIELD_DISPLAYID: u16 = 131;
 const UNIT_FIELD_NATIVEDISPLAYID: u16 = 132;
 const UNIT_MOD_CAST_SPEED: u16 = 145;
+/// Byte 0 is the sheath state.
+const UNIT_FIELD_BYTES_2: u16 = 164;
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT`.
 const TYPE_UNIT: u32 = 0x01 | 0x08;
 /// `FactionTemplate.dbc` 14, "Monster": hostile to every player.
 const FACTION_MONSTER: u32 = 14;
-/// `CREATURE_TYPE_BEAST`.
-const TYPE_BEAST: u32 = 1;
+/// `SHEATH_STATE_MELEE`: vmangos `Creature::UpdateEntry` readies every creature's melee weapon.
+const SHEATH_MELEE: u32 = 1;
 /// `SPLINEFLAG_RUNMODE`: chase at run speed.
 const SPLINE_RUN: u32 = 0x100;
 
@@ -62,7 +68,15 @@ pub fn create(c: &Shown, look: &CreatureLook) -> Packet {
         .f32(UNIT_FIELD_COMBATREACH, 1.5)
         .u32(UNIT_FIELD_DISPLAYID, look.display)
         .u32(UNIT_FIELD_NATIVEDISPLAYID, look.display)
-        .f32(UNIT_MOD_CAST_SPEED, 1.0);
+        .f32(UNIT_MOD_CAST_SPEED, 1.0)
+        .u32(UNIT_FIELD_BYTES_2, SHEATH_MELEE);
+    if let Some(w) = look.weapon {
+        // Main hand, packed as vmangos `Creature::SetVirtualItem` writes it.
+        let info = u32::from_le_bytes([w.class, w.subclass, w.material, w.inventory_type]);
+        f.u32(UNIT_VIRTUAL_ITEM_SLOT_DISPLAY, w.display)
+            .u32(UNIT_VIRTUAL_ITEM_INFO, info)
+            .u32(UNIT_VIRTUAL_ITEM_INFO + 1, u32::from(w.sheath));
+    }
     let living = Living {
         movement_flags: 0,
         time: 0,
@@ -77,8 +91,8 @@ pub fn create(c: &Shown, look: &CreatureLook) -> Packet {
 }
 
 /// `SMSG_CREATURE_QUERY_RESPONSE`: `entry`'s name, three empty names, no subname, then type flags,
-/// beast, no pet family, normal rank, two unused words, the display, and two zero flags; or the
-/// lone `entry | 0x8000_0000` for a miss.
+/// the creature type, no pet family, normal rank, two unused words, the display, and two zero
+/// flags; or the lone `entry | 0x8000_0000` for a miss.
 pub fn query_response(entry: u32, found: Option<(&str, &CreatureLook)>) -> Packet {
     let mut b = Body::default();
     match found {
@@ -91,7 +105,7 @@ pub fn query_response(entry: u32, found: Option<(&str, &CreatureLook)>) -> Packe
                 b.cstring("");
             }
             b.u32(0) // type flags
-                .u32(TYPE_BEAST)
+                .u32(look.kind as u32)
                 .u32(0) // pet family
                 .u32(0) // rank: normal
                 .u32(0)
@@ -178,6 +192,57 @@ mod tests {
             panic!("one create");
         };
         assert!(mask.unit_reads_dead(), "a corpse");
+    }
+
+    fn created(look: &CreatureLook) -> benilla_protocol::messages::ObjectFields {
+        let ServerPacket::UpdateObject { objects } = parse(&create(&wolf(40), look)) else {
+            panic!("not an update");
+        };
+        let [Object::Create { mask, .. }] = objects.as_slice() else {
+            panic!("one create");
+        };
+        mask.clone()
+    }
+
+    #[test]
+    fn a_creature_wears_its_display_size_level_and_weapon() {
+        let mask = created(&CreatureLook::wolf());
+        assert_eq!(mask.object_scale_x(), Some(0.4));
+        assert_eq!(mask.unit_level(), Some(1));
+        assert_eq!(
+            (mask.unit_displayid(), mask.unit_native_displayid()),
+            (Some(447), Some(447))
+        );
+        assert_eq!(mask.unit_virtual_item_display(0), Some(0), "bare fangs");
+        assert_eq!(mask.unit_sheath_state(), Some(1));
+
+        let mask = created(&CreatureLook::kobold());
+        assert_eq!(mask.object_scale_x(), Some(0.7));
+        assert_eq!(mask.unit_displayid(), Some(10913));
+        assert_eq!(mask.unit_virtual_item_display(0), Some(5010));
+        assert_eq!(mask.unit_virtual_item_info(0), Some((2, 10, 2, 17)));
+        assert_eq!(mask.unit_virtual_item_sheath(0), Some(2));
+
+        let mask = created(&CreatureLook::defias());
+        assert_eq!(mask.object_scale_x(), Some(1.0));
+        assert_eq!(mask.unit_level(), Some(3));
+        assert_eq!(mask.unit_displayid(), Some(5035));
+        assert_eq!(mask.unit_virtual_item_display(0), Some(1593));
+        assert_eq!(mask.unit_virtual_item_info(0), Some((2, 7, 1, 13)));
+        assert_eq!(mask.unit_virtual_item_sheath(0), Some(3));
+        assert_eq!(mask.unit_virtual_item_display(1), Some(0), "no off hand");
+    }
+
+    #[test]
+    fn the_template_names_the_creature_type() {
+        let ServerPacket::CreatureQueryResponse { info, .. } = parse(&query_response(
+            6,
+            Some(("Kobold Vermin", &CreatureLook::kobold())),
+        )) else {
+            panic!("not a template");
+        };
+        let info = info.expect("found");
+        assert_eq!((info.creature_type, info.display_id), (7, 10913));
     }
 
     #[test]

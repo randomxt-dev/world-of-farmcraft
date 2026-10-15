@@ -36,6 +36,7 @@ mod nearby;
 /// is sixteen, and the outbound system has its own parameters besides). Every resource is
 /// `Option` for the same reason the unit feed's are — a UI-only harness runs without the net
 /// stack, and a missing resource must read as "nothing there", not a validation panic.
+#[allow(clippy::type_complexity)] // Bevy query tuples; clippy 1.98 flags them.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct BridgeReadout<'w, 's> {
     state: Res<'w, State<ClientState>>,
@@ -101,6 +102,7 @@ impl BridgeReadout<'_, '_> {
 
     /// The whole frame. Cheap when there is nothing to see (the glue screens): the
     /// session block and nulls.
+    #[allow(clippy::type_complexity)] // Bevy query tuples; clippy 1.98 flags them.
     pub(crate) fn build(
         &self,
         cfg: &BridgeConfig,

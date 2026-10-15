@@ -1,5 +1,6 @@
 //! Select cheap borrowed candidates before constructing bridge payloads.
 
+#[allow(clippy::type_complexity)] // Bevy query tuples; clippy 1.98 flags them.
 pub(super) fn select<T: Copy>(
     units: impl IntoIterator<Item = (f32, bool, T)>,
     radius2: f32,

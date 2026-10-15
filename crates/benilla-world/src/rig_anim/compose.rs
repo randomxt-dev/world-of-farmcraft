@@ -195,7 +195,7 @@ pub fn finalize_rig_worlds(
             let (worlds, touched) = scratch.compose(rig, root_rel, cam_basis);
             if let Some(skin) = skin {
                 if let Some(ibp) = ibps.get(&skin.ibp) {
-                    palettes.write_rig_worlds(skin, &worlds, ibp, origin);
+                    palettes.write_rig_worlds(skin, worlds, ibp, origin);
                 }
             }
             if !rig.has_special && !root_moved {

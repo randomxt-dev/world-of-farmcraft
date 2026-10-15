@@ -30,6 +30,10 @@ struct Args {
     /// https link for friends; it closes with the host.
     #[arg(long)]
     tunnel: bool,
+    /// The https address players open the page at, when a reverse proxy serves it (a VPS behind
+    /// Caddy); the invite then names it instead of localhost, tunnels and Tailscale.
+    #[arg(long, value_name = "URL")]
+    public_url: Option<String>,
     #[command(flatten)]
     server: ServerArgs,
 }
@@ -43,6 +47,7 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     let bind = args.bind.clone();
+    let advertise = args.server.advertise.clone();
     let prepared = args.server.prepare(args.bind)?;
     let code = prepared
         .lobby_code
@@ -79,8 +84,15 @@ async fn main() -> Result<()> {
         .with_context(|| format!("binding the web page on {}", args.web))?;
     let web_port = listener.local_addr()?.port();
 
-    let native = reachable_from_lan(&bind);
-    print_invite(&code, web_port, native, args.tunnel);
+    let native = reachable_from_lan(&bind).then(|| {
+        advertise.unwrap_or_else(|| {
+            among_host::lan_ip().map_or_else(|| "this PC's address".into(), |ip| ip.to_string())
+        })
+    });
+    match &args.public_url {
+        Some(url) => print_public_invite(&code, url, native.as_deref()),
+        None => print_invite(&code, web_port, native.as_deref(), args.tunnel),
+    }
     // Kept for the host's lifetime: dropping the child closes the tunnel.
     let _tunnel = if args.tunnel {
         Some(open_tunnel(web_port, code.clone())?)
@@ -159,7 +171,28 @@ fn reachable_from_lan(bind: &str) -> bool {
     !matches!(bind, "127.0.0.1" | "localhost" | "::1")
 }
 
-fn print_invite(code: &str, web_port: u16, native: bool, tunnel: bool) {
+/// The invite for a server players reach at a fixed https address.
+fn print_public_invite(code: &str, url: &str, native: Option<&str>) {
+    println!();
+    println!("Among Azeroth lobby is up. Lobby code: {code}");
+    println!("Players log in with any account name and the lobby code as the password.");
+    println!();
+    println!(
+        "Browser (Chrome or Edge): {}/?lobby={code}",
+        url.trim_end_matches('/')
+    );
+    print_native(native);
+    println!();
+}
+
+fn print_native(native: Option<&str>) {
+    match native {
+        None => println!("Native among-azeroth: this PC only (--bind 0.0.0.0 opens it)."),
+        Some(host) => println!("Native among-azeroth: realmlist {host} (TCP 3724 and 8085 open)."),
+    }
+}
+
+fn print_invite(code: &str, web_port: u16, native: Option<&str>, tunnel: bool) {
     println!();
     println!("Among Azeroth lobby is up. Lobby code: {code}");
     println!("Players log in with any account name and the lobby code as the password.");
@@ -182,14 +215,6 @@ fn print_invite(code: &str, web_port: u16, native: bool, tunnel: bool) {
         None => println!("    Tailscale:  `tailscale funnel --bg {web_port}`, then its https link"),
     }
     println!();
-    match (native, among_host::lan_ip()) {
-        (false, _) => println!("Native among-azeroth: this PC only (--bind 0.0.0.0 opens it)."),
-        (true, Some(ip)) => {
-            println!("Native among-azeroth: realmlist {ip} (TCP 3724 and 8085 open).")
-        }
-        (true, None) => {
-            println!("Native among-azeroth: realmlist this PC's address (TCP 3724 and 8085 open).")
-        }
-    }
+    print_native(native);
     println!();
 }

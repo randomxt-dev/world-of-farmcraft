@@ -122,7 +122,7 @@ async fn handle(
             .await?;
         bail!("wrong password for {}", challenge.account);
     };
-    accounts.set_session_key(&challenge.account, verified.session_key);
+    accounts.admit(&challenge.account, &verifier, verified.session_key);
     let mut reply = Vec::with_capacity(26);
     reply.extend_from_slice(&[CMD_AUTH_LOGON_PROOF, RESULT_SUCCESS]);
     reply.extend_from_slice(&verified.server_proof);

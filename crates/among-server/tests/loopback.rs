@@ -589,7 +589,13 @@ fn a_dealt_task_lands_in_the_quest_log_and_its_quest_query_is_answered() {
     });
     let task = among_server::world::quests::quest_task(quests[1]).unwrap();
     let layout = among_server::game::placeholder_layout();
-    assert_eq!(template.title, layout.tasks[task.0].name);
+    // An impostor's copy is marked fake; roles are dealt at random, so either may come back.
+    let name = &layout.tasks[task.0].name;
+    assert!(
+        template.title == *name || template.title == format!("{name} (fake)"),
+        "{}",
+        template.title
+    );
     assert!(template.objectives[0].required_count > 0);
 }
 
@@ -662,6 +668,26 @@ fn say_works_party_only_before_the_game_and_whispers_never() {
         _ => None,
     });
     assert_eq!(refusal, "Party chat opens in the lobby and at meetings.");
+}
+
+#[test]
+fn only_the_lobby_host_may_survey() {
+    let marks = temp_marks("guest");
+    let host = start_server_full(2, Settings::default(), marks.clone());
+    let (mut first, _) = enter(&host, "among1", "secret1");
+    assert!(wait_system_line(&mut first).starts_with("You host this game"));
+    let (mut guest, _) = enter(&host, "among2", "secret2");
+    assert_eq!(wait_system_line(&mut guest), "Among1 hosts this game.");
+    guest.send_chat(".mark herb-east").unwrap();
+    assert_eq!(
+        wait_system_line(&mut guest),
+        "Only the lobby host can use survey commands."
+    );
+    assert!(among_server::survey::read_marks(&marks)
+        .unwrap_or_default()
+        .is_empty());
+    first.send_chat(".mark herb-east").unwrap();
+    assert!(wait_system_line(&mut first).starts_with("Marked herb-east"));
 }
 
 #[test]

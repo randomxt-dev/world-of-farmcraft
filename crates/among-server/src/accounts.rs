@@ -75,29 +75,32 @@ impl Accounts {
         Ok(accounts)
     }
 
-    /// The account's salt and verifier; an unknown name is registered with the lobby code in an
-    /// open lobby, and is `None` otherwise.
+    /// The account's salt and verifier; in an open lobby an unknown name gets a fresh one made
+    /// from the lobby code, kept only once its proof succeeds ([`Accounts::admit`]), and `None`
+    /// otherwise.
     pub fn verifier(&self, user: &str) -> Option<Verifier> {
-        let mut inner = self.lock();
-        if !inner.accounts.contains_key(user) {
-            let code = inner.lobby_code.clone()?;
-            let name = NormalizedString::new(user).ok()?;
-            inner.accounts.insert(
-                name.as_ref().to_owned(),
-                Account {
-                    verifier: Verifier::new(&name, &code),
-                    session_key: None,
-                    characters: Vec::new(),
-                },
-            );
+        let inner = self.lock();
+        if let Some(a) = inner.accounts.get(user) {
+            return Some(a.verifier.clone());
         }
-        inner.accounts.get(user).map(|a| a.verifier.clone())
+        let code = inner.lobby_code.as_ref()?;
+        let name = NormalizedString::new(user).ok()?;
+        Some(Verifier::new(&name, code))
     }
 
-    pub fn set_session_key(&self, user: &str, key: [u8; 40]) {
-        if let Some(a) = self.lock().accounts.get_mut(user) {
-            a.session_key = Some(key);
-        }
+    /// A logon proved `verifier` for `user`: keep the account (a lobby newcomer's is made now, so
+    /// a name tried with a wrong code leaves nothing behind) and its session key.
+    pub fn admit(&self, user: &str, verifier: &Verifier, session_key: [u8; 40]) {
+        let mut inner = self.lock();
+        let account = inner
+            .accounts
+            .entry(user.to_owned())
+            .or_insert_with(|| Account {
+                verifier: verifier.clone(),
+                session_key: None,
+                characters: Vec::new(),
+            });
+        account.session_key = Some(session_key);
     }
 
     pub fn session_key(&self, user: &str) -> Option<[u8; 40]> {
@@ -214,11 +217,19 @@ mod tests {
     }
 
     #[test]
-    fn an_open_lobby_registers_any_name_with_its_code() {
+    fn an_open_lobby_keeps_a_name_only_once_its_logon_is_proved() {
         let accounts = Accounts::open_lobby("k3xq9p").unwrap();
-        let joined = accounts.verifier("THRALL").expect("an unknown name joins");
+        let joining = accounts
+            .verifier("THRALL")
+            .expect("an unknown name may try");
+        assert!(
+            accounts.characters("THRALL").is_empty(),
+            "nothing kept before the proof"
+        );
+        accounts.admit("THRALL", &joining, [7; 40]);
         // The same verifier on a second logon: the account was kept, not remade.
-        assert_eq!(accounts.verifier("THRALL").unwrap().salt, joined.salt);
+        assert_eq!(accounts.verifier("THRALL").unwrap().salt, joining.salt);
+        assert_eq!(accounts.session_key("THRALL"), Some([7; 40]));
         assert_eq!(accounts.characters("THRALL")[0].name, "Thrall");
     }
 

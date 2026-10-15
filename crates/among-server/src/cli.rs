@@ -59,6 +59,10 @@ impl ServerArgs {
             None => (game::placeholder_layout(), game::placeholder_look()),
         };
         let lobby_code = match self.lobby_code {
+            // It rides in the invite link and a cookie: letters and digits only.
+            Some(code) if !code.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                anyhow::bail!("--lobby-code takes letters and digits only, got {code:?}")
+            }
             Some(code) => Some(code.to_ascii_uppercase()),
             None if self.accounts.is_empty() => Some(accounts::new_lobby_code()),
             None => None,

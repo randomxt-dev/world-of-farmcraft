@@ -321,13 +321,20 @@ impl Session {
     /// A `.` command typed in chat: the survey's, answered as system lines.
     fn dot_command(&self, guid: u64, text: &str) -> Result<()> {
         let mut words = text.split_whitespace();
-        match words.next() {
-            Some(".speed") => return self.set_speed(guid, words.next(), words.next().is_some()),
-            Some(".vote") => {
-                let reply = self.host.vote_by_name(guid, words.next());
-                return self.send(packets::system_message(&reply));
-            }
-            _ => {}
+        if let Some(".vote") = words.clone().next() {
+            words.next();
+            let reply = self.host.vote_by_name(guid, words.next());
+            return self.send(packets::system_message(&reply));
+        }
+        // The survey writes the host's marks file and .speed bends movement: an open lobby's
+        // guests (anyone with the code) get neither, only the lobby host.
+        if !self.host.is_lobby_host(guid) {
+            return self.send(packets::system_message(
+                "Only the lobby host can use survey commands.",
+            ));
+        }
+        if let Some(".speed") = words.next() {
+            return self.set_speed(guid, words.next(), words.next().is_some());
         }
         let Some(pose) = self.map.pose(guid) else {
             return Ok(());

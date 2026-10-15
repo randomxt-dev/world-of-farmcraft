@@ -244,6 +244,11 @@ impl GameHost {
         }
     }
 
+    /// Whether `guid` is the lobby host, the first player in (or whoever the role passed to).
+    pub fn is_lobby_host(&self, guid: u64) -> bool {
+        self.lock().game.host() == Some(PlayerId(guid))
+    }
+
     /// Whether party chat is open: before a game and at meetings, when the crew may talk.
     pub fn party_open(&self) -> bool {
         matches!(

@@ -19,6 +19,8 @@ wenilla-host = { path = "../wenilla-host" }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 # The versions wenilla-host serves with.
 axum = { version = "0.8", features = ["ws"] }
+# The relay's two directions, as wenilla's own relay splits them.
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util"] }
 # `tailscale status --json`, for the invite's HTTPS name.
 serde_json = "1"
@@ -27,3 +29,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+# The rules a test lobby is made with.
+among-rules = { path = "../among-rules" }

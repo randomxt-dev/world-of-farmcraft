@@ -71,14 +71,14 @@ async fn main() -> Result<()> {
         );
     }
     // The relay dials the game server on this machine, whatever interface it listens on.
-    let loopback: Arc<str> = Arc::from("127.0.0.1");
+    let lobbies = server.lobbies();
     let web = wenilla_host::data::router(chain)
-        .merge(wenilla_host::ws::router_map([
-            (auth_port, Arc::clone(&loopback)),
-            (world_port, loopback),
-        ]))
+        .merge(among_host::relay::router(
+            lobbies.clone(),
+            [auth_port, world_port],
+        ))
         .merge(wenilla_host::static_site::router(&www));
-    let web = among_host::gated(web, code.clone());
+    let web = among_host::app(web, lobbies, among_host::Limiter::default());
     let listener = tokio::net::TcpListener::bind(&args.web)
         .await
         .with_context(|| format!("binding the web page on {}", args.web))?;
@@ -100,6 +100,8 @@ async fn main() -> Result<()> {
         None
     };
     tokio::try_join!(server.serve(), async {
+        // The peer address rate-limits lobby creation.
+        let web = web.into_make_service_with_connect_info::<std::net::SocketAddr>();
         axum::serve(listener, web)
             .await
             .context("serving the web page")
@@ -173,14 +175,13 @@ fn reachable_from_lan(bind: &str) -> bool {
 
 /// The invite for a server players reach at a fixed https address.
 fn print_public_invite(code: &str, url: &str, native: Option<&str>) {
+    let url = url.trim_end_matches('/');
     println!();
     println!("Among Azeroth lobby is up. Lobby code: {code}");
     println!("Players log in with any account name and the lobby code as the password.");
     println!();
-    println!(
-        "Browser (Chrome or Edge): {}/?lobby={code}",
-        url.trim_end_matches('/')
-    );
+    println!("Browser (Chrome or Edge): {url}/?lobby={code}");
+    println!("Anyone can start their own lobby at {url}/");
     print_native(native);
     println!();
 }
@@ -188,7 +189,10 @@ fn print_public_invite(code: &str, url: &str, native: Option<&str>) {
 fn print_native(native: Option<&str>) {
     match native {
         None => println!("Native among-azeroth: this PC only (--bind 0.0.0.0 opens it)."),
-        Some(host) => println!("Native among-azeroth: realmlist {host} (TCP 3724 and 8085 open)."),
+        Some(host) => {
+            println!("Native among-azeroth: realmlist {host} (TCP 3724 and 8085 open).");
+            println!("  With several lobbies up, log in as NAME-CODE so the server knows which.");
+        }
     }
 }
 

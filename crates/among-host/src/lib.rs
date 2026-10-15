@@ -1,44 +1,75 @@
 //! The lobby gate in front of wenilla's browser host. `/data` hands out game files from the host's
-//! own install, so every route needs the lobby code: the invite link `/?lobby=CODE` sets it as a
-//! cookie, and a request carrying neither gets 403.
+//! own install, so every route needs a live lobby's code: an invite link `/?lobby=CODE` sets it as
+//! a cookie, and a request carrying neither gets 403, except `/`, which shows the landing page
+//! where anyone may create a lobby or join one by code.
+
+pub mod landing;
+pub mod relay;
 
 use std::net::{IpAddr, UdpSocket};
 use std::path::PathBuf;
 
+use among_server::Lobbies;
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Router;
 
+pub use landing::Limiter;
+
 const COOKIE: &str = "among_lobby";
 
-/// `router` behind the lobby gate for `code` (uppercase, as the server normalises it).
-pub fn gated(router: Router, code: String) -> Router {
-    router.layer(axum::middleware::from_fn_with_state(code, gate))
+/// The live lobby code a request was let in with, for the routes behind the gate.
+#[derive(Clone, Debug)]
+pub struct LobbyCode(pub String);
+
+/// `web` behind the lobby gate, beside the landing page and lobby creation, which need no code.
+pub fn app(web: Router, lobbies: Lobbies, limiter: Limiter) -> Router {
+    gated(web, lobbies.clone()).merge(landing::router(lobbies, limiter))
 }
 
-async fn gate(State(code): State<String>, request: Request, next: Next) -> Response {
-    let from_link = request
-        .uri()
-        .query()
+/// `router` behind the lobby gate: any live lobby's code lets a request in.
+pub fn gated(router: Router, lobbies: Lobbies) -> Router {
+    router.layer(axum::middleware::from_fn_with_state(lobbies, gate))
+}
+
+async fn gate(State(lobbies): State<Lobbies>, mut request: Request, next: Next) -> Response {
+    let asked = (request.uri().query())
         .and_then(|q| query_value(q, "lobby"))
-        .is_some_and(|c| c.eq_ignore_ascii_case(&code));
-    let from_cookie = request
-        .headers()
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .any(|v| cookie_value(v, COOKIE).is_some_and(|c| c == code));
-    if !from_link && !from_cookie {
+        .map(str::to_owned);
+    // A link's code decides alone, so a closed lobby's link never falls back to an old cookie.
+    let live = match &asked {
+        Some(code) => lobbies.open(code),
+        None => (request.headers().get_all(header::COOKIE).iter())
+            .filter_map(|v| v.to_str().ok())
+            .filter_map(|v| cookie_value(v, COOKIE))
+            .find_map(|c| lobbies.open(c)),
+    };
+    let Some(code) = live.map(|lobby| lobby.code().to_owned()) else {
+        if request.uri().path() == "/" {
+            return match asked
+                .filter(|c| !c.is_empty() && c.chars().all(|c| c.is_ascii_alphanumeric()))
+            {
+                Some(code) => {
+                    let notice = format!(
+                        "Lobby {} is closed or does not exist.",
+                        code.to_ascii_uppercase()
+                    );
+                    (StatusCode::NOT_FOUND, landing::page(Some(&notice))).into_response()
+                }
+                None => landing::page(None),
+            };
+        }
         return (
             StatusCode::FORBIDDEN,
-            "Among Azeroth: open the invite link the host gave you (it ends in ?lobby=CODE).\n",
+            "Among Azeroth: open a lobby's invite link (it ends in ?lobby=CODE), or start at /.\n",
         )
             .into_response();
-    }
+    };
+    request.extensions_mut().insert(LobbyCode(code.clone()));
     let mut response = next.run(request).await;
-    if from_link {
+    if asked.is_some() {
         let cookie = format!("{COOKIE}={code}; Path=/; SameSite=Lax; HttpOnly");
         if let Ok(value) = HeaderValue::from_str(&cookie) {
             response.headers_mut().append(header::SET_COOKIE, value);

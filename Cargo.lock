@@ -186,11 +186,13 @@ dependencies = [
 name = "among-host"
 version = "0.2.0"
 dependencies = [
+ "among-rules",
  "among-server",
  "anyhow",
  "axum",
  "benilla-formats",
  "clap",
+ "futures-util",
  "serde_json",
  "tokio",
  "tower",

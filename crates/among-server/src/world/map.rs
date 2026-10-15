@@ -22,6 +22,8 @@ struct Occupant {
     life: Life,
     /// Stealthed: unseen by the living.
     hidden: bool,
+    /// The WoW class played this round, which rotates away from the character's own.
+    class: u8,
     /// The descriptor fields effects and death dress the body in ([`player::bearing`]).
     bearing: Fields,
     /// The last counter a forced movement change (`SMSG_FORCE_*`) carried, which the ack echoes.
@@ -50,13 +52,9 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 impl Occupant {
     fn create(&self) -> Packet {
-        player::create_wearing(
-            &self.character,
-            &self.living,
-            false,
-            self.life,
-            &self.bearing,
-        )
+        let mut dress = player::class_fields(&self.character, self.class);
+        dress.merge(&self.bearing);
+        player::create_wearing(&self.character, &self.living, false, self.life, &dress)
     }
 }
 
@@ -202,6 +200,22 @@ impl Map {
         }
     }
 
+    /// `guid` now plays WoW class `class`: they and everyone who sees them are sent the change,
+    /// and later creates and name queries carry it. Returns the class they played before.
+    pub fn set_class(&self, guid: u64, class: u8) -> Option<u8> {
+        let mut world = self.lock();
+        let me = world.occupants.get_mut(&guid)?;
+        let was = std::mem::replace(&mut me.class, class);
+        let me = &world.occupants[&guid];
+        let change = player::class_change(&me.character, class);
+        for (&other, o) in &world.occupants {
+            if other == guid || sees(o.life, me.life, me.hidden) {
+                let _ = o.outbox.send(change.clone());
+            }
+        }
+        Some(was)
+    }
+
     /// Move `guid` to `at` facing `facing` at once: their client is told with the acked teleport,
     /// everyone who sees them with `MSG_MOVE_TELEPORT`, sent twice as vmangos sends a near one.
     pub fn teleport(&self, guid: u64, at: [f32; 3], facing: f32) {
@@ -261,6 +275,7 @@ impl Map {
         occupants.insert(
             guid,
             Occupant {
+                class: character.class,
                 character,
                 outbox,
                 living,
@@ -335,12 +350,12 @@ impl Map {
         self.lock().occupants.get(&guid).map(|o| o.living)
     }
 
-    /// The character behind an in-world guid, for name queries.
+    /// The character behind an in-world guid as it plays this round, for name queries.
     pub fn character(&self, guid: u64) -> Option<CharacterRecord> {
-        self.lock()
-            .occupants
-            .get(&guid)
-            .map(|o| o.character.clone())
+        self.lock().occupants.get(&guid).map(|o| CharacterRecord {
+            class: o.class,
+            ..o.character.clone()
+        })
     }
 
     /// Queue a chat line `speaker` said for everyone who hears it: within `range` yards of them

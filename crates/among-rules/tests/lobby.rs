@@ -278,10 +278,8 @@ fn after_game_over_the_host_returns_everyone_connected_to_the_lobby() {
         Some((Team::Crew, WinReason::ImpostorsEliminated))
     );
     let host = g.host().unwrap();
-    assert_eq!(
-        ok(&mut g, Command::ReturnToLobby { by: host }),
-        [Event::ReturnedToLobby]
-    );
+    let events = ok(&mut g, Command::ReturnToLobby { by: host });
+    assert_eq!(events[0], Event::ReturnedToLobby);
     assert_eq!(g.phase(), &Phase::Lobby);
     assert_eq!(g.players().count(), 3);
     assert!(g
@@ -295,4 +293,46 @@ fn after_game_over_the_host_returns_everyone_connected_to_the_lobby() {
         },
     );
     ok(&mut g, Command::Start { by: host, seed: 6 });
+}
+
+#[test]
+fn every_return_to_the_lobby_moves_each_player_on_to_the_next_class() {
+    let mut g = started(8, 5);
+    for player in impostors(&g) {
+        ok(&mut g, Command::Leave { player });
+    }
+    let host = g.host().unwrap();
+    let events = ok(&mut g, Command::ReturnToLobby { by: host });
+    let changed: Vec<(PlayerId, Class)> = (events.iter())
+        .filter_map(|e| match *e {
+            Event::ClassChanged { player, class } => Some((player, class)),
+            _ => None,
+        })
+        .collect();
+    let seated: Vec<PlayerId> = g.players().map(|(id, _)| id).collect();
+    assert_eq!(changed.iter().map(|&(p, _)| p).collect::<Vec<_>>(), seated);
+    let kits = Kits::default();
+    for (id, p) in g.players() {
+        assert_eq!(
+            p.class,
+            Class::Paladin,
+            "{id:?}: warrior steps on to paladin"
+        );
+        assert!(changed.contains(&(id, Class::Paladin)));
+        assert_eq!(
+            p.health,
+            kits.get(Class::Paladin).health,
+            "{id:?}: the new pool"
+        );
+    }
+
+    ok(&mut g, Command::Start { by: host, seed: 6 });
+    let alive: Vec<PlayerId> = g.players().map(|(id, _)| id).collect();
+    for player in impostors(&g) {
+        ok(&mut g, Command::Leave { player });
+    }
+    let host = g.host().unwrap();
+    ok(&mut g, Command::ReturnToLobby { by: host });
+    assert!(g.players().all(|(_, p)| p.class == Class::Hunter));
+    assert!(g.players().all(|(id, _)| alive.contains(&id)));
 }

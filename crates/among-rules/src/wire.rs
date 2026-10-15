@@ -267,6 +267,8 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
             impostors: impostors.clone(),
         }),
         Event::ReturnedToLobby => all(Notice::Lobby),
+        // A class change is the world's to show: the body, power bar, spell book and bar.
+        Event::ClassChanged { .. } => Vec::new(),
     }
 }
 

@@ -643,6 +643,7 @@ impl Inner {
                     self.revive(player);
                 }
             }
+            Event::ClassChanged { player, class } => self.change_class(player, class),
             Event::SpellCastStarted {
                 player,
                 creature,
@@ -1278,6 +1279,24 @@ impl Inner {
                 Some(StepAction::Gather { .. })
             )
         })
+    }
+
+    /// `player` plays `class` from now on: their body and power bar for everyone, their name for
+    /// later queries, and their own spell book and crewmate bar.
+    fn change_class(&mut self, player: PlayerId, class: Class) {
+        let g = player.0;
+        let Some(was) = self.map.set_class(g, class.wow_id()) else {
+            return;
+        };
+        let was = Class::from_wow(was).unwrap_or(Class::Warrior);
+        for packet in spells::book_change(was, class) {
+            self.map.send(g, packet);
+        }
+        self.map.send(g, spells::action_buttons(class, false));
+        self.impostor_bars.insert(player, false);
+        if let Some(c) = self.map.character(g) {
+            self.map.broadcast(&packets::name_query_response(&c));
+        }
     }
 
     fn class_spell(&self, player: PlayerId) -> u32 {
@@ -2258,13 +2277,73 @@ mod tests {
         assert!(matches!(host.lock().game.phase(), Phase::GameOver { .. }));
         drain(&mut inboxes);
         host.request(1, Request::Lobby);
-        assert_eq!(
-            bars(&received(&mut inboxes[imp as usize - 1])),
-            [sent(warrior(false))]
-        );
-        for c in &crew {
-            assert!(bars(&received(&mut inboxes[*c as usize - 1])).is_empty());
+        // Back in the lobby everyone has rotated on to paladin, with its crewmate bar once.
+        let paladin = sent(spells::main_bar(Class::Paladin, false));
+        for (i, inbox) in inboxes.iter_mut().enumerate() {
+            assert_eq!(
+                bars(&received(inbox)),
+                std::slice::from_ref(&paladin),
+                "player {}",
+                i + 1
+            );
         }
+    }
+
+    #[test]
+    fn back_in_the_lobby_each_player_is_shown_as_the_next_class() {
+        let (host, mut inboxes) = hosted(quick(), 3);
+        host.request(1, Request::Start);
+        let (imp, _) = roles(&host);
+        host.request(imp, Request::Kill);
+        drain(&mut inboxes);
+        host.request(1, Request::Lobby);
+        let mine = received(&mut inboxes[0]);
+        let theirs = received(&mut inboxes[1]);
+
+        // The warrior book's class spell and ability leave, the paladin's arrive.
+        let removed: Vec<u32> = (mine.iter())
+            .filter_map(|p| match p {
+                ServerPacket::RemovedSpell { spell_id } => Some(u32::from(*spell_id)),
+                _ => None,
+            })
+            .collect();
+        let learned: Vec<u32> = (mine.iter())
+            .filter_map(|p| match p {
+                ServerPacket::LearnedSpell { spell_id } => Some(u32::from(*spell_id)),
+                _ => None,
+            })
+            .collect();
+        for (class, list) in [(Class::Warrior, &removed), (Class::Paladin, &learned)] {
+            assert!(
+                list.contains(&spells::class_spell(class)),
+                "{class:?}: {list:?}"
+            );
+            assert!(
+                list.contains(&spells::class_ability(class)),
+                "{class:?}: {list:?}"
+            );
+        }
+        assert!(!removed.contains(&spells::KILL) && !learned.contains(&spells::KILL));
+
+        // Player 1's body is a paladin on a full mana bar, to themself and to the others.
+        for seen in [&mine, &theirs] {
+            let f = changes_of(seen, 1)
+                .into_iter()
+                .find(|f| f.unit_class().is_some())
+                .expect("a class change");
+            assert_eq!(f.unit_class(), Some(2));
+            assert_eq!(f.unit_power_type(), 0);
+            assert_eq!(f.unit_max_power(0), Some(1000));
+            assert_eq!(f.unit_max_power(1), Some(0), "no rage bar left behind");
+        }
+        let named = theirs.iter().find_map(|p| match p {
+            ServerPacket::NameQueryResponse { guid: 1, class, .. } => Some(*class),
+            _ => None,
+        });
+        assert_eq!(named, Some(2));
+        assert_eq!(host.lock().map.character(1).map(|c| c.class), Some(2));
+        let max = host.lock().game.settings().kits.get(Class::Paladin).health;
+        assert_eq!(host.lock().max_health(PlayerId(1)), max);
     }
 
     #[test]
@@ -2863,12 +2942,14 @@ mod tests {
         for g in [victim, imp] {
             assert!(created(&seen).contains(&g), "{g} is shown again");
         }
+        // Warriors rotate on to paladins in the lobby, and stand on the paladin's pool.
+        let full = Some(among_rules::Kits::default().get(Class::Paladin).health);
         for g in [victim, imp] {
             let mine = received(&mut inboxes[inbox(g)]);
             let back = changes_of(&mine, g);
             assert!(back
                 .iter()
-                .any(|f| f.unit_health() == Some(120) && !f.player_is_ghost()));
+                .any(|f| f.unit_health() == full && !f.player_is_ghost()));
             assert!(modes(&mine, g).contains(&(MoveMode::WaterWalk, false)));
             assert_eq!(run_speeds(&mine), [death::LIVING_SPEEDS[0]]);
         }

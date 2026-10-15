@@ -415,6 +415,11 @@ pub enum Event {
         impostors: Vec<PlayerId>,
     },
     ReturnedToLobby,
+    /// Back in the lobby, `player` now fights as `class`: classes rotate between rounds.
+    ClassChanged {
+        player: PlayerId,
+        class: Class,
+    },
 }
 
 impl Event {

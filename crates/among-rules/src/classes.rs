@@ -46,6 +46,26 @@ impl Class {
         })
     }
 
+    /// The class's `ChrClasses.dbc` id, as [`Class::from_wow`] reads it.
+    pub fn wow_id(self) -> u8 {
+        match self {
+            Class::Warrior => 1,
+            Class::Paladin => 2,
+            Class::Hunter => 3,
+            Class::Rogue => 4,
+            Class::Priest => 5,
+            Class::Shaman => 7,
+            Class::Mage => 8,
+            Class::Warlock => 9,
+            Class::Druid => 11,
+        }
+    }
+
+    /// The class after this one in [`Class::ALL`], wrapping: each round's class for a player.
+    pub fn next(self) -> Self {
+        Class::ALL[(self.index() + 1) % Class::ALL.len()]
+    }
+
     fn index(self) -> usize {
         Class::ALL.iter().position(|&c| c == self).expect("in ALL")
     }
@@ -127,6 +147,18 @@ mod tests {
         assert_eq!(ids, [1, 2, 3, 4, 5, 7, 8, 9, 11]);
         let classes: Vec<Class> = ids.iter().map(|&i| Class::from_wow(i).unwrap()).collect();
         assert_eq!(classes, Class::ALL);
+        let back: Vec<u8> = classes.iter().map(|c| c.wow_id()).collect();
+        assert_eq!(back, ids);
+    }
+
+    #[test]
+    fn next_walks_every_class_once_and_wraps() {
+        let mut seen = vec![Class::Druid.next()];
+        while seen.len() < Class::ALL.len() {
+            seen.push(seen.last().unwrap().next());
+        }
+        assert_eq!(seen, Class::ALL);
+        assert_eq!(Class::Druid.next(), Class::Warrior);
     }
 
     #[test]

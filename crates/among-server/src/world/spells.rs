@@ -18,7 +18,7 @@ pub const OPENERS: [u32; 2] = [crate::look::HERB_GATHERING, crate::look::MINING]
 /// is the impostor's bar, then the node openers, for everyone: the book never changes, so it
 /// cannot give a role away (`SMSG_LEARNED_SPELL` would also print "You have learned").
 pub fn initial_spells(class: Class) -> Packet {
-    let book: Vec<u32> = main_bar(class, true).into_iter().chain(OPENERS).collect();
+    let book = book(class);
     let mut b = Body::default();
     b.u8(0).u16(book.len() as u16);
     for spell in book {
@@ -26,6 +26,28 @@ pub fn initial_spells(class: Class) -> Packet {
     }
     b.u16(0);
     Packet::new(opcode::SMSG_INITIAL_SPELLS, b.done())
+}
+
+fn book(class: Class) -> Vec<u32> {
+    main_bar(class, true).into_iter().chain(OPENERS).collect()
+}
+
+/// The book going from `from`'s to `to`'s at a class change: `SMSG_REMOVED_SPELL` for each spell
+/// only `from` has (a bare `u16` id), then `SMSG_LEARNED_SPELL` for each only `to` has (the `u16`
+/// id and an unused `u16` action-bar slot, vmangos `Spell.cpp:175-181`).
+pub fn book_change(from: Class, to: Class) -> Vec<Packet> {
+    let (old, new) = (book(from), book(to));
+    let removed = (old.iter()).filter(|s| !new.contains(s)).map(|&s| {
+        Packet::new(
+            opcode::SMSG_REMOVED_SPELL,
+            Body::default().u16(s as u16).done(),
+        )
+    });
+    let learned = (new.iter()).filter(|s| !old.contains(s)).map(|&s| {
+        let body = Body::default().u16(s as u16).u16(0).done();
+        Packet::new(opcode::SMSG_LEARNED_SPELL, body)
+    });
+    removed.chain(learned).collect()
 }
 
 /// `SMSG_ACTION_BUTTONS`: 120 slot words, `spell | kind << 24` with kind 0 for a spell; the main

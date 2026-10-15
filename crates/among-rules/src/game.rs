@@ -1206,17 +1206,24 @@ impl Game {
         self.taken.clear();
         self.holders.clear();
         self.traps.clear();
-        for p in self.players.values_mut() {
+        // Each player steps on to the next class, so a lobby plays every class over nine rounds.
+        let mut rotated = Vec::new();
+        for (&id, p) in &mut self.players {
             *p = Player {
                 position: p.position,
-                ..Player::new(p.class, &self.settings)
+                ..Player::new(p.class.next(), &self.settings)
             };
+            rotated.push(Event::ClassChanged {
+                player: id,
+                class: p.class,
+            });
         }
         self.emergency_cooldown = Duration::ZERO;
         self.sabotage = None;
         self.sabotage_cooldown = Duration::ZERO;
         self.phase = Phase::Lobby;
         self.out.push(Event::ReturnedToLobby);
+        self.out.extend(rotated);
     }
 
     /// Runs the clock; a long `dt` carries through every stage boundary it crosses, in order.

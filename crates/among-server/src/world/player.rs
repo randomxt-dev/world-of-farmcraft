@@ -239,6 +239,35 @@ fn power(class: u8) -> (u8, u32) {
     }
 }
 
+/// `UNIT_FIELD_BYTES_0`: race, `class`, gender and the class's power type.
+fn bytes_0(c: &CharacterRecord, class: u8) -> u32 {
+    let (power, _) = power(class);
+    u32::from(c.race) | u32::from(class) << 8 | u32::from(c.gender) << 16 | u32::from(power) << 24
+}
+
+/// The fields that make `c` fight as WoW class `class`: its id and power type in
+/// `UNIT_FIELD_BYTES_0`, that power held full and the other four empty. Gear stays the
+/// character's own.
+pub fn class_fields(c: &CharacterRecord, class: u8) -> Fields {
+    let (power, pool) = power(class);
+    let mut f = Fields::default();
+    f.u32(UNIT_FIELD_BYTES_0, bytes_0(c, class));
+    for kind in 0..5u8 {
+        let v = if kind == power { pool } else { 0 };
+        f.u32(UNIT_FIELD_POWER1 + u16::from(kind), v)
+            .u32(UNIT_FIELD_MAXPOWER1 + u16::from(kind), v);
+    }
+    f
+}
+
+/// The values update that shows `c` now fighting as WoW class `class`.
+pub fn class_change(c: &CharacterRecord, class: u8) -> Packet {
+    Packet::new(
+        opcode::SMSG_UPDATE_OBJECT,
+        update::values(c.guid, &class_fields(c, class)),
+    )
+}
+
 /// The character's class as the rules know it; anything else fights as a warrior.
 pub fn class(c: &CharacterRecord) -> Class {
     Class::from_wow(c.class).unwrap_or(Class::Warrior)
@@ -258,13 +287,7 @@ pub fn fields(c: &CharacterRecord, is_self: bool, life: Life) -> Fields {
         .u32(UNIT_FIELD_MAXPOWER1 + u16::from(power), pool)
         .u32(UNIT_FIELD_LEVEL, c.level.into())
         .u32(UNIT_FIELD_FACTIONTEMPLATE, faction_template(c.race))
-        .u32(
-            UNIT_FIELD_BYTES_0,
-            u32::from(c.race)
-                | u32::from(c.class) << 8
-                | u32::from(c.gender) << 16
-                | u32::from(power) << 24,
-        )
+        .u32(UNIT_FIELD_BYTES_0, bytes_0(c, c.class))
         .u32(UNIT_FIELD_FLAGS, UNIT_FLAG_PVP_ATTACKABLE)
         .u32(UNIT_FIELD_AURASTATE, AURASTATE_JUDGEMENT)
         .u32(UNIT_FIELD_BASEATTACKTIME, 2000)

@@ -173,7 +173,7 @@ pub fn task_text(
         level: TASK_LEVEL,
         objectives,
         details: if cover {
-            "Your cover as an impostor: fake it where the crew can see you. It never progresses \
+            "Your cover as an impostor: fake it where the crew can see you. It never finishes \
              and does not fill the crew's bar."
         } else {
             "One of your tasks. Every task a crewmate finishes fills the crew's bar, and a full \

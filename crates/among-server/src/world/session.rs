@@ -326,11 +326,14 @@ impl Session {
             let reply = self.host.vote_by_name(guid, words.next());
             return self.send(packets::system_message(&reply));
         }
-        // The survey writes the host's marks file and .speed bends movement: an open lobby's
-        // guests (anyone with the code) get neither, only the lobby host.
-        if !self.host.is_lobby_host(guid) {
+        // The survey writes the operator's marks file and .speed bends movement: an open lobby's
+        // guests (anyone with the code) get neither ([`Accounts::may_survey`]).
+        if !self
+            .accounts
+            .may_survey(&self.account, self.host.is_lobby_host(guid))
+        {
             return self.send(packets::system_message(
-                "Only the lobby host can use survey commands.",
+                "Survey commands are for the server's owner.",
             ));
         }
         match words.next() {

@@ -671,17 +671,21 @@ fn say_works_party_only_before_the_game_and_whispers_never() {
 }
 
 #[test]
-fn only_the_lobby_host_may_survey() {
+fn only_the_operator_may_survey_not_a_guest_with_the_code() {
+    // An open lobby whose operator also has their own account, as `--account` gives them.
     let marks = temp_marks("guest");
-    let host = start_server_full(2, Settings::default(), marks.clone());
+    let accounts = Accounts::open_lobby("K3XQ9P").unwrap();
+    accounts.register("among1", "secret1").unwrap();
+    let host = start_server_for(accounts, Settings::default(), marks.clone());
+    // The guest is in first, so holds the host seat, and still may not survey.
+    let (mut guest, _) = enter(&host, "guest", "k3xq9p");
+    assert!(wait_system_line(&mut guest).starts_with("You host this game"));
     let (mut first, _) = enter(&host, "among1", "secret1");
-    assert!(wait_system_line(&mut first).starts_with("You host this game"));
-    let (mut guest, _) = enter(&host, "among2", "secret2");
-    assert_eq!(wait_system_line(&mut guest), "Among1 hosts this game.");
+    assert_eq!(wait_system_line(&mut first), "Guest hosts this game.");
     guest.send_chat(".mark herb-east").unwrap();
     assert_eq!(
         wait_system_line(&mut guest),
-        "Only the lobby host can use survey commands."
+        "Survey commands are for the server's owner."
     );
     assert!(among_server::survey::read_marks(&marks)
         .unwrap_or_default()

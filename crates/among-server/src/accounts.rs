@@ -29,6 +29,8 @@ struct Account {
     verifier: Verifier,
     session_key: Option<[u8; 40]>,
     characters: Vec<CharacterRecord>,
+    /// Made by the operator (`--account`), not by a guest's lobby code.
+    operator: bool,
 }
 
 #[derive(Default)]
@@ -62,9 +64,21 @@ impl Accounts {
                 verifier,
                 session_key: None,
                 characters: Vec::new(),
+                operator: true,
             },
         );
         Ok(())
+    }
+
+    /// Whether `user` may survey: an operator's account when there are any, else whoever holds
+    /// the lobby (`lobby_host`), so a guest who inherits the host seat cannot rewrite the marks.
+    pub fn may_survey(&self, user: &str, lobby_host: bool) -> bool {
+        let inner = self.lock();
+        if inner.accounts.values().any(|a| a.operator) {
+            inner.accounts.get(user).is_some_and(|a| a.operator)
+        } else {
+            lobby_host
+        }
     }
 
     /// An open lobby: any account name logs in with `code` as its password.
@@ -99,6 +113,7 @@ impl Accounts {
                 verifier: verifier.clone(),
                 session_key: None,
                 characters: Vec::new(),
+                operator: false,
             });
         account.session_key = Some(session_key);
     }
@@ -231,6 +246,24 @@ mod tests {
         assert_eq!(accounts.verifier("THRALL").unwrap().salt, joining.salt);
         assert_eq!(accounts.session_key("THRALL"), Some([7; 40]));
         assert_eq!(accounts.characters("THRALL")[0].name, "Thrall");
+    }
+
+    #[test]
+    fn operators_survey_when_there_are_any_else_the_lobby_host() {
+        let open = Accounts::open_lobby("k3xq9p").unwrap();
+        let guest = open.verifier("GUEST").unwrap();
+        open.admit("GUEST", &guest, [1; 40]);
+        assert!(
+            open.may_survey("GUEST", true),
+            "no operators: the lobby host"
+        );
+        assert!(!open.may_survey("GUEST", false));
+        open.register("owner", "secret").unwrap();
+        assert!(
+            !open.may_survey("GUEST", true),
+            "a guest in the host seat may not"
+        );
+        assert!(open.may_survey("OWNER", false));
     }
 
     #[test]

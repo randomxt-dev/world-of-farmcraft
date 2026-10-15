@@ -692,7 +692,11 @@ impl Game {
         };
         let common = draw(TaskKind::Common, self.settings.common_tasks, n, &mut room);
         let mut lists: Vec<(PlayerId, Vec<TaskId>)> = Vec::new();
-        for &id in self.players.keys() {
+        // Crewmates draw first, so an impostor's cover takes only the spots they leave.
+        let (crew, cover): (Vec<PlayerId>, Vec<PlayerId>) = (self.players.keys())
+            .copied()
+            .partition(|id| !impostor_ids.contains(id));
+        for id in crew.into_iter().chain(cover) {
             let mut tasks = common.clone();
             tasks.extend(draw(TaskKind::Long, self.settings.long_tasks, 1, &mut room));
             tasks.extend(draw(

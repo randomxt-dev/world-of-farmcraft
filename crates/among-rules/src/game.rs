@@ -775,11 +775,17 @@ impl Game {
         self.taken.clear();
         self.traps.clear();
 
-        // Each player is dealt the round's class after roles and tasks, so those draws stand.
+        // Each player is dealt the round's class after roles and tasks, so those draws stand. The
+        // classes come off a shuffled deck of all nine, so none repeats until every one is out.
         let mut dealt = Vec::new();
         if self.settings.random_classes {
+            let mut deck: Vec<Class> = Vec::new();
             for (&id, p) in &mut self.players {
-                let class = Class::ALL[rng.below(Class::ALL.len())];
+                if deck.is_empty() {
+                    deck = Class::ALL.to_vec();
+                    rng.shuffle(&mut deck);
+                }
+                let class = deck.pop().expect("refilled when empty");
                 if class != p.class {
                     p.class = class;
                     dealt.push(Event::ClassChanged { player: id, class });

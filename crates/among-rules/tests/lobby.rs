@@ -335,6 +335,26 @@ fn every_start_deals_each_player_a_random_class_from_the_seed() {
 }
 
 #[test]
+fn no_class_repeats_until_all_nine_are_dealt() {
+    for n in 4..=15u64 {
+        for seed in 0..10 {
+            let g = started(n, seed);
+            let mut count = std::collections::BTreeMap::new();
+            for (_, p) in g.players() {
+                *count.entry(p.class).or_insert(0usize) += 1;
+            }
+            let most = *count.values().max().unwrap();
+            if n <= 9 {
+                assert_eq!(most, 1, "{n} players, seed {seed}: {count:?}");
+            } else {
+                assert_eq!(count.len(), 9, "{n} players, seed {seed}: all nine out");
+                assert_eq!(most, 2, "{n} players, seed {seed}: {count:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn the_lobby_keeps_the_last_class_and_the_next_start_deals_again() {
     let mut g = started(8, 5);
     let before: Vec<Class> = g.players().map(|(_, p)| p.class).collect();

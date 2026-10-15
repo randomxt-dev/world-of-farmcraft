@@ -120,10 +120,11 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 # The browser is the one target the owned device layer below cannot reach: no threads for 1857's
 # realtime render loop, and no clock for its meters (`std::time::Instant` panics here). So wasm32
-# is cut out of that section and runs kira on `sound::web_backend`, a kira backend of ours over
-# cpal's `wasm-bindgen` host (Web Audio). Ours, not kira's own cpal backend: kira 0.12.4's is on
-# cpal 0.18, whose `alsa-sys` 0.4 cannot share the lockfile with the 0.3 the native cpal links.
-cpal = { version = "0.17", features = ["wasm-bindgen"] }
+# is cut out of that section and runs kira on `sound::web_backend`, a kira backend of ours that
+# schedules Web Audio buffers from the frame (the `Audio*` features below), not through cpal,
+# whose webaudio host refilled only from `onended` and stuttered at a low frame rate. cpal stays
+# (no host feature) only because `sound::output`'s cpal hop is still compiled here.
+cpal = "0.17"
 # `Response`/`fetch` and the audio-decode surfaces are `sound::web_load`'s: the zone soundscape
 # fetches over `fetch` and decodes through `OfflineAudioContext::decodeAudioData`, both off the
 # main thread, because doing either on it froze the frame at every zone line and doorway.
@@ -136,6 +137,12 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "Response",
     "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioContext",
+    "AudioContextState",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioScheduledSourceNode",
     "BaseAudioContext",
     "OfflineAudioContext",
 ] }

@@ -49,6 +49,9 @@ mod weather;
 mod web_backend;
 #[cfg(target_arch = "wasm32")]
 mod web_load;
+// Native too, for its tests: the Web Audio queue's clock math.
+#[cfg(any(target_arch = "wasm32", test))]
+mod web_pacer;
 mod zone;
 pub(crate) use emote::EmoteSounds;
 /// First-play kit decodes so far, for the probe's tail line.
@@ -442,6 +445,8 @@ impl Plugin for SoundPlugin {
         reverb::plugin(app);
         interior::plugin(app);
         sheathe::plugin(app);
+        #[cfg(target_arch = "wasm32")]
+        web_backend::plugin(app);
     }
 }
 

@@ -857,7 +857,10 @@ impl Plugin for CreatureAnimPlugin {
                     .after(WorldStage::Input)
                     // `VisualSheath` must land before `resolve_equipment` reads it, or a sheath
                     // change double-swaps the weapon placement for a frame.
-                    .before(crate::entities::EntityVisualsSet),
+                    .before(crate::entities::EntityVisualsSet)
+                    // `AnimSoundEvent`'s readers (`route_anim_events`, footsteps, combat) are in
+                    // Present: unordered, a key crossed this frame could sound the next.
+                    .before(WorldStage::Present),
             )
             // The CharProc 11 freeze, after the driver so this frame's arms are in when it holds
             // the clocks: Ice Block's cast one-shot is armed, then never advances.

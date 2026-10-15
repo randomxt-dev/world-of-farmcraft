@@ -29,6 +29,7 @@
 //! assert_eq!(game.phase(), &Phase::Playing);
 //! ```
 
+mod abilities;
 mod classes;
 mod game;
 mod protocol;
@@ -36,10 +37,11 @@ mod rng;
 mod settings;
 pub mod wire;
 
+pub use abilities::{Abilities, Ability, AbilityDef, Aim, Effect};
 pub use classes::{Class, ClassSpell, Kit, Kits};
 pub use game::{
     Actions, ActiveSabotage, Body, Casting, Creature, Game, Meeting, MeetingStage, Phase, Player,
-    PlayerTask, SpellCast, Station,
+    PlayerTask, SpellCast, Station, Trap, Under,
 };
 pub use protocol::{
     Command, CreatureId, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote,

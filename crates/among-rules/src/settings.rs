@@ -3,6 +3,7 @@
 
 use std::time::Duration;
 
+use crate::abilities::Abilities;
 use crate::classes::Kits;
 use crate::protocol::CreatureId;
 
@@ -57,6 +58,14 @@ pub struct Settings {
     pub melee_range: f32,
     /// Health a living player regains per second while out of combat.
     pub health_regen: u32,
+    /// Each class's ability on players.
+    pub abilities: Abilities,
+    /// Before anyone's first ability of the game.
+    pub initial_ability_cooldown: Duration,
+    /// How close a step must come to a freezing trap to spring it.
+    pub trap_radius: f32,
+    /// How long a freezing trap waits before it crumbles.
+    pub trap_lifetime: Duration,
 }
 
 impl Default for Settings {
@@ -84,6 +93,11 @@ impl Default for Settings {
             kits: Kits::default(),
             melee_range: 5.0,
             health_regen: 2,
+            abilities: Abilities::default(),
+            initial_ability_cooldown: Duration::from_secs(10),
+            // A 1.12 freezing trap's own trigger radius, in yards.
+            trap_radius: 2.5,
+            trap_lifetime: Duration::from_secs(60),
         }
     }
 }

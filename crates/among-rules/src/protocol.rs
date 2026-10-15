@@ -4,6 +4,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use crate::abilities::{Ability, Effect};
 use crate::classes::Class;
 use crate::settings::{Position, SabotageKind, Settings};
 
@@ -144,6 +145,11 @@ pub enum Command {
     CastSpell {
         player: PlayerId,
         creature: CreatureId,
+    },
+    /// Use the class's ability: on `target` when it lands on another player, else on oneself.
+    UseAbility {
+        player: PlayerId,
+        target: Option<PlayerId>,
     },
     ReturnToLobby {
         by: PlayerId,
@@ -292,6 +298,45 @@ pub enum Event {
         damage: u32,
         health: u32,
     },
+    /// `player` used their class's ability, on `target` when it lands on another player.
+    AbilityUsed {
+        player: PlayerId,
+        ability: Ability,
+        target: Option<PlayerId>,
+    },
+    /// `player` is under `effect` for `duration`, put there by `by` (themself, or another).
+    EffectStarted {
+        player: PlayerId,
+        effect: Effect,
+        duration: Duration,
+        by: PlayerId,
+    },
+    /// The effect ran out, broke, or play stopped.
+    EffectEnded {
+        player: PlayerId,
+        effect: Effect,
+    },
+    /// `owner` set a freezing trap at `at`, replacing any of theirs; only they see it.
+    TrapSet {
+        owner: PlayerId,
+        at: Position,
+    },
+    /// `victim` stepped on `owner`'s trap; a [`Event::EffectStarted`] freezes them.
+    TrapSprung {
+        owner: PlayerId,
+        victim: PlayerId,
+    },
+    /// `owner`'s trap crumbled unsprung, or play stopped.
+    TrapGone {
+        owner: PlayerId,
+    },
+    /// `victim`'s shield, from `shielder`, stopped `killer`'s kill: nobody dies, and the killer's
+    /// cooldown starts over.
+    KillBlocked {
+        killer: PlayerId,
+        victim: PlayerId,
+        shielder: PlayerId,
+    },
     /// The creature died; `credit` is whoever damaged it first (WoW's tap), if still seated.
     CreatureDied {
         creature: CreatureId,
@@ -420,6 +465,10 @@ pub enum Reject {
     NotAUseStep,
     /// This node of a Gather step is already spent for the player.
     AlreadyGathered,
+    /// Polymorphed, feared or frozen: the player can do nothing until it wears off.
+    Incapacitated,
+    /// The target is under a divine shield.
+    Immune,
 }
 
 impl fmt::Display for Reject {
@@ -451,6 +500,8 @@ impl fmt::Display for Reject {
             Reject::AlreadyCasting => "already busy",
             Reject::NotAUseStep => "fight it instead",
             Reject::AlreadyGathered => "already gathered here",
+            Reject::Incapacitated => "you cannot do that now",
+            Reject::Immune => "immune",
         })
     }
 }

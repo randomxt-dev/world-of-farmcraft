@@ -203,6 +203,14 @@ pub fn notices(event: &Event, game: &Game) -> Vec<(To, Notice)> {
         | Event::SpellCastInterrupted { .. }
         | Event::SpellHit { .. }
         | Event::CreatureDied { .. } => Vec::new(),
+        // Abilities are the world's to show: casts, auras, looks, speeds and system lines.
+        Event::AbilityUsed { .. }
+        | Event::EffectStarted { .. }
+        | Event::EffectEnded { .. }
+        | Event::TrapSet { .. }
+        | Event::TrapSprung { .. }
+        | Event::TrapGone { .. }
+        | Event::KillBlocked { .. } => Vec::new(),
         Event::MeetingCalled {
             caller,
             reason,

@@ -1,13 +1,16 @@
 //! [`Game`]: the whole match as one state machine. [`Game::apply`] validates a [`Command`] against
 //! the current state and either refuses it (state unchanged) or applies it and returns the events.
 
+mod abilities;
 mod combat;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+pub use abilities::{Trap, Under};
 pub use combat::{Creature, SpellCast};
 
+use crate::abilities::Effect;
 use crate::classes::Class;
 use crate::protocol::{
     Command, CreatureId, Event, MeetingReason, PlayerId, Reject, Role, TaskId, Team, Vote,
@@ -45,6 +48,10 @@ pub struct Player {
     pub spell_cast: Option<SpellCast>,
     /// Until the class spell may be cast again.
     pub spell_cooldown: Duration,
+    /// Until the class's ability may be used again.
+    pub ability_cooldown: Duration,
+    /// What the player is under, and for how long.
+    pub effects: BTreeMap<Effect, Under>,
     /// Out-of-combat time not yet turned into regained health.
     regen: Duration,
 }
@@ -66,6 +73,8 @@ impl Player {
             swing: Duration::ZERO,
             spell_cast: None,
             spell_cooldown: Duration::ZERO,
+            ability_cooldown: Duration::ZERO,
+            effects: BTreeMap::new(),
             regen: Duration::ZERO,
         }
     }
@@ -76,6 +85,30 @@ impl Player {
 
     pub fn is_crewmate(&self) -> bool {
         self.role == Some(Role::Crewmate)
+    }
+
+    pub fn is_under(&self, effect: Effect) -> bool {
+        self.effects.contains_key(&effect)
+    }
+
+    /// Stealthed: unseen by the living, and no one's target.
+    pub fn is_hidden(&self) -> bool {
+        self.is_under(Effect::Stealth)
+    }
+
+    /// Polymorphed, feared or frozen.
+    pub fn is_incapacitated(&self) -> bool {
+        self.effects.keys().any(|e| e.incapacitates())
+    }
+
+    /// Held in place by an effect.
+    pub fn is_rooted(&self) -> bool {
+        self.effects.keys().any(|e| e.roots())
+    }
+
+    /// The share of their normal run speed the player's effects leave them.
+    pub fn speed(&self) -> f32 {
+        self.effects.keys().map(|e| e.speed()).product()
     }
 }
 
@@ -196,6 +229,8 @@ pub struct Game {
     taken: BTreeSet<(TaskId, usize, usize)>,
     /// How many players hold each task, indexed by [`TaskId`]; empty outside a game.
     holders: Vec<usize>,
+    /// Freezing traps waiting to be sprung, at most one per owner.
+    traps: Vec<Trap>,
     out: Vec<Event>,
 }
 
@@ -226,6 +261,7 @@ impl Game {
             creatures: Vec::new(),
             taken: BTreeSet::new(),
             holders: Vec::new(),
+            traps: Vec::new(),
             out: Vec::new(),
         }
     }
@@ -495,7 +531,7 @@ impl Game {
             }
             Command::Kill { killer, victim } => {
                 self.playing()?;
-                let k = self.alive(killer)?;
+                let k = self.able(killer)?;
                 if !k.is_impostor() {
                     return Err(Reject::NotImpostor);
                 }
@@ -504,13 +540,16 @@ impl Game {
                     return Err(Reject::OnCooldown);
                 }
                 let v = (self.players.get(&victim))
-                    .filter(|v| v.connected && v.alive && v.is_crewmate())
+                    .filter(|v| v.connected && v.alive && v.is_crewmate() && !v.is_hidden())
                     .ok_or(Reject::InvalidTarget)?;
+                if v.is_under(Effect::DivineShield) {
+                    return Err(Reject::Immune);
+                }
                 self.in_reach(k.position, v.position, self.settings.kill_distance)
             }
             Command::Report { player, body } => {
                 self.playing()?;
-                let p = self.alive(player)?;
+                let p = self.able(player)?;
                 let b = (self.bodies.iter())
                     .find(|b| b.victim == body)
                     .ok_or(Reject::NoSuchBody)?;
@@ -518,7 +557,7 @@ impl Game {
             }
             Command::CallEmergency { player } => {
                 self.playing()?;
-                let p = self.alive(player)?;
+                let p = self.able(player)?;
                 if p.emergencies_left == 0 {
                     return Err(Reject::NoEmergencyMeetingsLeft);
                 }
@@ -552,8 +591,12 @@ impl Game {
             }
             Command::Sabotage { player, kind } => {
                 self.playing()?;
-                if !self.connected(player)?.is_impostor() {
+                let p = self.connected(player)?;
+                if !p.is_impostor() {
                     return Err(Reject::NotImpostor);
+                }
+                if p.is_incapacitated() {
+                    return Err(Reject::Incapacitated);
                 }
                 if self.sabotage.is_some() {
                     return Err(Reject::SabotageActive);
@@ -567,7 +610,7 @@ impl Game {
             }
             Command::Fix { player, station } => {
                 self.playing()?;
-                let p = self.alive(player)?;
+                let p = self.able(player)?;
                 let s = self.sabotage.as_ref().ok_or(Reject::NoSabotage)?;
                 match s.stations.get(station).ok_or(Reject::NoSuchStation)? {
                     Station::Fixed => return Err(Reject::StationFixed),
@@ -581,6 +624,7 @@ impl Game {
             Command::Attack { player, creature } => self.validate_attack(player, creature),
             Command::StopAttack { player } => self.connected(player).map(drop),
             Command::CastSpell { player, creature } => self.validate_spell(player, creature),
+            Command::UseAbility { player, target } => self.validate_ability(player, target),
             Command::ReturnToLobby { by } => {
                 if !matches!(self.phase, Phase::GameOver { .. }) {
                     return Err(Reject::WrongPhase);
@@ -626,9 +670,14 @@ impl Game {
                     self.interrupt_spell(player);
                 }
                 self.release_out_of_reach(player);
+                self.spring_traps(player);
             }
-            Command::UseTask { player, task } => self.use_task(player, task),
+            Command::UseTask { player, task } => {
+                self.break_stealth(player);
+                self.use_task(player, task);
+            }
             Command::GatherNode { player, task, node } => {
+                self.break_stealth(player);
                 let time = match &self.layout.tasks[task.0].steps[self.step_of(player, task)].action
                 {
                     StepAction::Gather { cast, .. } => *cast,
@@ -654,11 +703,21 @@ impl Game {
                 }
             }
             Command::Sabotage { kind, .. } => self.start_sabotage(kind),
-            Command::Fix { player, station } => self.fix(player, station),
+            Command::Fix { player, station } => {
+                self.break_stealth(player);
+                self.fix(player, station);
+            }
             Command::ReleaseFix { player } => self.release_stations(player),
-            Command::Attack { player, creature } => self.attack(player, creature),
+            Command::Attack { player, creature } => {
+                self.break_stealth(player);
+                self.attack(player, creature);
+            }
             Command::StopAttack { player } => self.stop_attack(player),
-            Command::CastSpell { player, creature } => self.cast_spell(player, creature),
+            Command::CastSpell { player, creature } => {
+                self.break_stealth(player);
+                self.cast_spell(player, creature);
+            }
+            Command::UseAbility { player, target } => self.use_ability(player, target),
             Command::ReturnToLobby { .. } => self.return_to_lobby(),
             Command::Tick { dt } => self.tick(dt),
         }
@@ -714,6 +773,7 @@ impl Game {
             }
         }
         self.taken.clear();
+        self.traps.clear();
 
         self.out.push(Event::GameStarted {
             players: n,
@@ -740,6 +800,8 @@ impl Game {
                 .collect();
             p.health = self.settings.kits.get(p.class).health;
             p.kill_cooldown = self.settings.initial_kill_cooldown;
+            p.ability_cooldown = self.settings.initial_ability_cooldown;
+            p.effects.clear();
             p.emergencies_left = self.settings.emergency_meetings;
             let fellow_impostors = if impostor {
                 impostor_ids.iter().copied().filter(|&i| i != id).collect()
@@ -941,6 +1003,11 @@ impl Game {
     }
 
     fn kill(&mut self, killer: PlayerId, victim: PlayerId) {
+        self.break_stealth(killer);
+        if self.shield_stops(killer, victim) {
+            return;
+        }
+        self.clear_effects_of(victim);
         self.interrupt(victim);
         self.leave_combat(victim);
         let v = self.seat(victim);
@@ -993,6 +1060,7 @@ impl Game {
         } else {
             self.interrupt(player);
             self.leave_combat(player);
+            self.clear_effects_of(player);
             self.seat(player).connected = false;
             self.release_stations(player);
         }
@@ -1026,6 +1094,7 @@ impl Game {
 
     fn start_meeting(&mut self, caller: PlayerId, reason: MeetingReason) {
         self.interrupt_all();
+        self.clear_all_effects();
         let discussion = self.settings.discussion_time;
         self.out.push(Event::MeetingCalled {
             caller,
@@ -1136,6 +1205,7 @@ impl Game {
         self.creatures.clear();
         self.taken.clear();
         self.holders.clear();
+        self.traps.clear();
         for p in self.players.values_mut() {
             *p = Player {
                 position: p.position,
@@ -1178,6 +1248,7 @@ impl Game {
                     for p in self.players.values_mut() {
                         p.kill_cooldown = p.kill_cooldown.saturating_sub(dt);
                     }
+                    self.tick_abilities(dt);
                     self.tick_casts(dt);
                     if self.phase != Phase::Playing {
                         return;
@@ -1218,6 +1289,7 @@ impl Game {
 
     fn game_over(&mut self, winner: Team, reason: WinReason) {
         self.interrupt_all();
+        self.clear_all_effects();
         let impostors = (self.players.iter())
             .filter(|(_, p)| p.is_impostor())
             .map(|(&id, _)| id)
@@ -1408,6 +1480,9 @@ impl Game {
         // Ghost crewmates still work; a ghost impostor has no one left to fool.
         if !p.alive && p.is_impostor() {
             return Err(Reject::Dead);
+        }
+        if p.is_incapacitated() {
+            return Err(Reject::Incapacitated);
         }
         if p.casting.is_some() || p.spell_cast.is_some() {
             return Err(Reject::AlreadyCasting);

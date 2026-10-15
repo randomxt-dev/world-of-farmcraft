@@ -65,7 +65,7 @@ impl Game {
         creature: CreatureId,
     ) -> Result<(), Reject> {
         self.playing()?;
-        self.alive(player)?;
+        self.able(player)?;
         self.living_creature(creature).map(drop)
     }
 
@@ -75,7 +75,7 @@ impl Game {
         creature: CreatureId,
     ) -> Result<(), Reject> {
         self.playing()?;
-        let p = self.alive(player)?;
+        let p = self.able(player)?;
         if p.casting.is_some() || p.spell_cast.is_some() {
             return Err(Reject::AlreadyCasting);
         }
@@ -382,7 +382,9 @@ impl Game {
             None => {
                 let from = c.position;
                 let nearest = (self.players.iter())
-                    .filter(|(_, p)| p.connected && p.alive && within(from, p.position, aggro))
+                    .filter(|(_, p)| {
+                        p.connected && p.alive && !p.is_hidden() && within(from, p.position, aggro)
+                    })
                     .min_by(|a, b| {
                         distance_squared(from, a.1.position)
                             .total_cmp(&distance_squared(from, b.1.position))
@@ -431,6 +433,7 @@ impl Game {
 
     /// A creature killed `victim`: a ghost with a reportable body, exactly like a kill.
     fn slain(&mut self, victim: PlayerId, creature: CreatureId) {
+        self.clear_effects_of(victim);
         let p = self.seat(victim);
         p.alive = false;
         let at = p.position;

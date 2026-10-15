@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use among_rules::{Class, Settings};
+use among_rules::{Ability as ClassAbility, Class, Settings};
 use among_spells as spells;
 
 /// One action-bar spell as Among Azeroth presents it.
@@ -25,7 +25,8 @@ pub struct Ability {
     pub description: String,
 }
 
-/// Every Among Azeroth button, then each class's one spell, worded from `settings`.
+/// Every Among Azeroth button, then each class's one spell and one ability, worded from
+/// `settings`.
 pub fn abilities(settings: &Settings) -> Vec<Ability> {
     let s = settings;
     let button = |spell, borrowed, name: &str, cooldown: Option<Duration>, description: String| {
@@ -110,7 +111,87 @@ pub fn abilities(settings: &Settings) -> Vec<Ability> {
             ),
         }
     }));
+    out.extend(ClassAbility::ALL.into_iter().map(|ability| {
+        let def = s.abilities.get(ability);
+        let (borrowed, name, description) = ability_text(ability, s);
+        Ability {
+            spell: spells::ability_spell(ability),
+            borrowed,
+            name: name.into(),
+            rank: Some(String::new()),
+            cast: "Instant".into(),
+            cooldown: Some(cooldown_cell(def.cooldown)),
+            description,
+        }
+    }));
     out
+}
+
+/// A class ability's borrowed `Spell.dbc` name, the name it shows, and what it does, from the
+/// rules' numbers.
+fn ability_text(ability: ClassAbility, s: &Settings) -> (&'static str, &'static str, String) {
+    let d = s.abilities.get(ability);
+    let (lasts, reach) = (time(d.duration), yards(d.range));
+    match ability {
+        ClassAbility::Hamstring => (
+            "Hamstring",
+            "Hamstring",
+            format!("Maims a player within {reach} yards: they run at half speed for {lasts}."),
+        ),
+        ClassAbility::DivineShield => (
+            "Divine Shield",
+            "Divine Shield",
+            format!("For {lasts}, no kill and no ability can touch you."),
+        ),
+        ClassAbility::FreezingTrap => (
+            "Freezing Trap",
+            "Freezing Trap",
+            format!(
+                "Sets a trap at your feet that only you can see. The first other player to step                  on it is frozen for {lasts}, unable to move or act. It crumbles after {}.",
+                time(s.trap_lifetime)
+            ),
+        ),
+        ClassAbility::Stealth => (
+            "Stealth",
+            "Stealth",
+            format!(
+                "Vanish from the living for up to {lasts}: no one can see or target you. A kill,                  an attack, a task or a fix brings you back into view."
+            ),
+        ),
+        ClassAbility::PowerWordShield => (
+            "Uber Heal Over Time",
+            "Power Word: Shield",
+            format!(
+                "Shields another player within {reach} yards for {lasts}: the next kill on them                  fails. Never on yourself."
+            ),
+        ),
+        ClassAbility::GhostWolf => (
+            "Dire Wolf Form",
+            "Ghost Wolf",
+            format!("Turns you into a ghost wolf, running 40% faster for {lasts}."),
+        ),
+        ClassAbility::Polymorph => (
+            "Polymorph",
+            "Polymorph",
+            format!(
+                "Turns a player within {reach} yards into a sheep for {lasts}: slow, and unable                  to kill, report, work or act."
+            ),
+        ),
+        ClassAbility::Fear => (
+            "Fear",
+            "Fear",
+            format!(
+                "Strikes terror into a player within {reach} yards: for {lasts} they can neither                  move nor act."
+            ),
+        ),
+        ClassAbility::EntanglingRoots => (
+            "Entangling Roots",
+            "Entangling Roots",
+            format!(
+                "Roots a player within {reach} yards in place for {lasts}. They can still act."
+            ),
+        ),
+    }
 }
 
 /// The class spell's `Spell.dbc` name: [`spells::class_spell`]'s level-1 starters.
@@ -188,6 +269,19 @@ mod tests {
             kill.description
         );
         assert!(kill.description.contains("waits 10 sec"));
+    }
+
+    #[test]
+    fn abilities_quote_the_rules_under_their_own_names() {
+        let table = abilities(&Settings::default());
+        let shield = table.iter().find(|a| a.spell == 1908).unwrap();
+        assert_eq!(shield.name, "Power Word: Shield");
+        assert_eq!(shield.cooldown.as_deref(), Some("45 sec cooldown"));
+        assert!(shield.description.contains("within 40 yards for 30 sec"));
+        let wolf = table.iter().find(|a| a.spell == 22660).unwrap();
+        assert_eq!(wolf.name, "Ghost Wolf");
+        let stealth = table.iter().find(|a| a.spell == 1784).unwrap();
+        assert!(stealth.description.contains("up to 30 sec"));
     }
 
     #[test]

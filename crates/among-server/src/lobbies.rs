@@ -131,6 +131,14 @@ impl Lobby {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// A page of this lobby is active (it fetched game data): an empty lobby's idle time restarts.
+    pub fn touch(&self) {
+        let mut presence = self.presence();
+        if presence.sessions == 0 {
+            presence.empty_since = Instant::now();
+        }
+    }
+
     /// Whether a created lobby has stood empty for `idle` by `now`.
     fn expired(&self, now: Instant, idle: Duration) -> bool {
         let presence = self.presence();
@@ -429,6 +437,20 @@ mod tests {
         let full = lobbies.create().unwrap_err();
         assert_eq!(full, Full(2));
         assert!(full.to_string().contains("All 2 lobbies"), "{full}");
+    }
+
+    #[tokio::test]
+    async fn a_page_still_loading_keeps_an_empty_lobby_open() {
+        let lobbies = lobbies(2);
+        let code = lobbies.create().unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let from_creation = Instant::now() + Duration::from_secs(600);
+        lobbies.open(&code).unwrap().touch();
+        assert!(lobbies.sweep(from_creation).is_empty());
+        assert_eq!(
+            lobbies.sweep(Instant::now() + Duration::from_secs(601)),
+            vec![code]
+        );
     }
 
     #[tokio::test]

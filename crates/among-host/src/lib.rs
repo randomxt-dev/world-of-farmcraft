@@ -51,7 +51,11 @@ async fn gate(State(lobbies): State<Lobbies>, mut request: Request, next: Next) 
             .filter_map(|v| cookie_value(v, COOKIE))
             .find_map(|c| lobbies.open(c)),
     };
-    let Some(code) = live.map(|lobby| lobby.code().to_owned()) else {
+    // A page downloading or waiting at the login screen counts as presence, not only a session.
+    let Some(code) = live.map(|lobby| {
+        lobby.touch();
+        lobby.code().to_owned()
+    }) else {
         if request.uri().path() == "/" {
             return match asked
                 .filter(|c| !c.is_empty() && c.chars().all(|c| c.is_ascii_alphanumeric()))

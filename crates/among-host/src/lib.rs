@@ -1,7 +1,8 @@
 //! The lobby gate in front of wenilla's browser host. `/data` hands out game files from the host's
 //! own install, so every route needs a live lobby's code: an invite link `/?lobby=CODE` sets it as
 //! a cookie, and a request carrying neither gets 403, except `/`, which shows the landing page
-//! where anyone may create a lobby or join one by code.
+//! where anyone may create a lobby or join one by code. The game page it lets in carries a small
+//! script of ours that turns a later 403 (the lobby closed) into a notice instead of a black screen.
 
 pub mod landing;
 pub mod relay;
@@ -22,6 +23,9 @@ use axum::Router;
 pub use landing::Limiter;
 
 const COOKIE: &str = "among_lobby";
+
+/// Shows "This lobby has closed" on any 403 the page meets; put before the page's own scripts.
+const GUARD: &str = include_str!("closed.js");
 
 /// The live lobby code a request was let in with, for the routes behind the gate.
 #[derive(Clone, Debug)]
@@ -77,7 +81,22 @@ async fn gate(State(lobbies): State<Lobbies>, mut request: Request, next: Next) 
             .into_response();
     };
     request.extensions_mut().insert(LobbyCode(code.clone()));
+    let page = is_page(request.uri().path());
+    if page {
+        // The page is rewritten, so it comes plain and whole: no precompressed sibling, no 304.
+        let headers = request.headers_mut();
+        for name in [
+            header::ACCEPT_ENCODING,
+            header::IF_MODIFIED_SINCE,
+            header::IF_NONE_MATCH,
+        ] {
+            headers.remove(name);
+        }
+    }
     let mut response = next.run(request).await;
+    if page {
+        response = with_guard(response).await;
+    }
     if asked.is_some() {
         let cookie = format!("{COOKIE}={code}; Path=/; SameSite=Lax; HttpOnly");
         if let Ok(value) = HeaderValue::from_str(&cookie) {
@@ -85,6 +104,33 @@ async fn gate(State(lobbies): State<Lobbies>, mut request: Request, next: Next) 
         }
     }
     response
+}
+
+/// Whether `path` asks for an HTML page rather than a file the page loads.
+fn is_page(path: &str) -> bool {
+    path == "/" || path.ends_with(".html")
+}
+
+/// `response` with [`GUARD`] before its first script, when it is a plain HTML page.
+async fn with_guard(response: Response) -> Response {
+    let html = (response.headers().get(header::CONTENT_TYPE))
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
+    let encoded = response.headers().contains_key(header::CONTENT_ENCODING);
+    if response.status() != StatusCode::OK || !html || encoded {
+        return response;
+    }
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, 1 << 20).await else {
+        return StatusCode::BAD_GATEWAY.into_response();
+    };
+    let page = String::from_utf8_lossy(&bytes);
+    let at = page.find("<script").unwrap_or(page.len());
+    let page = format!("{}<script>{GUARD}</script>{}", &page[..at], &page[at..]);
+    for name in [header::CONTENT_LENGTH, header::ETAG, header::LAST_MODIFIED] {
+        parts.headers.remove(name);
+    }
+    Response::from_parts(parts, page.into())
 }
 
 /// `wenilla-host`'s `/data` router with its 404s cacheable like its files: a name absent from the

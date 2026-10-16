@@ -30,6 +30,9 @@ pub use survey::Survey;
 /// `benilla-config/` (CLAUDE.md: our files live there), relative to the working directory.
 pub const DEFAULT_MARKS: &str = "benilla-config/among/marks.toml";
 
+/// Where the codes of player-made lobbies are kept across restarts, beside the marks.
+pub const DEFAULT_LOBBIES: &str = "benilla-config/among/lobbies.txt";
+
 /// How often empty player-made lobbies are looked for and closed.
 const SWEEP: Duration = Duration::from_secs(30);
 
@@ -61,6 +64,9 @@ pub struct ServerConfig {
     pub max_lobbies: usize,
     /// How long a player-made lobby may stand empty before it closes.
     pub idle_close: Duration,
+    /// The file player-made lobbies' codes are kept in, so they outlive a restart; `None` keeps
+    /// them in memory only.
+    pub lobbies_file: Option<PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -78,6 +84,7 @@ impl Default for ServerConfig {
             start_countdown: game::START_COUNTDOWN,
             max_lobbies: 8,
             idle_close: IDLE_CLOSE,
+            lobbies_file: None,
         }
     }
 }
@@ -117,6 +124,9 @@ impl Server {
             config.idle_close,
         );
         lobbies.add_fixed(accounts);
+        if let Some(file) = &config.lobbies_file {
+            lobbies.persist(file.clone());
+        }
         Ok(Self {
             auth,
             world,

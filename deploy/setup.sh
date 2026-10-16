@@ -60,7 +60,10 @@ if [ "$MODE" = host ]; then
     install -d -m 755 "$app/www"
     tar -xzf "$stage/www.tar.gz" -C "$app/www"
     command -v caddy >/dev/null || { apt-get update -q && apt-get install -y -q caddy; }
-    printf '%s {\n\treverse_proxy 127.0.0.1:8090\n}\n' "$DOMAIN" >/etc/caddy/Caddyfile
+    # No HTTP/3: a reload leaves open QUIC connections answering pings but never requests, and
+    # Chrome keeps reusing them, so a returning player's page hangs forever. TCP closes cleanly.
+    printf '{\n\tservers {\n\t\tprotocols h1 h2\n\t}\n}\n' >/etc/caddy/Caddyfile
+    printf '%s {\n\treverse_proxy 127.0.0.1:8090\n}\n' "$DOMAIN" >>/etc/caddy/Caddyfile
     # A real domain also answers on www., sent on to the one address the invite names.
     case $DOMAIN in
     *.sslip.io) ;;
@@ -78,8 +81,6 @@ if ufw status 2>/dev/null | grep 'Status: active' >/dev/null; then
     if [ "$MODE" = host ]; then
         ufw allow 80/tcp >/dev/null
         ufw allow 443/tcp >/dev/null
-        # Caddy serves HTTP/3 over UDP.
-        ufw allow 443/udp >/dev/null
     fi
 fi
 

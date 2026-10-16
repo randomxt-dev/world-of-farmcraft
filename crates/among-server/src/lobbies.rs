@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -183,6 +184,33 @@ struct Registry {
     /// Browser relay connections by the address the server sees them from, with the lobby code
     /// their page carried: a browser logon's lobby.
     hints: HashMap<SocketAddr, String>,
+    /// The file the created lobbies' codes are kept in, so a restart reopens them.
+    store: Option<PathBuf>,
+}
+
+impl Registry {
+    /// Write the created lobbies' codes to the store, one per line; a failure is logged, since
+    /// the lobbies themselves live on.
+    fn save(&self) {
+        let Some(file) = &self.store else { return };
+        let mut codes: Vec<&str> = (self.lobbies.values())
+            .filter(|l| l.0.created)
+            .map(Lobby::code)
+            .collect();
+        codes.sort_unstable();
+        let text: String = codes
+            .iter()
+            .map(|c| {
+                format!(
+                    "{c}
+"
+                )
+            })
+            .collect();
+        if let Err(e) = write_atomically(file, &text) {
+            tracing::warn!("lobbies: saving the codes to {}: {e}", file.display());
+        }
+    }
 }
 
 /// The live lobbies; cheap to clone, shared by realmd, the world server and the web host.
@@ -198,7 +226,50 @@ impl Lobbies {
             max,
             idle,
             hints: HashMap::new(),
+            store: None,
         })))
+    }
+
+    /// Keep the created lobbies' codes in `file` from now on, first reopening the ones it lists
+    /// (up to the cap) with their idle time starting now: a restart keeps every invite link
+    /// valid, though not the games inside. Returns the codes reopened.
+    pub fn persist(&self, file: PathBuf) -> Vec<String> {
+        let saved = match std::fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                tracing::warn!("lobbies: reading {}: {e}", file.display());
+                String::new()
+            }
+        };
+        let mut registry = self.lock();
+        let mut reopened = Vec::new();
+        for code in saved.lines().map(|l| l.trim().to_ascii_uppercase()) {
+            let valid = !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric());
+            if !valid || registry.lobbies.contains_key(&code) {
+                continue;
+            }
+            if registry.lobbies.len() >= registry.max {
+                tracing::warn!("lobbies: {code} not reopened, the server runs its cap");
+                continue;
+            }
+            let Ok(accounts) = Accounts::created_lobby(&code) else {
+                continue;
+            };
+            let lobby = Lobby::start(code.clone(), accounts, &registry.template, true, true);
+            registry.lobbies.insert(code.clone(), lobby);
+            reopened.push(code);
+        }
+        if !reopened.is_empty() {
+            tracing::info!(
+                "lobbies: reopened {} from {}",
+                reopened.join(", "),
+                file.display()
+            );
+        }
+        registry.store = Some(file);
+        registry.save();
+        reopened
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Registry> {
@@ -234,6 +305,7 @@ impl Lobbies {
         let accounts = Accounts::created_lobby(&code).expect("a fresh code is a valid password");
         let lobby = Lobby::start(code.clone(), accounts, &registry.template, true, true);
         registry.lobbies.insert(code.clone(), lobby);
+        registry.save();
         tracing::info!("lobbies: {code} created ({} live)", registry.lobbies.len());
         Ok(code)
     }
@@ -322,10 +394,25 @@ impl Lobbies {
         for code in &closed {
             tracing::info!("lobbies: {code} closed, empty ({live} live)");
         }
+        if !closed.is_empty() {
+            registry.save();
+        }
         let Registry { hints, lobbies, .. } = &mut *registry;
         hints.retain(|_, code| lobbies.contains_key(code));
         closed
     }
+}
+
+/// Replace `file` with `text` through a sibling temporary file, so a crash mid-write leaves the
+/// old list rather than half of one.
+fn write_atomically(file: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = file.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut temporary = file.as_os_str().to_owned();
+    temporary.push(".tmp");
+    std::fs::write(&temporary, text)?;
+    std::fs::rename(&temporary, file)
 }
 
 /// A code no live lobby has.
@@ -482,6 +569,77 @@ mod tests {
         lobbies
             .create()
             .expect("the closed lobby's slot is free again");
+    }
+
+    /// A fresh store file in the system's temporary folder, gone before the test starts.
+    fn store(name: &str) -> PathBuf {
+        let file = std::env::temp_dir()
+            .join(format!("among-lobbies-{}", std::process::id()))
+            .join(format!("{name}.txt"));
+        let _ = std::fs::remove_file(&file);
+        file
+    }
+
+    #[tokio::test]
+    async fn created_lobbies_reopen_after_a_restart_with_a_fresh_idle_clock() {
+        let file = store("reopen");
+        let before = lobbies(8);
+        before.add_fixed(Accounts::open_lobby("K3XQ9P").unwrap());
+        assert!(before.persist(file.clone()).is_empty(), "nothing saved yet");
+        let (a, b) = (before.create().unwrap(), before.create().unwrap());
+        drop(before);
+
+        // A restart: a new server with the same store reopens both, the fixed lobby untouched.
+        let after = lobbies(8);
+        after.add_fixed(Accounts::open_lobby("K3XQ9P").unwrap());
+        let mut reopened = after.persist(file.clone());
+        reopened.sort();
+        let mut made = vec![a.clone(), b.clone()];
+        made.sort();
+        assert_eq!(reopened, made);
+        assert_eq!(after.len(), 3);
+        let lobby = after.open(&a.to_ascii_lowercase()).unwrap();
+        assert!(
+            lobby.accounts().verifier("THRALL").is_some(),
+            "its code logs in"
+        );
+
+        // Their idle time counts from the restart, then a closed one leaves the store.
+        assert!(after
+            .sweep(Instant::now() + Duration::from_secs(60))
+            .is_empty());
+        let closed = after.sweep(Instant::now() + Duration::from_secs(601));
+        assert_eq!(closed.len(), 2);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn the_store_skips_junk_duplicates_the_fixed_code_and_codes_past_the_cap() {
+        let file = store("junk");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &file,
+            "ab12cd
+
+AB12CD
+K3XQ9P
+no-way!
+ZZ99ZZ
+YY88YY
+",
+        )
+        .unwrap();
+        let lobbies = lobbies(3);
+        lobbies.add_fixed(Accounts::open_lobby("K3XQ9P").unwrap());
+        assert_eq!(lobbies.persist(file.clone()), vec!["AB12CD", "ZZ99ZZ"]);
+        assert!(lobbies.open("K3XQ9P").is_some());
+        // The rewritten store lists what is live and created, nothing else.
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "AB12CD
+ZZ99ZZ
+"
+        );
     }
 
     #[tokio::test]

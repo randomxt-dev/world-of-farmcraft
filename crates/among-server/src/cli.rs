@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use crate::accounts::{self, Accounts};
-use crate::{game, layout_file, ServerConfig, DEFAULT_MARKS};
+use crate::{game, layout_file, ServerConfig, DEFAULT_LOBBIES, DEFAULT_MARKS};
 
 #[derive(clap::Args, Debug)]
 pub struct ServerArgs {
@@ -45,6 +45,9 @@ pub struct ServerArgs {
     /// Live lobbies at most, this one included; players may create the rest.
     #[arg(long, default_value_t = 8)]
     pub max_lobbies: usize,
+    /// The file player-made lobbies' codes are kept in, so a restart reopens them.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_LOBBIES)]
+    pub lobbies_file: PathBuf,
 }
 
 /// A configured server, ready to bind.
@@ -98,6 +101,7 @@ impl ServerArgs {
                 start_countdown: std::time::Duration::from_secs(self.countdown),
                 max_lobbies: self.max_lobbies,
                 idle_close: crate::IDLE_CLOSE,
+                lobbies_file: Some(self.lobbies_file),
             },
             accounts,
             lobby_code,

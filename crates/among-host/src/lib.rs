@@ -44,6 +44,8 @@ async fn gate(State(lobbies): State<Lobbies>, mut request: Request, next: Next) 
     // A link's code decides alone, so a closed lobby's link never falls back to an old cookie.
     let live = match &asked {
         Some(code) => lobbies.open(code),
+        // A bare `/` is always the landing page: the cookie only lets in the page's own requests.
+        None if request.uri().path() == "/" => None,
         None => (request.headers().get_all(header::COOKIE).iter())
             .filter_map(|v| v.to_str().ok())
             .filter_map(|v| cookie_value(v, COOKIE))

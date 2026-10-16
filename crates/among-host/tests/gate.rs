@@ -105,6 +105,13 @@ async fn a_bare_root_is_the_landing_page_and_a_live_code_the_game() {
 }
 
 #[tokio::test]
+async fn a_bare_root_is_the_landing_page_even_with_a_live_lobby_cookie() {
+    let lobbies = lobbies(8);
+    let page = text(get_with(&lobbies, "/", Some("among_lobby=K3XQ9P")).await).await;
+    assert!(page.contains("Create lobby"), "{page}");
+}
+
+#[tokio::test]
 async fn a_created_lobby_lets_in_until_it_closes() {
     let lobbies = lobbies(8);
     let app = app(&lobbies);

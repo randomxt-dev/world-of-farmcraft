@@ -112,6 +112,45 @@ pub fn outfit(owner: u64) -> Vec<Held> {
         .collect()
 }
 
+/// `EQUIPMENT_SLOT_MAINHAND`.
+const MAINHAND: u8 = 15;
+/// The tool not in hand: carried, in no slot, so the hand can swap to it.
+const SPARE: u8 = 0xFE;
+
+/// The spare tool: the axe, while the shovel starts in hand.
+pub fn spare_tool(owner: u64) -> Held {
+    Held {
+        slot: SPARE,
+        guid: items::item_guid(owner, u32::from(SPARE)),
+        entry: items::LUMBERJACK_AXE,
+        count: 1,
+    }
+}
+
+/// The item guid of the tool `entry` (the shovel or the axe).
+pub fn tool_guid(owner: u64, entry: u32) -> u64 {
+    let slot = if entry == items::LUMBERJACK_AXE {
+        SPARE
+    } else {
+        MAINHAND
+    };
+    items::item_guid(owner, u32::from(slot))
+}
+
+/// The values update that puts tool `entry` in the farmer's hand, for them and everyone.
+pub fn wield_change(owner: u64, entry: u32) -> Packet {
+    let mut f = Fields::default();
+    f.u32(
+        PLAYER_VISIBLE_ITEM_1_0 + VISIBLE_ITEM_STRIDE * u16::from(MAINHAND),
+        entry,
+    )
+    .u64(
+        PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(MAINHAND),
+        tool_guid(owner, entry),
+    );
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
+}
+
 /// The Mining Pick, always in the backpack's first slot.
 pub fn pick(owner: u64) -> Held {
     Held {
@@ -178,7 +217,7 @@ pub fn fields(c: &Character, is_self: bool, carried: &[Held], money: u32) -> Fie
         for i in 0..EXPLORED_ZONE_WORDS {
             f.u32(PLAYER_EXPLORED_ZONES_1 + i, u32::MAX);
         }
-        for h in carried {
+        for h in carried.iter().filter(|h| h.slot < items::BACKPACK_END) {
             f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(h.slot), h.guid);
         }
         f.u32(PLAYER_FIELD_COINAGE, money);

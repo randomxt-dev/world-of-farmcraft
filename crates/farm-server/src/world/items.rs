@@ -83,6 +83,8 @@ const SEEDS_BASE: u32 = 91_000;
 const WOOD: (u32, u32) = (4470, 21102);
 /// `item_template` 768, the Lumberjack Axe the farmer chops with (`INV_Axe_01`).
 pub const LUMBERJACK_AXE: u32 = 768;
+/// `item_template` 3334, the Farmer's Shovel the farmer works the soil with.
+pub const SHOVEL: u32 = 3334;
 
 /// The 1.12 entry and look of a crop's harvest.
 fn produce(crop: Crop) -> (u32, u32) {
@@ -193,7 +195,7 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
             armor: 0,
         },
         // Farmer's Shovel, held two-handed.
-        3334 => ItemTemplate {
+        SHOVEL => ItemTemplate {
             entry,
             name: "Farmer's Shovel".into(),
             class: 2,
@@ -220,13 +222,7 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
 }
 
 /// The outfit every farmer wears: (equipment slot, entry).
-pub const OUTFIT: [(u8, u32); 5] = [
-    (3, 4344),
-    (6, 4343),
-    (7, 11191),
-    (9, 5606),
-    (15, LUMBERJACK_AXE),
-];
+pub const OUTFIT: [(u8, u32); 5] = [(3, 4344), (6, 4343), (7, 11191), (9, 5606), (15, SHOVEL)];
 
 /// The 19 equipment slots, head (0) to tabard (18).
 pub const EQUIPMENT_SLOTS: u8 = 19;

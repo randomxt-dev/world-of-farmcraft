@@ -250,6 +250,8 @@ pub struct Game {
     /// Each grove tree's object as shown: (guid, entry).
     trees: Vec<(u64, u32)>,
     chop: Option<Chop>,
+    /// The tool in hand: the shovel or the axe.
+    tool: u32,
     /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
     bar: Vec<u32>,
     selected: usize,
@@ -297,6 +299,7 @@ impl Game {
             wild: vec![None; wild],
             trees: vec![(0, 0); grove],
             chop: None,
+            tool: items::SHOVEL,
             bar: Vec::new(),
             selected: 0,
             fixtures: [0; 2],
@@ -348,7 +351,7 @@ impl Game {
 
     /// Seat the farmer at home and show them the farm.
     pub fn enter(&mut self) {
-        let carried = vec![player::pick(self.guid())];
+        let carried = vec![player::pick(self.guid()), player::spare_tool(self.guid())];
         for p in player::login_packets(
             &self.me,
             self.layout.home,
@@ -445,7 +448,8 @@ impl Game {
         let (kind, at) = self.layout.trees[t];
         let (entry, scale) = match self.farm.tree(t) {
             TreeStage::Tree => (TREE_BASE + kind as u32, TREES[kind].2),
-            TreeStage::Stump => (STUMP, 0.8),
+            // A felled tree leaves nothing until its sapling comes up.
+            TreeStage::Stump => (0, 0.0),
             TreeStage::Sapling => (SAPLING, 1.0),
         };
         if self.trees[t].1 == entry {
@@ -453,6 +457,10 @@ impl Game {
         }
         if self.trees[t].0 != 0 {
             self.send(crate::world::destroy(self.trees[t].0));
+        }
+        if entry == 0 {
+            self.trees[t] = (0, 0);
+            return;
         }
         let guid = self.fresh_guid(entry);
         let tmpl = object_template(entry).expect("a grove object");
@@ -475,6 +483,7 @@ impl Game {
         if self.farm.tree(t) != TreeStage::Tree {
             return self.notify(&Reject::Felled.text());
         }
+        self.wield(items::LUMBERJACK_AXE);
         self.send(player::sheath_change(self.guid(), true));
         self.chop = Some(Chop {
             tree: t,
@@ -695,8 +704,19 @@ impl Game {
         distance(self.at, at) <= REACH
     }
 
+    /// Put tool `entry` in hand: the shovel for the soil, the axe for the trees.
+    fn wield(&mut self, entry: u32) {
+        if self.tool != entry {
+            self.tool = entry;
+            self.send(player::wield_change(self.guid(), entry));
+        }
+    }
+
     fn start(&mut self, spell: u32, target: Target, time: Duration, job: Job) {
         self.menu = None;
+        if matches!(job, Job::Plant(..) | Job::Harvest(_)) {
+            self.wield(items::SHOVEL);
+        }
         let ms = time.as_millis() as u32;
         self.send(spells::spell_start(self.guid(), spell, ms, target));
         self.cast = Some(Cast {
@@ -778,6 +798,7 @@ impl Game {
                     ));
                 }
                 // Watering is instant: the soil darkening is the feedback.
+                self.wield(items::SHOVEL);
                 match self.farm.water(i) {
                     Ok(()) => self.show_tile(i),
                     Err(r) => self.refuse(&r),
@@ -1572,7 +1593,8 @@ mod tests {
             .count();
         assert_eq!(swings, SWINGS as usize);
         assert!(g.farm.bag.count(Item::Wood) >= 2);
-        assert_eq!(g.trees[0].1, STUMP);
+        assert_eq!(g.trees[0], (0, 0), "a felled tree leaves nothing");
+        assert_eq!(g.tool, items::LUMBERJACK_AXE);
         g.command(".sleep");
         assert_eq!(g.trees[0].1, SAPLING);
         g.command(".sleep");

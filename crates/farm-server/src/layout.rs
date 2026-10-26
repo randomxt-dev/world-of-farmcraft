@@ -18,15 +18,15 @@ pub const ZONE: u32 = 12;
 const PLOT_CENTRE: [f32; 2] = [-9915.0, 360.0];
 /// Rows and columns of plot tiles.
 pub const PLOT_ROWS: usize = 4;
-pub const PLOT_COLUMNS: usize = 4;
+pub const PLOT_COLUMNS: usize = 6;
 /// Yards between tiles along a furrow.
-const TILE_STEP: f32 = 2.4;
+const TILE_STEP: f32 = 1.4;
 /// The field's furrows: its ground texture (`Tileset/Elwynn/ElwynnCrop92.blp`) repeats every
 /// chunk/8 = 4.1667 yd, and its leafy rows run at 45 degrees, along world (1, -1), on the lines
 /// where `x + y` is `ROW_PHASE` past a whole number of repeats. Measured from the texture's leaf
 /// pattern and checked from a top-down camera in game: each plot row sits on a row of leaves.
 const TEXTURE_REPEAT: f32 = 100.0 / 3.0 / 8.0;
-const ROW_PHASE: f32 = 0.52 * TEXTURE_REPEAT;
+const ROW_PHASE: f32 = 0.32 * TEXTURE_REPEAT;
 /// The furrows' heading, along (1, -1): the soil mounds lie lengthwise on it.
 pub const FURROW_FACING: f32 = -std::f32::consts::FRAC_PI_4;
 /// The field's height where the ground is not read.
@@ -191,31 +191,50 @@ const PEN: [[f32; 2]; 58] = [
     [-9926.0, 320.0],
 ];
 
-/// The grove west of the pen: 7 yd apart, 6 yd clear of the world's own trees.
-const GROVE: [[f32; 2]; 23] = [
-    [-9975.0, 299.0],
-    [-9975.0, 306.0],
-    [-9982.0, 299.0],
-    [-9975.0, 292.0],
-    [-9982.0, 306.0],
-    [-9968.0, 306.0],
-    [-9982.0, 292.0],
-    [-9968.0, 292.0],
-    [-9975.0, 313.0],
-    [-9989.0, 299.0],
-    [-9961.0, 299.0],
-    [-9982.0, 313.0],
-    [-9968.0, 313.0],
-    [-9975.0, 285.0],
-    [-9989.0, 306.0],
-    [-9961.0, 306.0],
-    [-9989.0, 292.0],
-    [-9961.0, 292.0],
-    [-9982.0, 285.0],
-    [-9968.0, 285.0],
-    [-9989.0, 313.0],
-    [-9961.0, 313.0],
-    [-9989.0, 285.0],
+/// Westfall oaks around the property, from `examples/place_oaks.rs`: open, gentle grass off the
+/// crop field, 6 yd clear of the map's own doodads, 20 of its buildings and 6 of the farm's things,
+/// 9 apart.
+const OAKS: [[f32; 2]; 40] = [
+    [-9810.0, 393.0],
+    [-9810.0, 267.0],
+    [-9837.0, 420.0],
+    [-9990.0, 393.0],
+    [-9990.0, 267.0],
+    [-9792.0, 348.0],
+    [-10008.0, 348.0],
+    [-10008.0, 312.0],
+    [-9795.0, 300.0],
+    [-9867.0, 432.0],
+    [-9966.0, 249.0],
+    [-9840.0, 258.0],
+    [-9816.0, 366.0],
+    [-9984.0, 294.0],
+    [-9810.0, 324.0],
+    [-9822.0, 291.0],
+    [-9987.0, 330.0],
+    [-9987.0, 363.0],
+    [-9846.0, 396.0],
+    [-9966.0, 276.0],
+    [-9879.0, 252.0],
+    [-9942.0, 261.0],
+    [-9825.0, 345.0],
+    [-9843.0, 282.0],
+    [-9861.0, 267.0],
+    [-9840.0, 372.0],
+    [-9969.0, 399.0],
+    [-9828.0, 312.0],
+    [-9969.0, 351.0],
+    [-9900.0, 258.0],
+    [-9966.0, 306.0],
+    [-9921.0, 261.0],
+    [-9966.0, 327.0],
+    [-9945.0, 282.0],
+    [-9825.0, 405.0],
+    [-9837.0, 330.0],
+    [-9864.0, 381.0],
+    [-9885.0, 270.0],
+    [-9828.0, 387.0],
+    [-9846.0, 300.0],
 ];
 
 /// Every tree 1.12 has a gameobject look for (`GameObjectDisplayInfo.dbc`) that draws well:
@@ -472,9 +491,7 @@ impl Layout {
                     .map(|i| (i, on_ground(-9990.0, 270.0 + 5.0 * i as f32)))
                     .collect()
             } else {
-                (GROVE.iter().enumerate())
-                    .map(|(i, &[x, y])| (i % TREES.len(), on_ground(x, y)))
-                    .collect()
+                (OAKS.iter()).map(|&[x, y]| (0, on_ground(x, y))).collect()
             },
         }
     }
@@ -503,6 +520,6 @@ mod tests {
         }
         assert_eq!(l.npcs.iter().filter(|n| n.role == Role::Store).count(), 1);
         assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
-        assert!(GROVE.len() >= TREES.len(), "every tree in the grove");
+        assert!(!OAKS.is_empty());
     }
 }

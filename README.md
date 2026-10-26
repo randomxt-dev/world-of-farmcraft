@@ -31,6 +31,7 @@ Status: playable prototype on Windows. See [docs/PLAN.md](docs/PLAN.md).
 | Buy seeds | Brog Hamfist, <General Supplies> |
 | Mine | Copper veins in Fargodeep Mine, south-west of the farm |
 | Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
-| Chop trees | Walk to the grove west of the pet pen and right-click a tree: three axe swings and it falls for Simple Wood. Stumps sprout the next day and grow back in 3 |
+| Chop trees | Right-click one of the Westfall oaks around the property: three axe swings and it falls for Simple Wood. A sapling comes up the next day and is a tree again in 3 |
+| Tools | The shovel comes out for the soil and the axe for the trees, by themselves |
 | Pets | Visit the pet pen south of the field and right-click an animal to make it your companion |
 | Help | Talk to Ma Stonefield; type `.time` or `.home` in chat |

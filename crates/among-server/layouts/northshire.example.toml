@@ -1,0 +1,426 @@
+# Northshire Valley, the first Among Azeroth map.
+#
+# Every quoted name below is a mark to survey: walk there in the game and type `.mark <name>` in
+# chat. `.marks` lists what you have, `.near` the five closest to you with their distance, `.goto
+# <name>` puts you on one to check or redo it, and `.loc` shows where you stand (lobby host only).
+# A spot may also be a literal [x, y, z]. Check the file, and how many players each gathering
+# serves, with:
+#   cargo run -p among-server -- --check-layout crates/among-server/layouts/northshire.example.toml
+# The spots suggested in the comments are a plan, not measurements: put each mark where it plays
+# well.
+
+# Where meetings are called: the Abbey's main hall.
+button = "abbey-hall"
+
+# Gathering steps name every spot a node can grow (`gather`) and how many to pick (`count`). A
+# pick takes the node from everyone until the lobby (an impostor's fake pick too), so the spots
+# are shared: each holder picks an even share, `count` at most, and a task is dealt to no more
+# players than it has spots. A common task needs a spot per player; more spots, bigger picks.
+# `node` is what a step is worked at: peacebloom, silverleaf, earthroot, copper, campfire, forge
+# or anvil (a copper vein when left out).
+
+# --- Common: everyone gets the same one -------------------------------------------------------
+
+[[tasks]]
+name = "Pick Peacebloom"
+kind = "common"
+# The meadows around the Abbey.
+steps = [{ gather = [
+    "peacebloom-1", "peacebloom-2", "peacebloom-3", "peacebloom-4",
+    "peacebloom-5", "peacebloom-6", "peacebloom-7", "peacebloom-8",
+    "peacebloom-9", "peacebloom-10", "peacebloom-11", "peacebloom-12",
+    "peacebloom-13", "peacebloom-14",
+], cast = 5.0, count = 5, node = "peacebloom" }]
+
+[[tasks]]
+name = "Roast a meal"
+kind = "common"
+steps = [{ at = "campfire", cast = 3.0, node = "campfire" }]     # by the stables
+
+# --- Long: two stops ----------------------------------------------------------------------------
+
+[[tasks]]
+name = "Mine and smelt Copper"
+kind = "long"
+steps = [
+    # Copper veins inside Echo Ridge Mine.
+    { gather = [
+        "copper-1", "copper-2", "copper-3", "copper-4", "copper-5", "copper-6", "copper-7",
+        "copper-8",
+    ], cast = 3.2, count = 5, node = "copper" },
+    { at = "forge", cast = 3.0, node = "forge" },   # by the stables or lumber area
+]
+
+[[tasks]]
+name = "Hunt and cook wolf meat"
+kind = "long"
+steps = [
+    { slay = [
+        "wolf-1", "wolf-2", "wolf-3", "wolf-4", "wolf-5",
+        "wolf-6", "wolf-7", "wolf-8", "wolf-9", "wolf-10",
+    ], count = 5 },
+    { at = "campfire", cast = 3.0, node = "campfire" },
+]
+
+# --- Short: one stop ----------------------------------------------------------------------------
+
+[[tasks]]
+name = "Pick Silverleaf"
+kind = "short"
+# Along the vineyards.
+steps = [{ gather = [
+    "silverleaf-1", "silverleaf-2", "silverleaf-3", "silverleaf-4",
+    "silverleaf-5", "silverleaf-6", "silverleaf-7", "silverleaf-8",
+    "silverleaf-9", "silverleaf-10", "silverleaf-11",
+], cast = 5.0, count = 5, node = "silverleaf" }]
+
+[[tasks]]
+name = "Pick Earthroot"
+kind = "short"
+# Along the path to the mine.
+steps = [{ gather = [
+    "earthroot-1", "earthroot-2", "earthroot-3", "earthroot-4",
+    "earthroot-5", "earthroot-6", "earthroot-7", "earthroot-8",
+    "earthroot-9", "earthroot-10", "earthroot-11",
+], cast = 5.0, count = 5, node = "earthroot" }]
+
+[[tasks]]
+name = "Sharpen at the anvil"
+kind = "short"
+steps = [{ at = "anvil", cast = 3.0, node = "anvil" }]
+
+[[tasks]]
+name = "Clear the kobolds"
+kind = "short"
+steps = [{ slay = [
+    "kobold-1", "kobold-2", "kobold-3", "kobold-4",
+    "kobold-5", "kobold-6", "kobold-7", "kobold-8",
+], count = 5 }]
+
+[[tasks]]
+name = "Drive off the Defias"
+kind = "short"
+steps = [{ slay = [
+    "defias-1", "defias-2", "defias-3", "defias-4", "defias-5",
+    "defias-6", "defias-7", "defias-8", "defias-9",
+], count = 5 }]
+
+# --- Sabotage stations --------------------------------------------------------------------------
+
+[[sabotages]]
+kind = "lights"
+stations = ["abbey-candles"]                  # the Abbey's upper floor
+
+[[sabotages]]
+kind = "comms"
+stations = ["abbey-library"]
+
+[[sabotages]]
+kind = "oxygen"
+stations = ["well", "stable-trough"]          # two stops far apart
+deadline = 180.0
+
+[[sabotages]]
+kind = "reactor"
+stations = ["mine-prop-a", "mine-prop-b"]     # held together: two players in the mine
+deadline = 180.0
+
+# --- Monsters (they fight back, and they kill for real) -----------------------------------------
+# display, level, scale, kind and weapon are the 1.12 creature's own (scale is the model's native
+# size); left out, they default to the look of the creature the name is.
+
+[[creatures]]
+id = "wolf-1"
+name = "Young Wolf"
+at = "wolf-1"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-2"
+name = "Young Wolf"
+at = "wolf-2"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-3"
+name = "Young Wolf"
+at = "wolf-3"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-4"
+name = "Young Wolf"
+at = "wolf-4"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-5"
+name = "Young Wolf"
+at = "wolf-5"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-6"
+name = "Young Wolf"
+at = "wolf-6"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-7"
+name = "Young Wolf"
+at = "wolf-7"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-8"
+name = "Young Wolf"
+at = "wolf-8"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-9"
+name = "Young Wolf"
+at = "wolf-9"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "wolf-10"
+name = "Young Wolf"
+at = "wolf-10"
+display = 447
+level = 1
+scale = 0.4
+kind = "beast"
+weapon = "none"
+
+[[creatures]]
+id = "kobold-1"
+name = "Kobold Vermin"
+at = "kobold-1"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-2"
+name = "Kobold Vermin"
+at = "kobold-2"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-3"
+name = "Kobold Vermin"
+at = "kobold-3"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-4"
+name = "Kobold Vermin"
+at = "kobold-4"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-5"
+name = "Kobold Vermin"
+at = "kobold-5"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-6"
+name = "Kobold Vermin"
+at = "kobold-6"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-7"
+name = "Kobold Vermin"
+at = "kobold-7"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "kobold-8"
+name = "Kobold Vermin"
+at = "kobold-8"
+display = 10913
+level = 1
+scale = 0.7
+kind = "humanoid"
+weapon = "staff"
+health = 35
+
+[[creatures]]
+id = "defias-1"
+name = "Defias Thug"
+at = "defias-1"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-2"
+name = "Defias Thug"
+at = "defias-2"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-3"
+name = "Defias Thug"
+at = "defias-3"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-4"
+name = "Defias Thug"
+at = "defias-4"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-5"
+name = "Defias Thug"
+at = "defias-5"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-6"
+name = "Defias Thug"
+at = "defias-6"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-7"
+name = "Defias Thug"
+at = "defias-7"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-8"
+name = "Defias Thug"
+at = "defias-8"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6
+
+[[creatures]]
+id = "defias-9"
+name = "Defias Thug"
+at = "defias-9"
+display = 5035
+level = 3
+scale = 1.0
+kind = "humanoid"
+weapon = "sword"
+health = 55
+damage = 6

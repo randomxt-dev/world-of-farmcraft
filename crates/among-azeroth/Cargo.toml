@@ -1,0 +1,45 @@
+[package]
+name = "among-azeroth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "The Among Azeroth launcher: the stock benilla client plus our own Bevy plugins"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# The dev/player seam, as benilla's launcher: `--no-default-features` is the player build.
+default = ["dev"]
+dev = ["benilla-app/dev"]
+
+[dependencies]
+# `default-features = false`, or `--no-default-features` here still builds benilla-app with `dev`.
+benilla-app = { path = "../benilla-app", default-features = false }
+# The client's Lua VM (`UiScript`), which our plugins extend the way an addon would.
+benilla-ui = { path = "../benilla-ui" }
+bevy.workspace = true
+# The spell ids the server puts on the action bar, and the rules the tooltips quote.
+among-rules = { path = "../among-rules" }
+among-spells = { path = "../among-spells" }
+# Where the player's install is; `default-features = false`, or a player build looks in our source tree.
+benilla-formats = { path = "../benilla-formats", default-features = false }
+
+# The first run's folder picker for the player's own install (the browser streams its data instead).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.15"
+
+[dev-dependencies]
+# The data-gated test reads the install's own Spell.dbc names.
+benilla-formats = { path = "../benilla-formats" }
+
+[build-dependencies]
+benilla-buildstamp = { path = "../benilla-buildstamp" }
+
+[[bin]]
+name = "among-azeroth"
+path = "src/main.rs"
+# The tests live in the library; test-building this bin would relink the whole client.
+test = false

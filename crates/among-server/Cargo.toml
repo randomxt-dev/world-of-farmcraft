@@ -1,0 +1,31 @@
+[package]
+name = "among-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors = ["ballxxxxx"]
+description = "A minimal WoW 1.12.1 realmd + world server that hosts an Among Azeroth lobby"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sha1.workspace = true
+# The client half of the wire: opcodes, the wire helpers, the SRP6 constants and the header cipher.
+benilla-protocol = { path = "../benilla-protocol" }
+benilla-srp = { path = "../benilla-srp" }
+# The game itself: rules, targets, and the addon-message vocabulary the HUD speaks.
+among-rules = { path = "../among-rules" }
+# The button spell ids, shared with the client.
+among-spells = { path = "../among-spells" }
+num-bigint = "0.4.6"
+rand = "0.8.6"
+# The surveyed marks and the hand-written layout are TOML files (the versions benilla-app uses).
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

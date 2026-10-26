@@ -10,6 +10,19 @@ use crate::crops::Crop;
 /// Copper a new farmer starts with: 2 silver.
 pub const START_MONEY: u32 = 200;
 
+/// Days a felled tree takes to grow back.
+pub const TREE_REGROW_DAYS: u32 = 3;
+
+/// A grove tree's stage after felling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeStage {
+    Tree,
+    /// The day it was felled.
+    Stump,
+    /// Sprouting again until it is full grown.
+    Sapling,
+}
+
 /// One plot tile.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tile {
@@ -44,6 +57,8 @@ pub enum Reject {
     Mined,
     NoSuchVein,
     Picked,
+    NoSuchTree,
+    Felled,
 }
 
 impl Reject {
@@ -61,6 +76,8 @@ impl Reject {
             Reject::NotCarried => "You don't have that.".into(),
             Reject::Mined => "That vein is spent until tomorrow.".into(),
             Reject::NoSuchVein => "There is no vein there.".into(),
+            Reject::NoSuchTree => "There is no tree there.".into(),
+            Reject::Felled => "It hasn't grown back yet.".into(),
             Reject::Picked => "Someone picked that already. It grows back tomorrow.".into(),
         }
     }
@@ -99,6 +116,9 @@ pub struct Farm {
     /// The companion that follows the farmer, by name; `None` is the farm dog.
     #[serde(default)]
     pub companion: Option<String>,
+    /// The day each grove tree was felled, while it grows back.
+    #[serde(default)]
+    pub felled: Vec<Option<u32>>,
 }
 
 impl Farm {
@@ -118,6 +138,7 @@ impl Farm {
             harvested: 0,
             foraged: Vec::new(),
             companion: None,
+            felled: Vec::new(),
         }
     }
 
@@ -126,6 +147,39 @@ impl Farm {
         self.tiles.resize(tiles, Tile::default());
         self.mined.resize(veins, false);
         self.foraged.resize(wild, false);
+    }
+
+    /// Fit a loaded farm to a grove of `trees` trees.
+    pub fn fit_grove(&mut self, trees: usize) {
+        self.felled.resize(trees, None);
+    }
+
+    /// Grove tree `t` as it stands today.
+    pub fn tree(&self, t: usize) -> TreeStage {
+        match self.felled.get(t).copied().flatten() {
+            None => TreeStage::Tree,
+            Some(day) if self.clock.day >= day + TREE_REGROW_DAYS => TreeStage::Tree,
+            Some(day) if self.clock.day > day => TreeStage::Sapling,
+            Some(_) => TreeStage::Stump,
+        }
+    }
+
+    /// Fell grove tree `t`: two to four Simple Wood, and a stump that sprouts tomorrow and is a
+    /// tree again in [`TREE_REGROW_DAYS`] days.
+    pub fn chop(&mut self, t: usize) -> Result<u32, Reject> {
+        if t >= self.felled.len() {
+            return Err(Reject::NoSuchTree);
+        }
+        if self.tree(t) != TreeStage::Tree {
+            return Err(Reject::Felled);
+        }
+        let salt = u64::from(self.clock.day) << 20 | 2 << 16 | t as u64;
+        let n = 2 + crate::rng::below(self.seed, salt, 3) as u32;
+        if !self.bag.add(Item::Wood, n) {
+            return Err(Reject::BagFull);
+        }
+        self.felled[t] = Some(self.clock.day);
+        Ok(n)
     }
 
     /// Pick wild herb `w`, a `crop` plant: one of it, and half the time a seed to plant at home.
@@ -394,6 +448,26 @@ mod tests {
         }
         assert!((5..35).contains(&seeds), "about half give a seed: {seeds}");
         assert_eq!(f.forage(7, Crop::Peacebloom), Err(Reject::NoSuchVein));
+    }
+
+    #[test]
+    fn a_tree_falls_to_a_stump_sprouts_and_grows_back() {
+        let mut f = farm();
+        f.fit_grove(2);
+        let n = f.chop(1).unwrap();
+        assert!((2..=4).contains(&n));
+        assert_eq!(f.bag.count(Item::Wood), n);
+        assert_eq!(f.tree(1), TreeStage::Stump);
+        assert_eq!(f.chop(1), Err(Reject::Felled));
+        assert_eq!(f.tree(0), TreeStage::Tree);
+        f.sleep();
+        assert_eq!(f.tree(1), TreeStage::Sapling);
+        for _ in 1..TREE_REGROW_DAYS {
+            f.sleep();
+        }
+        assert_eq!(f.tree(1), TreeStage::Tree);
+        assert!(f.chop(1).is_ok());
+        assert_eq!(f.chop(5), Err(Reject::NoSuchTree));
     }
 
     #[test]

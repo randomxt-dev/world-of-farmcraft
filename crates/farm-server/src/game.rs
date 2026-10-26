@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use farm_rules::save::Character;
-use farm_rules::{Crop, DayReport, Farm, Item, Reject, Weather};
+use farm_rules::{Crop, DayReport, Farm, Item, Reject, TreeStage, Weather};
 
-use crate::layout::{Layout, Role, PETS};
+use crate::layout::{Layout, Role, PETS, TREES};
 use crate::saves::Saves;
 use crate::world::creatures::{self, Kind, Look, Shown};
 use crate::world::items::{self, Held};
@@ -26,6 +26,21 @@ const CROP_BASE: u32 = 51_000;
 /// Within a crop's hundred entries, its ripe plant.
 const RIPE: u32 = 99;
 const VEIN: u32 = 52_000;
+/// Grove trees, one entry per kind in [`TREES`] from here, then a stump and a sapling.
+const TREE_BASE: u32 = 54_000;
+const STUMP: u32 = 54_100;
+const SAPLING: u32 = 54_101;
+/// `World\Lordaeron\AeriePeaks\PassiveDoodads\Trees\AeriePeaksStump01.mdx`.
+const STUMP_DISPLAY: u32 = 6158;
+/// `World\Kalimdor\StoneTalon\ActiveDoodads\Tree\g_sapling01.mdx`.
+const SAPLING_DISPLAY: u32 = 4951;
+/// `Emotes.dbc` 36, `ONESHOT_ATTACK1H`: one swing of the one-hand weapon in hand.
+const SWING: u32 = 36;
+/// Swings to fell a tree, the time between them, and the pause before it falls.
+const SWINGS: u32 = 3;
+const SWING_EVERY: Duration = Duration::from_millis(900);
+/// How close the farmer must stand to a tree's trunk.
+const TREE_REACH: f32 = 7.0;
 /// Wild herbs, one entry per crop from here.
 const WILD_BASE: u32 = 53_000;
 const BED: u32 = 52_001;
@@ -54,6 +69,8 @@ const GRAIN_CRATE: u32 = 347;
 /// The dirt mounds are grave-sized; a tile's is smaller, and the damp mound is the bigger model.
 const SOIL_SCALE: f32 = 0.42;
 const WET_SOIL_SCALE: f32 = 0.34;
+/// The dirt mound model is long along its own facing, so it faces down the furrow.
+const MOUND_TURN: f32 = 0.0;
 /// How close the farmer must stand to work a tile or talk to someone.
 const REACH: f32 = 6.0;
 /// How long each job's cast bar runs.
@@ -103,6 +120,12 @@ fn object_template(entry: u32) -> Option<Template> {
         VEIN => Template::new("Copper Vein", COPPER_VEIN, Use::Mine),
         BED => Template::new("Hay Bed", HAYSTACK, Use::Goober),
         SHIPPING => Template::new("Shipping Crate", GRAIN_CRATE, Use::Goober),
+        STUMP => Template::new("Tree Stump", STUMP_DISPLAY, Use::None),
+        SAPLING => Template::new("Sapling", SAPLING_DISPLAY, Use::None),
+        e if (TREE_BASE..TREE_BASE + TREES.len() as u32).contains(&e) => {
+            let (name, display, _) = TREES[(e - TREE_BASE) as usize];
+            Template::new(name, display, Use::Goober)
+        }
         e if (WILD_BASE..WILD_BASE + Crop::ALL.len() as u32).contains(&e) => {
             let crop = Crop::ALL[(e - WILD_BASE) as usize];
             Template::new(crop.name(), crop_display(crop), Use::Herb)
@@ -186,6 +209,14 @@ enum Menu {
     Adopt(usize),
 }
 
+/// A tree being chopped: which, the swings still to come, and the time to the next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Chop {
+    tree: usize,
+    swings: u32,
+    next: Duration,
+}
+
 /// The greeting texts the gossip windows show.
 const TEXT_MA: u32 = 2;
 const TEXT_PET: u32 = 3;
@@ -216,6 +247,9 @@ pub struct Game {
     crops: Vec<Option<(u64, u32)>>,
     veins: Vec<Option<u64>>,
     wild: Vec<Option<u64>>,
+    /// Each grove tree's object as shown: (guid, entry).
+    trees: Vec<(u64, u32)>,
+    chop: Option<Chop>,
     /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
     bar: Vec<u32>,
     selected: usize,
@@ -240,9 +274,11 @@ impl Game {
     pub fn new(me: Character, farm: Farm, layout: Arc<Layout>, saves: Saves, out: Outbox) -> Self {
         let mut farm = farm;
         farm.fit(layout.tiles.len(), layout.veins.len(), layout.wild.len());
+        farm.fit_grove(layout.trees.len());
         let tiles = layout.tiles.len();
         let veins = layout.veins.len();
         let wild = layout.wild.len();
+        let grove = layout.trees.len();
         let at = layout.home.position;
         let told_hour = farm.clock.hour_minute().0;
         Self {
@@ -259,6 +295,8 @@ impl Game {
             crops: vec![None; tiles],
             veins: vec![None; veins],
             wild: vec![None; wild],
+            trees: vec![(0, 0); grove],
+            chop: None,
             bar: Vec::new(),
             selected: 0,
             fixtures: [0; 2],
@@ -352,6 +390,9 @@ impl Game {
         for w in 0..self.layout.wild.len() {
             self.show_wild(w);
         }
+        for t in 0..self.layout.trees.len() {
+            self.show_tree(t);
+        }
         let fixtures = [
             (BED, self.layout.bed, 0.6),
             (SHIPPING, self.layout.shipping, 1.0),
@@ -399,6 +440,83 @@ impl Game {
         self.send(creatures::create(&dog, &companion_look(pet)));
     }
 
+    /// Show grove tree `t` as it stands: a tree, a stump the day it fell, then a sapling.
+    fn show_tree(&mut self, t: usize) {
+        let (kind, at) = self.layout.trees[t];
+        let (entry, scale) = match self.farm.tree(t) {
+            TreeStage::Tree => (TREE_BASE + kind as u32, TREES[kind].2),
+            TreeStage::Stump => (STUMP, 0.8),
+            TreeStage::Sapling => (SAPLING, 1.0),
+        };
+        if self.trees[t].1 == entry {
+            return;
+        }
+        if self.trees[t].0 != 0 {
+            self.send(crate::world::destroy(self.trees[t].0));
+        }
+        let guid = self.fresh_guid(entry);
+        let tmpl = object_template(entry).expect("a grove object");
+        self.send(objects::create(
+            guid,
+            entry,
+            &tmpl,
+            at,
+            t as f32 * 1.7,
+            scale,
+        ));
+        self.trees[t] = (guid, entry);
+    }
+
+    /// Start chopping tree `t`: the axe comes out and swings until it falls.
+    fn start_chop(&mut self, t: usize) {
+        if distance(self.at, self.layout.trees[t].1) > TREE_REACH {
+            return self.notify("You need to be closer.");
+        }
+        if self.farm.tree(t) != TreeStage::Tree {
+            return self.notify(&Reject::Felled.text());
+        }
+        self.send(player::sheath_change(self.guid(), true));
+        self.chop = Some(Chop {
+            tree: t,
+            swings: SWINGS,
+            next: Duration::ZERO,
+        });
+    }
+
+    /// Run the chop on: a swing every [`SWING_EVERY`], and after the last the tree falls.
+    fn tick_chop(&mut self, dt: Duration) {
+        let Some(mut chop) = self.chop.take() else {
+            return;
+        };
+        if chop.next > dt {
+            chop.next -= dt;
+            self.chop = Some(chop);
+            return;
+        }
+        if chop.swings > 0 {
+            self.send(packets::emote(self.guid(), SWING));
+            chop.swings -= 1;
+            chop.next = SWING_EVERY;
+            self.chop = Some(chop);
+            return;
+        }
+        self.send(player::sheath_change(self.guid(), false));
+        match self.farm.chop(chop.tree) {
+            Ok(n) => {
+                self.sync_bag(Some((Item::Wood, n)), false);
+                self.show_tree(chop.tree);
+                self.say("Timber!");
+            }
+            Err(r) => self.refuse(&r),
+        }
+    }
+
+    fn stop_chop(&mut self) {
+        if self.chop.take().is_some() {
+            self.send(player::sheath_change(self.guid(), false));
+        }
+    }
+
     fn show_wild(&mut self, w: usize) {
         let picked = self.farm.foraged[w];
         match (self.wild[w], picked) {
@@ -434,7 +552,8 @@ impl Game {
             } else {
                 SOIL_SCALE
             };
-            self.send(objects::create(guid, soil, &t, at, 0.0, scale));
+            let facing = crate::layout::FURROW_FACING + MOUND_TURN;
+            self.send(objects::create(guid, soil, &t, at, facing, scale));
             self.soil[i] = (guid, soil);
         }
         let wanted = tile.crop.map(|(crop, age)| {
@@ -595,7 +714,7 @@ impl Game {
     /// A right-click on a lockless object: soil or a growing crop, the hay bed, the crate.
     pub fn use_object(&mut self, object: u64) {
         tracing::info!("farm: {} uses {object:#x}", self.me.name);
-        if self.cast.is_some() || self.asleep.is_some() {
+        if self.cast.is_some() || self.asleep.is_some() || self.chop.is_some() {
             return;
         }
         if let Some(i) = self.tile_of(object) {
@@ -611,6 +730,8 @@ impl Game {
                 MINE_TIME,
                 Job::Mine(v),
             );
+        } else if let Some(t) = self.trees.iter().position(|&(g, _)| g == object) {
+            self.start_chop(t);
         } else if let Some(w) = self.wild.iter().position(|&g| g == Some(object)) {
             self.forage(w, object);
         } else if object == self.fixtures[0] {
@@ -718,6 +839,7 @@ impl Game {
         self.facing = facing;
         if walked {
             self.interrupt();
+            self.stop_chop();
             if self.asleep.take().is_some() {
                 self.send(player::stand_change(self.guid(), 0));
             }
@@ -856,6 +978,9 @@ impl Game {
         for w in 0..self.layout.wild.len() {
             self.show_wild(w);
         }
+        for t in 0..self.layout.trees.len() {
+            self.show_tree(t);
+        }
         self.send(packets::headline(&format!("Good morning! {}", report.date)));
         let sky = match report.weather {
             Weather::Rain => "It's raining: your crops are watered.",
@@ -881,6 +1006,7 @@ impl Game {
 
     /// Run `dt` of the game: casts finish, the day runs and the dog follows.
     pub fn tick(&mut self, dt: Duration) {
+        self.tick_chop(dt);
         if let Some(mut c) = self.cast.take() {
             if c.left <= dt {
                 self.finish(c);
@@ -1185,6 +1311,15 @@ impl Game {
                     self.select(n);
                 }
             }
+            ".chop" => {
+                let nearest = (0..self.layout.trees.len()).min_by(|&a, &b| {
+                    let d = |t: usize| distance(self.at, self.layout.trees[t].1);
+                    d(a).total_cmp(&d(b))
+                });
+                if let Some(t) = nearest {
+                    self.start_chop(t);
+                }
+            }
             ".gold" => {
                 self.farm.money += 10_000;
                 self.sync_money();
@@ -1419,6 +1554,30 @@ mod tests {
         g.gossip_hello(guid);
         g.gossip_select(1);
         assert_eq!(g.companion(), 0);
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn three_swings_fell_a_tree_into_wood_and_a_stump_that_regrows() {
+        let (mut g, mut rx) = game();
+        let at = g.layout.trees[0].1;
+        stand_at(&mut g, [at[0] + 2.0, at[1], at[2]]);
+        let tree = g.trees[0].0;
+        g.use_object(tree);
+        assert!(g.chop.is_some());
+        run(&mut g, 4.0);
+        let seen = drain(&mut rx);
+        let swings = (seen.iter())
+            .filter(|p| matches!(p, ServerPacket::Emote { .. }))
+            .count();
+        assert_eq!(swings, SWINGS as usize);
+        assert!(g.farm.bag.count(Item::Wood) >= 2);
+        assert_eq!(g.trees[0].1, STUMP);
+        g.command(".sleep");
+        assert_eq!(g.trees[0].1, SAPLING);
+        g.command(".sleep");
+        g.command(".sleep");
+        assert_eq!(g.trees[0].1, TREE_BASE + g.layout.trees[0].0 as u32);
         drain(&mut rx);
     }
 

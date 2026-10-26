@@ -12,6 +12,7 @@ pub enum Item {
     Seeds(Crop),
     Produce(Crop),
     CopperOre,
+    Wood,
 }
 
 /// Items in one backpack slot.
@@ -25,6 +26,7 @@ impl Item {
             Item::Seeds(c) => format!("{} Seeds", c.name()),
             Item::Produce(c) => c.name().to_owned(),
             Item::CopperOre => "Copper Ore".to_owned(),
+            Item::Wood => "Simple Wood".to_owned(),
         }
     }
 
@@ -34,6 +36,7 @@ impl Item {
             Item::Seeds(c) => c.def().seed_price / 2,
             Item::Produce(c) => c.def().sell_price,
             Item::CopperOre => 15,
+            Item::Wood => 6,
         }
     }
 

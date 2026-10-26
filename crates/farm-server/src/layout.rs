@@ -20,13 +20,15 @@ const PLOT_CENTRE: [f32; 2] = [-9915.0, 360.0];
 pub const PLOT_ROWS: usize = 4;
 pub const PLOT_COLUMNS: usize = 4;
 /// Yards between tiles along a furrow.
-const TILE_STEP: f32 = 2.0;
+const TILE_STEP: f32 = 2.4;
 /// The field's furrows: its ground texture (`Tileset/Elwynn/ElwynnCrop92.blp`) repeats every
-/// chunk/8 = 4.1667 yd, and its leafy rows run at 45 degrees, along world (1, 1), on the lines
-/// where `x - y` is `ROW_PHASE` past a whole number of repeats. Measured from the texture's leaf
-/// pattern and checked by eye in game: each plot row sits on a row of leaves.
+/// chunk/8 = 4.1667 yd, and its leafy rows run at 45 degrees, along world (1, -1), on the lines
+/// where `x + y` is `ROW_PHASE` past a whole number of repeats. Measured from the texture's leaf
+/// pattern and checked from a top-down camera in game: each plot row sits on a row of leaves.
 const TEXTURE_REPEAT: f32 = 100.0 / 3.0 / 8.0;
-const ROW_PHASE: f32 = 0.72 * TEXTURE_REPEAT;
+const ROW_PHASE: f32 = 0.52 * TEXTURE_REPEAT;
+/// The furrows' heading, along (1, -1): the soil mounds lie lengthwise on it.
+pub const FURROW_FACING: f32 = -std::f32::consts::FRAC_PI_4;
 /// The field's height where the ground is not read.
 const FIELD_HEIGHT: f32 = 35.0;
 
@@ -126,6 +128,117 @@ pub const PETS: [(&str, u32, f32); 59] = [
     ("Pony", 229, 0.6),
 ];
 
+/// The pet pen's spots, on open grass south of the field: a 3 yd grid kept 4.5 yd clear of every
+/// tree, bush, fence and building the ADT places there.
+const PEN: [[f32; 2]; 58] = [
+    [-9938.0, 292.0],
+    [-9935.0, 292.0],
+    [-9932.0, 292.0],
+    [-9941.0, 295.5],
+    [-9938.0, 295.5],
+    [-9935.0, 295.5],
+    [-9932.0, 295.5],
+    [-9920.0, 295.5],
+    [-9944.0, 299.0],
+    [-9941.0, 299.0],
+    [-9938.0, 299.0],
+    [-9923.0, 299.0],
+    [-9920.0, 299.0],
+    [-9917.0, 299.0],
+    [-9944.0, 302.5],
+    [-9941.0, 302.5],
+    [-9938.0, 302.5],
+    [-9920.0, 302.5],
+    [-9917.0, 302.5],
+    [-9944.0, 306.0],
+    [-9941.0, 306.0],
+    [-9938.0, 306.0],
+    [-9935.0, 306.0],
+    [-9932.0, 306.0],
+    [-9920.0, 306.0],
+    [-9917.0, 306.0],
+    [-9914.0, 306.0],
+    [-9944.0, 309.5],
+    [-9941.0, 309.5],
+    [-9938.0, 309.5],
+    [-9935.0, 309.5],
+    [-9932.0, 309.5],
+    [-9929.0, 309.5],
+    [-9926.0, 309.5],
+    [-9923.0, 309.5],
+    [-9920.0, 309.5],
+    [-9917.0, 309.5],
+    [-9941.0, 313.0],
+    [-9938.0, 313.0],
+    [-9935.0, 313.0],
+    [-9932.0, 313.0],
+    [-9929.0, 313.0],
+    [-9926.0, 313.0],
+    [-9923.0, 313.0],
+    [-9920.0, 313.0],
+    [-9917.0, 313.0],
+    [-9941.0, 316.5],
+    [-9938.0, 316.5],
+    [-9935.0, 316.5],
+    [-9932.0, 316.5],
+    [-9929.0, 316.5],
+    [-9926.0, 316.5],
+    [-9923.0, 316.5],
+    [-9920.0, 316.5],
+    [-9935.0, 320.0],
+    [-9932.0, 320.0],
+    [-9929.0, 320.0],
+    [-9926.0, 320.0],
+];
+
+/// The grove west of the pen: 7 yd apart, 6 yd clear of the world's own trees.
+const GROVE: [[f32; 2]; 23] = [
+    [-9975.0, 299.0],
+    [-9975.0, 306.0],
+    [-9982.0, 299.0],
+    [-9975.0, 292.0],
+    [-9982.0, 306.0],
+    [-9968.0, 306.0],
+    [-9982.0, 292.0],
+    [-9968.0, 292.0],
+    [-9975.0, 313.0],
+    [-9989.0, 299.0],
+    [-9961.0, 299.0],
+    [-9982.0, 313.0],
+    [-9968.0, 313.0],
+    [-9975.0, 285.0],
+    [-9989.0, 306.0],
+    [-9961.0, 306.0],
+    [-9989.0, 292.0],
+    [-9961.0, 292.0],
+    [-9982.0, 285.0],
+    [-9968.0, 285.0],
+    [-9989.0, 313.0],
+    [-9961.0, 313.0],
+    [-9989.0, 285.0],
+];
+
+/// Every tree 1.12 has a gameobject look for (`GameObjectDisplayInfo.dbc`) that draws well:
+/// (name, display, scale). The Burning Steppes tree is left out: its smoke draws black. The grove
+/// plants them in turn.
+pub const TREES: [(&str, u32, f32); 15] = [
+    ("Westfall Oak", 5975, 0.36),
+    ("Arathi Pine", 967, 0.36),
+    ("Ironforge Pine", 927, 0.36),
+    ("Deadwind Elm", 2474, 0.3),
+    ("Plaguelands Mushroom Tree", 1847, 0.6),
+    ("Maraudon Spore Tree", 3813, 0.3),
+    ("Maraudon Spewer Tree", 3812, 0.3),
+    ("Maraudon Spawner Tree", 3912, 0.3),
+    ("Corrupted Spewer Tree", 5318, 0.3),
+    ("Coral Tree", 887, 0.4),
+    ("Winter Veil Tree", 5251, 0.7),
+    ("Great Alliance Winter Tree", 5253, 0.45),
+    ("Alliance Winter Tree", 5315, 0.6),
+    ("Snowy Winter Tree", 5316, 0.45),
+    ("Horde Winter Tree", 5371, 0.6),
+];
+
 /// A villager or animal: its look and where it stands.
 #[derive(Clone, Debug)]
 pub struct Npc {
@@ -162,6 +275,9 @@ pub struct Layout {
     pub npcs: Vec<Npc>,
     /// Wild herbs to pick around the farm: what they are and where.
     pub wild: Vec<(Crop, [f32; 3])>,
+    /// The grove: which of [`TREES`] stands where. `FARMCRAFT_TREE_LINE=1` lines them up in order
+    /// instead, south-west of the pen, to look at.
+    pub trees: Vec<(usize, [f32; 3])>,
 }
 
 fn npc(name: &str, display: u32, kind: Kind, at: [f32; 4]) -> Npc {
@@ -179,20 +295,17 @@ impl Layout {
         let height = |x: f32, y: f32| ground.and_then(|g| g.height(x, y)).unwrap_or(FIELD_HEIGHT);
         let on_ground = |x: f32, y: f32| [x, y, height(x, y)];
         // Rows on the field's own furrows nearest the plot centre, tiles stepping along each.
-        let centre_diff = PLOT_CENTRE[0] - PLOT_CENTRE[1];
+        let centre_sum = PLOT_CENTRE[0] + PLOT_CENTRE[1];
         let first =
-            ((centre_diff - ROW_PHASE) / TEXTURE_REPEAT).round() - (PLOT_ROWS as f32 - 1.0) / 2.0;
+            ((centre_sum - ROW_PHASE) / TEXTURE_REPEAT).round() - (PLOT_ROWS as f32 - 1.0) / 2.0;
         let first = first.round();
-        let along = [
-            std::f32::consts::FRAC_1_SQRT_2,
-            std::f32::consts::FRAC_1_SQRT_2,
-        ];
+        let along = [FURROW_FACING.cos(), FURROW_FACING.sin()];
         let mut tiles = Vec::new();
         for r in 0..PLOT_ROWS {
-            let row_diff = ROW_PHASE + TEXTURE_REPEAT * (first + r as f32);
+            let row_sum = ROW_PHASE + TEXTURE_REPEAT * (first + r as f32);
             // The point of this furrow nearest the plot centre.
-            let shift = (row_diff - centre_diff) / 2.0;
-            let mid = [PLOT_CENTRE[0] + shift, PLOT_CENTRE[1] - shift];
+            let shift = (row_sum - centre_sum) / 2.0;
+            let mid = [PLOT_CENTRE[0] + shift, PLOT_CENTRE[1] + shift];
             for c in 0..PLOT_COLUMNS {
                 let t = (c as f32 - (PLOT_COLUMNS - 1) as f32 / 2.0) * TILE_STEP;
                 tiles.push(on_ground(mid[0] + t * along[0], mid[1] + t * along[1]));
@@ -320,8 +433,7 @@ impl Layout {
         }
         // The pet pen: every companion in rows on the grass south of the field, facing the house.
         for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
-            let (row, col) = ((i - 1) / 10, (i - 1) % 10);
-            let (x, y) = (-9938.0 + 3.0 * col as f32, 296.0 + 4.0 * row as f32);
+            let [x, y] = PEN[(i - 1) % PEN.len()];
             let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), 0.0]);
             n.look.level = 1;
             n.look.scale = scale;
@@ -355,6 +467,15 @@ impl Layout {
                 .iter()
                 .map(|&(crop, x, y)| (crop, on_ground(x, y)))
                 .collect(),
+            trees: if std::env::var_os("FARMCRAFT_TREE_LINE").is_some() {
+                (0..TREES.len())
+                    .map(|i| (i, on_ground(-9990.0, 270.0 + 5.0 * i as f32)))
+                    .collect()
+            } else {
+                (GROVE.iter().enumerate())
+                    .map(|(i, &[x, y])| (i % TREES.len(), on_ground(x, y)))
+                    .collect()
+            },
         }
     }
 }
@@ -374,12 +495,14 @@ mod tests {
         let n = l.tiles.len() as f32;
         assert!((sx / n - PLOT_CENTRE[0]).abs() < 3.0 && (sy / n - PLOT_CENTRE[1]).abs() < 3.0);
         for t in &l.tiles {
-            let phase = (t[0] - t[1] - ROW_PHASE).rem_euclid(TEXTURE_REPEAT);
+            let phase = (t[0] + t[1] - ROW_PHASE).rem_euclid(TEXTURE_REPEAT);
             assert!(
                 phase < 0.01 || phase > TEXTURE_REPEAT - 0.01,
                 "on a furrow: {phase}"
             );
         }
         assert_eq!(l.npcs.iter().filter(|n| n.role == Role::Store).count(), 1);
+        assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
+        assert!(GROVE.len() >= TREES.len(), "every tree in the grove");
     }
 }

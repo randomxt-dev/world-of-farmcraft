@@ -264,6 +264,14 @@ pub fn headline(text: &str) -> Packet {
     )
 }
 
+/// `SMSG_EMOTE`: `guid` plays `Emotes.dbc` row `emote`'s animation, as everyone nearby sees it.
+pub fn emote(guid: u64, emote: u32) -> Packet {
+    Packet::new(
+        opcode::SMSG_EMOTE,
+        Body::default().u32(emote).u64(guid).done(),
+    )
+}
+
 /// `SMSG_QUERY_TIME_RESPONSE`: wall-clock unix seconds.
 pub fn query_time_response(unix_seconds: u32) -> Packet {
     Packet::new(

@@ -79,8 +79,10 @@ impl ItemTemplate {
 pub const MINING_PICK: u32 = 2901;
 /// Our seed packets, one entry per crop from here.
 const SEEDS_BASE: u32 = 91_000;
-/// "Packet of Tharlendris Seeds"' look, `Spell_Nature_ProtectionformNature`: a seed packet.
-const SEED_DISPLAY: u32 = 20505;
+/// `item_template` 4470 Simple Wood and its look, what a felled tree gives.
+const WOOD: (u32, u32) = (4470, 21102);
+/// `item_template` 768, the Lumberjack Axe the farmer chops with (`INV_Axe_01`).
+pub const LUMBERJACK_AXE: u32 = 768;
 
 /// The 1.12 entry and look of a crop's harvest.
 fn produce(crop: Crop) -> (u32, u32) {
@@ -101,6 +103,7 @@ pub fn entry(item: Item) -> u32 {
         Item::Seeds(c) => SEEDS_BASE + Crop::ALL.iter().position(|&x| x == c).unwrap_or(0) as u32,
         Item::Produce(c) => produce(c).0,
         Item::CopperOre => 2770,
+        Item::Wood => WOOD.0,
     }
 }
 
@@ -109,7 +112,7 @@ pub fn item_of(entry: u32) -> Option<Item> {
     let mut all = Crop::ALL
         .iter()
         .flat_map(|&c| [Item::Seeds(c), Item::Produce(c)])
-        .chain([Item::CopperOre]);
+        .chain([Item::CopperOre, Item::Wood]);
     all.find(|&i| self::entry(i) == entry)
 }
 
@@ -122,7 +125,8 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
                 let mut t = ItemTemplate::goods(
                     entry,
                     &item.name(),
-                    SEED_DISPLAY,
+                    // The crop's own icon; the hotbar draws a seed sack over it.
+                    produce(c).1,
                     item.sell_price(),
                     format!(
                         "Plant in tilled soil and water daily. Ripe in {} days.",
@@ -142,6 +146,13 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
             Item::CopperOre => {
                 ItemTemplate::goods(entry, "Copper Ore", 4681, item.sell_price(), String::new())
             }
+            Item::Wood => ItemTemplate::goods(
+                entry,
+                "Simple Wood",
+                WOOD.1,
+                item.sell_price(),
+                "Fresh from the grove.".into(),
+            ),
         });
     }
     Some(match entry {
@@ -161,6 +172,24 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
             sheath: 3,
             delay_ms: 2000,
             damage: [1.0, 3.0],
+            armor: 0,
+        },
+        LUMBERJACK_AXE => ItemTemplate {
+            entry,
+            name: "Lumberjack Axe".into(),
+            class: 2,
+            subclass: 0,
+            display_id: 5012,
+            quality: 1,
+            buy_price: 0,
+            sell_price: 0,
+            inventory_type: 21,
+            stackable: 1,
+            description: "Right-click a grove tree to chop it down.".into(),
+            material: 1,
+            sheath: 3,
+            delay_ms: 2200,
+            damage: [3.0, 6.0],
             armor: 0,
         },
         // Farmer's Shovel, held two-handed.
@@ -191,7 +220,13 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
 }
 
 /// The outfit every farmer wears: (equipment slot, entry).
-pub const OUTFIT: [(u8, u32); 5] = [(3, 4344), (6, 4343), (7, 11191), (9, 5606), (15, 3334)];
+pub const OUTFIT: [(u8, u32); 5] = [
+    (3, 4344),
+    (6, 4343),
+    (7, 11191),
+    (9, 5606),
+    (15, LUMBERJACK_AXE),
+];
 
 /// The 19 equipment slots, head (0) to tabard (18).
 pub const EQUIPMENT_SLOTS: u8 = 19;

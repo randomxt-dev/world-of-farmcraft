@@ -63,6 +63,9 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
 - Gameobject guids carry their entry in bits 24-47: the client reads the entry from the guid
   to ask for the template, and without it no lock, cursor or name works.
 - `FARMCRAFT_SELFTEST=1` turns the wheel twice in a live run and logs the hotbar's state.
-- In-game commands: `.time`, `.home`, and for testing `.sleep`, `.rain`, `.hour`, `.gold`.
+- In-game commands: `.time`, `.home`, and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`
+  (the nearest grove tree). `WOW_PROBE_CHAT=".go xyz x y z 0;.chop"` types them from a scripted run,
+  `WOW_PROBE_CAM="<yaw>,<pitch>,<dist>@<s>"` parks the camera (negative pitch looks down).
+- `FARMCRAFT_TREE_LINE=1` lines the grove's tree kinds up in order, to look at.
 - Ground survey for placing things: `target\release\examples\survey.exe <x> <y> [radius]` with
   `WOW_DATA` set.

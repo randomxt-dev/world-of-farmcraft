@@ -29,6 +29,8 @@ const UNIT_FIELD_DISPLAYID: u16 = 131;
 const UNIT_FIELD_NATIVEDISPLAYID: u16 = 132;
 const UNIT_FIELD_BYTES_1: u16 = 138;
 const UNIT_MOD_CAST_SPEED: u16 = 145;
+/// Byte 0 is the sheath state: 0 sheathed, 1 the melee weapon in hand.
+const UNIT_FIELD_BYTES_2: u16 = 164;
 const PLAYER_BYTES: u16 = 193;
 const PLAYER_BYTES_2: u16 = 194;
 const PLAYER_BYTES_3: u16 = 195;
@@ -201,6 +203,13 @@ pub fn slot_change(owner: u64, slot: u8, guid: u64) -> Packet {
 pub fn money_change(owner: u64, money: u32) -> Packet {
     let mut f = Fields::default();
     f.u32(PLAYER_FIELD_COINAGE, money);
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
+}
+
+/// The values update that draws the melee weapon (`true`) or sheathes it.
+pub fn sheath_change(owner: u64, drawn: bool) -> Packet {
+    let mut f = Fields::default();
+    f.u32(UNIT_FIELD_BYTES_2, u32::from(drawn));
     Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
 }
 

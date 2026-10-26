@@ -16,7 +16,7 @@ Status: playable prototype on Windows. See [docs/PLAN.md](docs/PLAN.md).
 ## Play
 
 1. Link your 1.12.1 client's folder as `WoW` at the repo root (PowerShell, no admin needed):
-   `New-Item -ItemType Junction -Path WoW -Target C:\path	o\WoW`
+   `New-Item -ItemType Junction -Path WoW -Target C:\path\to\WoW`
 2. Double-click `play.bat` (the first build takes a few minutes).
 3. Create a character, then enter the world at Stonefield Farm.
 

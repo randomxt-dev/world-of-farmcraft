@@ -3,6 +3,8 @@
 //! the farm and Goldshire where Elwynn has always had them. World coordinates (x north, y west,
 //! z up) on map 0, zone 12; the villagers' spots are vmangos's `creature` spawns.
 
+use farm_rules::Crop;
+
 use crate::ground::Ground;
 use crate::world::creatures::{Kind, Look, Stand, NPC_GOSSIP, NPC_VENDOR};
 use crate::world::packets::Location;
@@ -17,8 +19,14 @@ const PLOT_CENTRE: [f32; 2] = [-9915.0, 360.0];
 /// Rows and columns of plot tiles.
 pub const PLOT_ROWS: usize = 4;
 pub const PLOT_COLUMNS: usize = 4;
-/// Yards between tile centres.
-const TILE_STEP: f32 = 3.0;
+/// Yards between tiles along a furrow.
+const TILE_STEP: f32 = 2.0;
+/// The field's furrows: its ground texture (`Tileset/Elwynn/ElwynnCrop92.blp`) repeats every
+/// chunk/8 = 4.1667 yd, and its leafy rows run at 45 degrees, along world (1, 1), on the lines
+/// where `x - y` is `ROW_PHASE` past a whole number of repeats. Measured from the texture's leaf
+/// pattern and checked by eye in game: each plot row sits on a row of leaves.
+const TEXTURE_REPEAT: f32 = 100.0 / 3.0 / 8.0;
+const ROW_PHASE: f32 = 0.72 * TEXTURE_REPEAT;
 /// The field's height where the ground is not read.
 const FIELD_HEIGHT: f32 = 35.0;
 
@@ -32,6 +40,90 @@ const VEINS: [[f32; 4]; 8] = [
     [-9781.55, 92.5236, 6.73226, 3.47321],
     [-9862.2, 155.543, 7.98152, -0.593412],
     [-9828.76, 184.747, 13.2738, 2.30383],
+];
+
+/// Wild herbs in the meadows around the farm (vmangos Elwynn herb spawns): (crop, x, y).
+const WILD: [(Crop, f32, f32); 16] = [
+    (Crop::Peacebloom, -9966.7, 299.4),
+    (Crop::Silverleaf, -9978.5, 348.8),
+    (Crop::Silverleaf, -9791.8, 321.6),
+    (Crop::Silverleaf, -9785.3, 225.8),
+    (Crop::Peacebloom, -9965.3, 188.5),
+    (Crop::Silverleaf, -10009.4, 465.4),
+    (Crop::Silverleaf, -9888.6, 133.3),
+    (Crop::Silverleaf, -9663.1, 318.4),
+    (Crop::Peacebloom, -10033.5, 133.6),
+    (Crop::Peacebloom, -9710.9, 151.0),
+    (Crop::Silverleaf, -9895.9, 600.0),
+    (Crop::Silverleaf, -9880.6, 51.4),
+    (Crop::Silverleaf, -9778.5, 63.9),
+    (Crop::Silverleaf, -9973.5, 614.7),
+    (Crop::Peacebloom, -9898.1, 635.5),
+    (Crop::Peacebloom, -9827.1, 627.0),
+];
+
+/// Every companion and farm animal 1.12 has a model for, at its own size (`CreatureDisplayInfo`
+/// scale): (name, display, scale). The first is the farm dog every farmer starts with.
+pub const PETS: [(&str, u32, f32); 59] = [
+    ("Biscuit the Wolf Pup", 447, 0.45),
+    ("Worg Pup", 9563, 0.4),
+    ("Timber Wolf", 604, 0.55),
+    ("Coyote", 643, 0.85),
+    ("Young Forest Bear", 1006, 0.85),
+    ("Bombay Cat", 5556, 0.5),
+    ("Cornish Rex Cat", 5586, 0.5),
+    ("Orange Tabby Cat", 5554, 0.5),
+    ("Silver Tabby Cat", 5555, 0.5),
+    ("White Kitten", 9989, 0.35),
+    ("Siamese Cat", 5585, 0.5),
+    ("Black Tabby Cat", 5448, 0.5),
+    ("Green Wing Macaw", 5207, 0.25),
+    ("Hyacinth Macaw", 6192, 0.25),
+    ("Senegal", 6190, 0.25),
+    ("Cockatiel", 6191, 0.25),
+    ("Great Horned Owl", 4615, 0.25),
+    ("Hawk Owl", 6299, 0.25),
+    ("Ancona Chicken", 5369, 1.0),
+    ("Westfall Chicken", 304, 1.0),
+    ("Mechanical Chicken", 7920, 1.0),
+    ("Emerald Whelpling", 6291, 0.5),
+    ("Crimson Whelpling", 6290, 0.5),
+    ("Dark Whelpling", 6288, 0.5),
+    ("Sprite Darter", 6294, 0.3),
+    ("Tiny Red Dragon", 14779, 0.4),
+    ("Tiny Green Dragon", 14778, 0.4),
+    ("Black Kingsnake", 1206, 1.0),
+    ("Brown Snake", 2957, 1.0),
+    ("Crimson Snake", 6303, 1.0),
+    ("Snowshoe Rabbit", 328, 1.0),
+    ("Prairie Dog", 1072, 1.0),
+    ("Squirrel", 134, 1.3),
+    ("Mechanical Squirrel", 7937, 1.3),
+    ("Cockroach", 2177, 1.0),
+    ("Tree Frog", 6295, 1.0),
+    ("Wood Frog", 901, 1.0),
+    ("Jubling", 14938, 1.5),
+    ("Pet Bombling", 8909, 0.15),
+    ("Lil' Smoky", 8910, 0.15),
+    ("Smolderweb Hatchling", 9997, 0.25),
+    ("Zergling", 10993, 0.25),
+    ("Panda Cub", 10990, 0.25),
+    ("Mini Diablo", 10992, 0.25),
+    ("Murky", 15369, 0.65),
+    ("Snapjaw Turtle", 14657, 0.25),
+    ("Mechanical Yeti", 10269, 0.25),
+    ("Baby Shark", 15595, 0.2),
+    ("Fawn", 654, 0.6),
+    ("Piglet", 10015, 0.3),
+    ("Pig", 10015, 0.4),
+    ("Lamb", 856, 0.6),
+    ("Sheep", 856, 1.0),
+    ("Black Sheep", 857, 1.0),
+    ("Calf", 1060, 0.6),
+    ("Cow", 1060, 1.0),
+    ("Kodo Calf", 1451, 0.3),
+    ("Ram", 10000, 1.0),
+    ("Pony", 229, 0.6),
 ];
 
 /// A villager or animal: its look and where it stands.
@@ -52,6 +144,8 @@ pub enum Role {
     Store,
     /// Talks about the farm.
     Advice,
+    /// One of the pet pen's animals: a right-click offers it as the farmer's companion.
+    Pet(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +160,8 @@ pub struct Layout {
     /// The crate that buys the whole harvest at once.
     pub shipping: [f32; 3],
     pub npcs: Vec<Npc>,
+    /// Wild herbs to pick around the farm: what they are and where.
+    pub wild: Vec<(Crop, [f32; 3])>,
 }
 
 fn npc(name: &str, display: u32, kind: Kind, at: [f32; 4]) -> Npc {
@@ -82,12 +178,24 @@ impl Layout {
     pub fn stonefield(ground: Option<&Ground>) -> Self {
         let height = |x: f32, y: f32| ground.and_then(|g| g.height(x, y)).unwrap_or(FIELD_HEIGHT);
         let on_ground = |x: f32, y: f32| [x, y, height(x, y)];
+        // Rows on the field's own furrows nearest the plot centre, tiles stepping along each.
+        let centre_diff = PLOT_CENTRE[0] - PLOT_CENTRE[1];
+        let first =
+            ((centre_diff - ROW_PHASE) / TEXTURE_REPEAT).round() - (PLOT_ROWS as f32 - 1.0) / 2.0;
+        let first = first.round();
+        let along = [
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+        ];
         let mut tiles = Vec::new();
         for r in 0..PLOT_ROWS {
+            let row_diff = ROW_PHASE + TEXTURE_REPEAT * (first + r as f32);
+            // The point of this furrow nearest the plot centre.
+            let shift = (row_diff - centre_diff) / 2.0;
+            let mid = [PLOT_CENTRE[0] + shift, PLOT_CENTRE[1] - shift];
             for c in 0..PLOT_COLUMNS {
-                let x = PLOT_CENTRE[0] + (r as f32 - (PLOT_ROWS - 1) as f32 / 2.0) * TILE_STEP;
-                let y = PLOT_CENTRE[1] + (c as f32 - (PLOT_COLUMNS - 1) as f32 / 2.0) * TILE_STEP;
-                tiles.push(on_ground(x, y));
+                let t = (c as f32 - (PLOT_COLUMNS - 1) as f32 / 2.0) * TILE_STEP;
+                tiles.push(on_ground(mid[0] + t * along[0], mid[1] + t * along[1]));
             }
         }
         let home = on_ground(-9902.0, 349.0);
@@ -207,6 +315,19 @@ impl Layout {
         ] {
             let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), facing]);
             n.look.level = 1;
+            n.look.scale = PETS.iter().find(|p| p.0 == name).map_or(1.0, |p| p.2);
+            npcs.push(n);
+        }
+        // The pet pen: every companion in rows on the grass south of the field, facing the house.
+        for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
+            let (row, col) = ((i - 1) / 10, (i - 1) % 10);
+            let (x, y) = (-9938.0 + 3.0 * col as f32, 296.0 + 4.0 * row as f32);
+            let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), 0.0]);
+            n.look.level = 1;
+            n.look.scale = scale;
+            n.look.subname = "Pet Pen".into();
+            n.look.npc_flags = NPC_GOSSIP;
+            n.role = Role::Pet(i);
             npcs.push(n);
         }
         let ma = &mut npcs[0];
@@ -230,6 +351,10 @@ impl Layout {
             bed: on_ground(-9902.0, 318.0),
             shipping: on_ground(-9904.0, 345.0),
             npcs,
+            wild: WILD
+                .iter()
+                .map(|&(crop, x, y)| (crop, on_ground(x, y)))
+                .collect(),
         }
     }
 }
@@ -247,7 +372,14 @@ mod tests {
             .iter()
             .fold((0.0, 0.0), |(x, y), t| (x + t[0], y + t[1]));
         let n = l.tiles.len() as f32;
-        assert!((sx / n - PLOT_CENTRE[0]).abs() < 0.01 && (sy / n - PLOT_CENTRE[1]).abs() < 0.01);
+        assert!((sx / n - PLOT_CENTRE[0]).abs() < 3.0 && (sy / n - PLOT_CENTRE[1]).abs() < 3.0);
+        for t in &l.tiles {
+            let phase = (t[0] - t[1] - ROW_PHASE).rem_euclid(TEXTURE_REPEAT);
+            assert!(
+                phase < 0.01 || phase > TEXTURE_REPEAT - 0.01,
+                "on a furrow: {phase}"
+            );
+        }
         assert_eq!(l.npcs.iter().filter(|n| n.role == Role::Store).count(), 1);
     }
 }

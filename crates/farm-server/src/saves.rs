@@ -20,6 +20,7 @@ struct Inner {
     path: Option<PathBuf>,
     tiles: usize,
     veins: usize,
+    wild: usize,
 }
 
 /// The shared save; cheap to clone.
@@ -29,7 +30,7 @@ pub struct Saves(Arc<Mutex<Inner>>);
 impl Saves {
     /// The save at `path`, or a new one if there is none yet; farms fit a layout of `tiles` plot
     /// tiles and `veins` ore veins. `None` keeps everything in memory.
-    pub fn open(path: Option<PathBuf>, tiles: usize, veins: usize) -> Result<Self> {
+    pub fn open(path: Option<PathBuf>, tiles: usize, veins: usize, wild: usize) -> Result<Self> {
         let mut save = match &path {
             Some(p) if p.exists() => {
                 let text = std::fs::read_to_string(p)
@@ -40,13 +41,14 @@ impl Saves {
             _ => Save::default(),
         };
         for f in &mut save.farmers {
-            f.farm.fit(tiles, veins);
+            f.farm.fit(tiles, veins, wild);
         }
         Ok(Self(Arc::new(Mutex::new(Inner {
             save,
             path,
             tiles,
             veins,
+            wild,
         }))))
     }
 
@@ -77,7 +79,8 @@ impl Saves {
         }
         character.guid = inner.save.next_guid();
         let seed = rand::random();
-        let farm = Farm::new(inner.tiles, inner.veins, seed);
+        let mut farm = Farm::new(inner.tiles, inner.veins, seed);
+        farm.fit(inner.tiles, inner.veins, inner.wild);
         inner.save.farmers.push(Farmer { character, farm });
         Self::write(&inner);
         Ok(())
@@ -149,7 +152,7 @@ mod tests {
     fn farmers_are_made_named_once_and_written_to_disk() {
         let dir = std::env::temp_dir().join(format!("farm-saves-{}", std::process::id()));
         let path = dir.join("save.ron");
-        let saves = Saves::open(Some(path.clone()), 16, 4).unwrap();
+        let saves = Saves::open(Some(path.clone()), 16, 4, 2).unwrap();
         saves.create(farmer("Hoggle")).unwrap();
         assert_eq!(saves.create(farmer("hoggle")), Err(NAME_IN_USE));
         let guid = saves.roster()[0].guid;
@@ -158,7 +161,7 @@ mod tests {
         farm.money = 999;
         saves.store(guid, &farm);
 
-        let again = Saves::open(Some(path), 20, 4).unwrap();
+        let again = Saves::open(Some(path), 20, 4, 2).unwrap();
         let farm = again.farm(guid).unwrap();
         assert_eq!(farm.money, 999);
         assert_eq!(farm.tiles.len(), 20, "fitted to the new layout");

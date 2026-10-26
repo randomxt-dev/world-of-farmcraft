@@ -1,7 +1,9 @@
 //! The `farmcraft` launcher: the farm server on a background thread, then the stock benilla
 //! client pointed at it and logged in, so a double-click goes straight to the character screen.
 
+mod hotbar;
 mod install;
+mod lua_hooks;
 
 use std::path::PathBuf;
 
@@ -80,5 +82,7 @@ fn main() -> benilla_app::AppExit {
         project_dir: env!("BENILLA_PROJECT_DIR"),
         ..Default::default()
     };
-    benilla_app::run_with(build, |_app| {})
+    benilla_app::run_with(build, |app| {
+        app.add_plugins(hotbar::HotbarPlugin);
+    })
 }

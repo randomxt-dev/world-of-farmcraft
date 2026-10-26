@@ -11,7 +11,12 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (path, name) = (args[0].clone(), args[1].clone());
     let layout = Layout::stonefield(None);
-    let saves = Saves::open(Some(path.into()), layout.tiles.len(), layout.veins.len())?;
+    let saves = Saves::open(
+        Some(path.into()),
+        layout.tiles.len(),
+        layout.veins.len(),
+        layout.wild.len(),
+    )?;
     let farmer = Character {
         guid: 0,
         name,

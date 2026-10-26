@@ -27,6 +27,22 @@ fn main() -> anyhow::Result<()> {
             .collect();
         println!("{:8.1} {}", x + i as f32 * step, row.join(" "));
     }
+    for c in &chunks {
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for p in &c.positions {
+            lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+            hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+        }
+        if (lo[0]..=hi[0]).contains(&x) && (lo[1]..=hi[1]).contains(&y) {
+            println!(
+                "chunk x {:.1}..{:.1} y {:.1}..{:.1}: base {:?} layers {:?}",
+                lo[0], hi[0], lo[1], hi[1], c.base_texture, c.layer_textures
+            );
+            for i in [0, 1, 9, 17] {
+                println!("vertex {i}: {:?} uv {:?}", c.positions[i], c.uvs[i]);
+            }
+        }
+    }
     let near = |p: [f32; 3]| ((p[0] - x).powi(2) + (p[1] - y).powi(2)).sqrt() < r * 1.5;
     for (_, t) in &tiles {
         for w in t.wmos.iter().filter(|w| near(w.position)) {

@@ -43,6 +43,7 @@ pub enum Reject {
     NotCarried,
     Mined,
     NoSuchVein,
+    Picked,
 }
 
 impl Reject {
@@ -60,6 +61,7 @@ impl Reject {
             Reject::NotCarried => "You don't have that.".into(),
             Reject::Mined => "That vein is spent until tomorrow.".into(),
             Reject::NoSuchVein => "There is no vein there.".into(),
+            Reject::Picked => "Someone picked that already. It grows back tomorrow.".into(),
         }
     }
 }
@@ -91,6 +93,12 @@ pub struct Farm {
     pub seed: u64,
     /// Crops harvested, ever.
     pub harvested: u32,
+    /// Wild herbs picked today, by index.
+    #[serde(default)]
+    pub foraged: Vec<bool>,
+    /// The companion that follows the farmer, by name; `None` is the farm dog.
+    #[serde(default)]
+    pub companion: Option<String>,
 }
 
 impl Farm {
@@ -108,13 +116,38 @@ impl Farm {
             mined: vec![false; veins],
             seed,
             harvested: 0,
+            foraged: Vec::new(),
+            companion: None,
         }
     }
 
-    /// Fit a loaded farm to a layout of `tiles` tiles and `veins` veins.
-    pub fn fit(&mut self, tiles: usize, veins: usize) {
+    /// Fit a loaded farm to a layout of `tiles` tiles, `veins` veins and `wild` wild herbs.
+    pub fn fit(&mut self, tiles: usize, veins: usize, wild: usize) {
         self.tiles.resize(tiles, Tile::default());
         self.mined.resize(veins, false);
+        self.foraged.resize(wild, false);
+    }
+
+    /// Pick wild herb `w`, a `crop` plant: one of it, and half the time a seed to plant at home.
+    /// It grows back tomorrow.
+    pub fn forage(&mut self, w: usize, crop: Crop) -> Result<(u32, bool), Reject> {
+        match self.foraged.get(w) {
+            None => return Err(Reject::NoSuchVein),
+            Some(true) => return Err(Reject::Picked),
+            Some(false) => {}
+        }
+        let salt = u64::from(self.clock.day) << 20 | 1 << 16 | w as u64;
+        let seed = crate::rng::below(self.seed, salt, 2) == 0;
+        if !self.bag.fits(Item::Produce(crop), 1) || (seed && !self.bag.fits(Item::Seeds(crop), 1))
+        {
+            return Err(Reject::BagFull);
+        }
+        self.bag.add(Item::Produce(crop), 1);
+        if seed {
+            self.bag.add(Item::Seeds(crop), 1);
+        }
+        self.foraged[w] = true;
+        Ok((1, seed))
     }
 
     fn tile(&mut self, i: usize) -> Result<&mut Tile, Reject> {
@@ -230,6 +263,7 @@ impl Farm {
             tile.watered = false;
         }
         self.mined.iter_mut().for_each(|m| *m = false);
+        self.foraged.iter_mut().for_each(|f| *f = false);
         self.clock.next_day();
         self.weather = Weather::roll(self.seed, self.clock.day, self.clock.season());
         if self.weather.waters() {
@@ -343,6 +377,23 @@ mod tests {
         assert_eq!(f.mine(5), Err(Reject::NoSuchVein));
         f.sleep();
         assert!(f.mine(0).is_ok());
+    }
+
+    #[test]
+    fn a_wild_herb_is_picked_once_a_day_and_sometimes_gives_a_seed() {
+        let mut f = farm();
+        f.fit(4, 2, 3);
+        let mut seeds = 0;
+        for _ in 0..40 {
+            let (n, seed) = f.forage(1, Crop::Peacebloom).unwrap();
+            assert_eq!(n, 1);
+            seeds += u32::from(seed);
+            assert_eq!(f.forage(1, Crop::Peacebloom), Err(Reject::Picked));
+            f.sleep();
+            f.bag = Bag::default();
+        }
+        assert!((5..35).contains(&seeds), "about half give a seed: {seeds}");
+        assert_eq!(f.forage(7, Crop::Peacebloom), Err(Reject::NoSuchVein));
     }
 
     #[test]

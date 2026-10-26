@@ -9,7 +9,7 @@ use std::time::Duration;
 use farm_rules::save::Character;
 use farm_rules::{Crop, DayReport, Farm, Item, Reject, Weather};
 
-use crate::layout::{Layout, Role};
+use crate::layout::{Layout, Role, PETS};
 use crate::saves::Saves;
 use crate::world::creatures::{self, Kind, Look, Shown};
 use crate::world::items::{self, Held};
@@ -26,11 +26,14 @@ const CROP_BASE: u32 = 51_000;
 /// Within a crop's hundred entries, its ripe plant.
 const RIPE: u32 = 99;
 const VEIN: u32 = 52_000;
+/// Wild herbs, one entry per crop from here.
+const WILD_BASE: u32 = 53_000;
 const BED: u32 = 52_001;
 const SHIPPING: u32 = 52_002;
 // Creature entries: villagers by layout index, and the farm dog.
 const NPC_BASE: u32 = 60_000;
-const DOG: u32 = 60_900;
+/// The companion, one entry per pet so the client's name cache never mixes them up.
+const COMPANION_BASE: u32 = 61_000;
 
 /// `HIGHGUID_GAMEOBJECT` and `HIGHGUID_UNIT`.
 const HIGH_GAMEOBJECT: u64 = 0xF110;
@@ -48,16 +51,13 @@ const HAYSTACK: u32 = 251;
 /// `World\Generic\Human\Passive Doodads\Crates\CrateGrain01.mdx`.
 const GRAIN_CRATE: u32 = 347;
 
-/// Young Wolf's look (`CreatureDisplayInfo` 447), the farm dog.
-const WOLF_PUP: u32 = 447;
-
-/// The dirt mounds are grave-sized; a tile's is smaller.
-const SOIL_SCALE: f32 = 0.55;
+/// The dirt mounds are grave-sized; a tile's is smaller, and the damp mound is the bigger model.
+const SOIL_SCALE: f32 = 0.42;
+const WET_SOIL_SCALE: f32 = 0.34;
 /// How close the farmer must stand to work a tile or talk to someone.
 const REACH: f32 = 6.0;
 /// How long each job's cast bar runs.
 const PLANT_TIME: Duration = Duration::from_millis(1500);
-const WATER_TIME: Duration = Duration::from_millis(1500);
 const HARVEST_TIME: Duration = Duration::from_millis(1500);
 const MINE_TIME: Duration = Duration::from_millis(2500);
 /// How long the farmer lies in the hay before morning comes.
@@ -103,6 +103,10 @@ fn object_template(entry: u32) -> Option<Template> {
         VEIN => Template::new("Copper Vein", COPPER_VEIN, Use::Mine),
         BED => Template::new("Hay Bed", HAYSTACK, Use::Goober),
         SHIPPING => Template::new("Shipping Crate", GRAIN_CRATE, Use::Goober),
+        e if (WILD_BASE..WILD_BASE + Crop::ALL.len() as u32).contains(&e) => {
+            let crop = Crop::ALL[(e - WILD_BASE) as usize];
+            Template::new(crop.name(), crop_display(crop), Use::Herb)
+        }
         e if (CROP_BASE..CROP_BASE + 100 * Crop::ALL.len() as u32).contains(&e) => {
             let crop = Crop::ALL[((e - CROP_BASE) / 100) as usize];
             let n = (e - CROP_BASE) % 100;
@@ -133,7 +137,7 @@ fn object_template(entry: u32) -> Option<Template> {
 fn crop_scale(crop: Crop, age: u32) -> f32 {
     let full = match crop {
         Crop::Pumpkin | Crop::Watermelon => 1.0,
-        _ => 0.6,
+        _ => 0.5,
     };
     full * (0.3 + 0.7 * crop.growth(age))
 }
@@ -162,9 +166,9 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Job {
     Plant(usize, Crop),
-    Water(usize),
     Harvest(usize),
     Mine(usize),
+    Forage(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -178,17 +182,18 @@ struct Cast {
 /// What an open gossip menu's options do.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Menu {
-    /// Sow one of these seeds in the tile.
-    Plant(usize, Vec<Crop>),
+    /// Take the pet pen's animal, by its index in [`PETS`], as the companion.
+    Adopt(usize),
 }
 
 /// The greeting texts the gossip windows show.
-const TEXT_PLANT: u32 = 1;
 const TEXT_MA: u32 = 2;
+const TEXT_PET: u32 = 3;
 
 const MA_STONEFIELD: &str = "Well, look who's here! That field's been fallow since the \
 kobolds took Fargodeep. It's yours to work now, dear.$B$BTurn the soil, plant your seeds, \
-and water them every day - rain does it for you. When they're ripe, gather them up and drop \
+and water them every day - rain does it for you. Your seeds sit on your bar: scroll the \
+mouse wheel or press a number to pick which ones you sow, and hold Shift to zoom instead. When they're ripe, gather them up and drop \
 them in the shipping crate by the house, or sell them to Brog Hamfist at the Goldshire inn. \
 He sells seeds too.$B$BAnd mind you get to bed in that hay before two in the morning!";
 
@@ -210,6 +215,10 @@ pub struct Game {
     soil: Vec<(u64, u32)>,
     crops: Vec<Option<(u64, u32)>>,
     veins: Vec<Option<u64>>,
+    wild: Vec<Option<u64>>,
+    /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
+    bar: Vec<u32>,
+    selected: usize,
     /// The hay bed's and the shipping crate's guids.
     fixtures: [u64; 2],
     /// Bumped to give every recreated object a fresh guid.
@@ -229,8 +238,11 @@ pub struct Game {
 
 impl Game {
     pub fn new(me: Character, farm: Farm, layout: Arc<Layout>, saves: Saves, out: Outbox) -> Self {
+        let mut farm = farm;
+        farm.fit(layout.tiles.len(), layout.veins.len(), layout.wild.len());
         let tiles = layout.tiles.len();
         let veins = layout.veins.len();
+        let wild = layout.wild.len();
         let at = layout.home.position;
         let told_hour = farm.clock.hour_minute().0;
         Self {
@@ -246,6 +258,9 @@ impl Game {
             soil: vec![(0, 0); tiles],
             crops: vec![None; tiles],
             veins: vec![None; veins],
+            wild: vec![None; wild],
+            bar: Vec::new(),
+            selected: 0,
             fixtures: [0; 2],
             generation: 0,
             cast: None,
@@ -320,9 +335,11 @@ impl Game {
         }
     }
 
-    fn fresh_guid(&mut self, kind: u64, index: usize) -> u64 {
+    /// A new gameobject guid for template `entry`. The client reads the entry back out of the
+    /// guid (bits 24-47, as vmangos packs it) to ask for the template, so it must be there.
+    fn fresh_guid(&mut self, entry: u32) -> u64 {
         self.generation += 1;
-        HIGH_GAMEOBJECT << 48 | kind << 40 | (self.generation & 0xFFFF_FFFF) << 8 | index as u64
+        HIGH_GAMEOBJECT << 48 | u64::from(entry & 0xFF_FFFF) << 24 | (self.generation & 0xFF_FFFF)
     }
 
     fn show_world(&mut self) {
@@ -332,12 +349,15 @@ impl Game {
         for v in 0..self.layout.veins.len() {
             self.show_vein(v);
         }
+        for w in 0..self.layout.wild.len() {
+            self.show_wild(w);
+        }
         let fixtures = [
             (BED, self.layout.bed, 0.6),
             (SHIPPING, self.layout.shipping, 1.0),
         ];
         for (i, (entry, at, facing)) in fixtures.into_iter().enumerate() {
-            let guid = self.fresh_guid(3, i);
+            let guid = self.fresh_guid(entry);
             self.fixtures[i] = guid;
             let t = object_template(entry).expect("a fixture");
             self.send(objects::create(guid, entry, &t, at, facing, 1.0));
@@ -353,18 +373,49 @@ impl Game {
             };
             self.send(creatures::create(&shown, &npc.look));
         }
+        self.show_companion();
+    }
+
+    /// The companion's index in [`PETS`]: the farm dog unless the farmer took another.
+    fn companion(&self) -> usize {
+        (self.farm.companion.as_deref())
+            .and_then(|name| PETS.iter().position(|p| p.0 == name))
+            .unwrap_or(0)
+    }
+
+    fn dog_guid(&self) -> u64 {
+        HIGH_UNIT << 48 | u64::from(COMPANION_BASE + self.companion() as u32) << 24
+    }
+
+    fn show_companion(&self) {
+        let pet = self.companion();
         let dog = Shown {
             guid: self.dog_guid(),
-            entry: DOG,
+            entry: COMPANION_BASE + pet as u32,
             position: self.dog,
             orientation: 0.0,
             owner: None,
         };
-        self.send(creatures::create(&dog, &dog_look()));
+        self.send(creatures::create(&dog, &companion_look(pet)));
     }
 
-    fn dog_guid(&self) -> u64 {
-        HIGH_UNIT << 48 | u64::from(DOG) << 24
+    fn show_wild(&mut self, w: usize) {
+        let picked = self.farm.foraged[w];
+        match (self.wild[w], picked) {
+            (Some(guid), true) => {
+                self.send(crate::world::destroy(guid));
+                self.wild[w] = None;
+            }
+            (None, false) => {
+                let (crop, at) = self.layout.wild[w];
+                let entry = WILD_BASE + crop_index(crop);
+                let guid = self.fresh_guid(entry);
+                let t = object_template(entry).expect("a wild herb");
+                self.send(objects::create(guid, entry, &t, at, w as f32, 0.8));
+                self.wild[w] = Some(guid);
+            }
+            _ => {}
+        }
     }
 
     /// Show tile `i` as the farm has it: dry or watered soil, and its crop at its size.
@@ -376,9 +427,14 @@ impl Game {
             if self.soil[i].0 != 0 {
                 self.send(crate::world::destroy(self.soil[i].0));
             }
-            let guid = self.fresh_guid(1, i);
+            let guid = self.fresh_guid(soil);
             let t = object_template(soil).expect("soil");
-            self.send(objects::create(guid, soil, &t, at, 0.0, SOIL_SCALE));
+            let scale = if tile.watered {
+                WET_SOIL_SCALE
+            } else {
+                SOIL_SCALE
+            };
+            self.send(objects::create(guid, soil, &t, at, 0.0, scale));
             self.soil[i] = (guid, soil);
         }
         let wanted = tile.crop.map(|(crop, age)| {
@@ -392,7 +448,7 @@ impl Game {
                     self.send(crate::world::destroy(guid));
                 }
                 self.crops[i] = wanted.map(|(entry, crop, age)| {
-                    let guid = self.fresh_guid(2, i);
+                    let guid = self.fresh_guid(entry);
                     let t = object_template(entry).expect("a crop");
                     let scale = crop_scale(crop, age);
                     self.send(objects::create(guid, entry, &t, at, i as f32, scale));
@@ -410,7 +466,7 @@ impl Game {
                 self.veins[v] = None;
             }
             (None, false) => {
-                let guid = self.fresh_guid(4, v);
+                let guid = self.fresh_guid(VEIN);
                 let (at, facing) = self.layout.veins[v];
                 let t = object_template(VEIN).expect("a vein");
                 self.send(objects::create(guid, VEIN, &t, at, facing, 1.0));
@@ -460,12 +516,47 @@ impl Game {
             kept[slot] = Some(held);
         }
         self.bag = kept;
+        self.sync_bar();
         if let Some((item, n)) = gained {
             let entry = items::entry(item);
             let slot = (self.bag.iter().flatten())
                 .find(|h| h.entry == entry)
                 .map_or(items::BACKPACK + 1, |h| h.slot);
             self.send(items::push_result(owner, entry, slot, n, bought));
+        }
+    }
+
+    /// The action bar as a hotbar: each crop's seeds in their own slot, in crop order, empty while
+    /// none are carried, so a slot never changes under the farmer's pick. Sent again only when it
+    /// changes; the counts are the client's own, read from the bags.
+    fn sync_bar(&mut self) {
+        let bar: Vec<u32> = (Crop::ALL.iter())
+            .map(|&c| {
+                let carried = self.farm.bag.count(Item::Seeds(c)) > 0;
+                if carried {
+                    items::entry(Item::Seeds(c))
+                } else {
+                    0
+                }
+            })
+            .collect();
+        if bar != self.bar {
+            self.send(spells::item_bar(&bar));
+            self.bar = bar;
+        }
+    }
+
+    /// `.sel <n>`: the farmer picked bar slot `n` (from 1) with the wheel or a number key.
+    fn select(&mut self, slot: usize) {
+        self.selected = slot.saturating_sub(1);
+        tracing::debug!("farm: {} picks bar slot {slot}", self.me.name);
+    }
+
+    /// The seed in the picked bar slot, if it holds one the farmer still has.
+    fn selected_seed(&self) -> Option<Crop> {
+        match items::item_of(*self.bar.get(self.selected)?) {
+            Some(Item::Seeds(c)) if self.farm.bag.count(Item::Seeds(c)) > 0 => Some(c),
+            _ => None,
         }
     }
 
@@ -520,6 +611,8 @@ impl Game {
                 MINE_TIME,
                 Job::Mine(v),
             );
+        } else if let Some(w) = self.wild.iter().position(|&g| g == Some(object)) {
+            self.forage(w, object);
         } else if object == self.fixtures[0] {
             self.go_to_bed();
         } else if object == self.fixtures[1] {
@@ -534,34 +627,18 @@ impl Game {
         }
         let tile = self.farm.tiles[i];
         match tile.crop {
-            None => {
-                let seeds: Vec<Crop> = self.farm.bag.seeds().into_iter().map(|(c, _)| c).collect();
-                match seeds.as_slice() {
-                    [] => self.notify("You have no seeds. Brog Hamfist in Goldshire sells them."),
-                    [only] => {
-                        let only = *only;
-                        self.start(
-                            spells::PLANT_SEEDS,
-                            Target::GameObject(object),
-                            PLANT_TIME,
-                            Job::Plant(i, only),
-                        );
-                    }
-                    several => {
-                        let options = (several.iter())
-                            .map(|&c| {
-                                format!(
-                                    "Plant {} Seeds ({} left)",
-                                    c.name(),
-                                    self.farm.bag.count(Item::Seeds(c))
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        self.menu = Some(Menu::Plant(i, several.to_vec()));
-                        self.send(packets::gossip_menu(self.guid(), TEXT_PLANT, &options));
-                    }
+            None => match self.selected_seed() {
+                Some(crop) => self.start(
+                    spells::PLANT_SEEDS,
+                    Target::GameObject(object),
+                    PLANT_TIME,
+                    Job::Plant(i, crop),
+                ),
+                None if self.bar.iter().all(|&e| e == 0) => {
+                    self.notify("You have no seeds. Brog Hamfist in Goldshire sells them.")
                 }
-            }
+                None => self.notify("Pick seeds on your bar: scroll the mouse wheel or press 1-9."),
+            },
             Some((crop, age)) => {
                 if tile.ripe().is_some() {
                     return self.start(
@@ -579,12 +656,11 @@ impl Game {
                         crop.name()
                     ));
                 }
-                self.start(
-                    spells::WATERING,
-                    Target::GameObject(object),
-                    WATER_TIME,
-                    Job::Water(i),
-                );
+                // Watering is instant: the soil darkening is the feedback.
+                match self.farm.water(i) {
+                    Ok(()) => self.show_tile(i),
+                    Err(r) => self.refuse(&r),
+                }
             }
         }
     }
@@ -600,7 +676,11 @@ impl Game {
         };
         tracing::info!("farm: {} casts {} at {object:#x}", self.me.name, cast.spell);
         let job = match cast.spell {
-            spells::HERB_GATHERING => self.tile_of(object).map(Job::Harvest),
+            spells::HERB_GATHERING => (self.tile_of(object).map(Job::Harvest)).or_else(|| {
+                (self.wild.iter())
+                    .position(|&g| g == Some(object))
+                    .map(Job::Forage)
+            }),
             spells::MINING => self
                 .veins
                 .iter()
@@ -621,6 +701,7 @@ impl Game {
         let at = match job {
             Job::Mine(v) => self.layout.veins[v].0,
             Job::Harvest(i) => self.layout.tiles[i],
+            Job::Forage(w) => self.layout.wild[w].1,
             _ => self.at,
         };
         if !self.near(at) {
@@ -666,10 +747,22 @@ impl Game {
                 }
                 Err(r) => self.refuse(&r),
             },
-            Job::Water(i) => match self.farm.water(i) {
-                Ok(()) => self.show_tile(i),
-                Err(r) => self.refuse(&r),
-            },
+            Job::Forage(w) => {
+                let crop = self.layout.wild[w].0;
+                match self.farm.forage(w, crop) {
+                    Ok((n, seed)) => {
+                        self.sync_bag(Some((Item::Produce(crop), n)), false);
+                        if seed {
+                            self.say(&format!(
+                                "You found a {} seed! Plant it at home.",
+                                crop.name()
+                            ));
+                        }
+                        self.show_wild(w);
+                    }
+                    Err(r) => self.refuse(&r),
+                }
+            }
             Job::Harvest(i) => match self.farm.harvest(i) {
                 Ok((crop, n)) => {
                     tracing::info!(
@@ -690,6 +783,18 @@ impl Game {
                 Err(r) => self.refuse(&r),
             },
         }
+    }
+
+    fn forage(&mut self, w: usize, object: u64) {
+        if !self.near(self.layout.wild[w].1) {
+            return self.notify("You need to be closer.");
+        }
+        self.start(
+            spells::HERB_GATHERING,
+            Target::GameObject(object),
+            HARVEST_TIME,
+            Job::Forage(w),
+        );
     }
 
     fn go_to_bed(&mut self) {
@@ -747,6 +852,9 @@ impl Game {
         }
         for v in 0..self.layout.veins.len() {
             self.show_vein(v);
+        }
+        for w in 0..self.layout.wild.len() {
+            self.show_wild(w);
         }
         self.send(packets::headline(&format!("Good morning! {}", report.date)));
         let sky = match report.weather {
@@ -837,36 +945,53 @@ impl Game {
         self.dog = to;
     }
 
-    /// The gossip window: Ma Stonefield's advice; Brog's is a store, opened by the client.
+    /// The gossip window: Ma Stonefield's advice, or a pet pen animal offering to come along;
+    /// Brog's is a store, opened by the client.
     pub fn gossip_hello(&mut self, npc: u64) {
         let Some(i) = self.npc_index(npc) else {
             return;
         };
-        if self.layout.npcs[i].role == Role::Advice {
-            self.send(packets::gossip_menu(npc, TEXT_MA, &[]));
+        match self.layout.npcs[i].role {
+            Role::Advice => self.send(packets::gossip_menu(npc, TEXT_MA, &[])),
+            Role::Pet(pet) => {
+                self.menu = Some(Menu::Adopt(pet));
+                let mut options = Vec::new();
+                if pet != self.companion() {
+                    options.push(format!("Make {} your companion.", PETS[pet].0));
+                }
+                if self.companion() != 0 {
+                    options.push(format!("Bring back {}.", PETS[0].0));
+                }
+                self.send(packets::gossip_menu(npc, TEXT_PET, &options));
+            }
+            _ => {}
         }
     }
 
     pub fn gossip_select(&mut self, option: u32) {
-        let Some(Menu::Plant(i, crops)) = self.menu.take() else {
+        let Some(Menu::Adopt(pet)) = self.menu.take() else {
             return;
         };
         self.send(packets::gossip_complete());
-        let Some(&crop) = crops.get(option as usize) else {
-            return;
+        let chosen = if option == 0 && pet != self.companion() {
+            pet
+        } else {
+            0
         };
-        let object = self.soil[i].0;
-        self.start(
-            spells::PLANT_SEEDS,
-            Target::GameObject(object),
-            PLANT_TIME,
-            Job::Plant(i, crop),
-        );
+        self.send(crate::world::destroy(self.dog_guid()));
+        self.farm.companion = (chosen != 0).then(|| PETS[chosen].0.to_owned());
+        self.dog = [self.at[0] - 1.5, self.at[1], self.at[2]];
+        self.show_companion();
+        self.say(&format!("{} is following you now.", PETS[chosen].0));
+        self.save();
     }
 
     pub fn npc_text(&self, id: u32) {
         match id {
-            TEXT_PLANT => self.send(packets::npc_text(id, "What will you plant here?")),
+            TEXT_PET => self.send(packets::npc_text(
+                id,
+                "It looks up at you hopefully. Any animal in the pen will follow you around.",
+            )),
             TEXT_MA => self.send(packets::npc_text(id, MA_STONEFIELD)),
             _ => {}
         }
@@ -989,8 +1114,9 @@ impl Game {
     }
 
     pub fn creature_query(&self, entry: u32) -> Packet {
-        if entry == DOG {
-            return creatures::query_response(entry, Some(&dog_look()));
+        let pet = entry.checked_sub(COMPANION_BASE).map(|i| i as usize);
+        if let Some(pet) = pet.filter(|&i| i < PETS.len()) {
+            return creatures::query_response(entry, Some(&companion_look(pet)));
         }
         let npc = (entry.checked_sub(NPC_BASE)).and_then(|i| self.layout.npcs.get(i as usize));
         creatures::query_response(entry, npc.map(|n| &n.look))
@@ -1054,6 +1180,11 @@ impl Game {
                 self.send(self.clock_packet());
                 self.say(&format!("It's {}.", self.farm.clock.face()));
             }
+            ".sel" => {
+                if let Some(n) = words.next().and_then(|w| w.parse().ok()) {
+                    self.select(n);
+                }
+            }
             ".gold" => {
                 self.farm.money += 10_000;
                 self.sync_money();
@@ -1070,10 +1201,12 @@ impl Game {
     }
 }
 
-fn dog_look() -> Look {
-    let mut look = Look::new("Biscuit", WOLF_PUP, Kind::Beast);
-    look.subname = "Farm Dog".into();
-    look.scale = 0.55;
+/// The companion's look: the pet pen animal at its size.
+fn companion_look(pet: usize) -> Look {
+    let (name, display, scale) = PETS[pet];
+    let mut look = Look::new(name, display, Kind::Beast);
+    look.subname = "Companion".into();
+    look.scale = scale;
     look.level = 1;
     look
 }
@@ -1086,7 +1219,13 @@ mod tests {
 
     fn game() -> (Game, UnboundedReceiver<Packet>) {
         let layout = Arc::new(Layout::stonefield(None));
-        let saves = Saves::open(None, layout.tiles.len(), layout.veins.len()).unwrap();
+        let saves = Saves::open(
+            None,
+            layout.tiles.len(),
+            layout.veins.len(),
+            layout.wild.len(),
+        )
+        .unwrap();
         let me = Character {
             guid: 1,
             name: "Hoggle".into(),
@@ -1140,7 +1279,8 @@ mod tests {
                 _ => None,
             })
             .sum::<usize>();
-        let expected = g.layout.tiles.len() + g.layout.veins.len() + 2 + g.layout.npcs.len() + 1;
+        let l = &g.layout;
+        let expected = l.tiles.len() + l.veins.len() + l.wild.len() + 2 + l.npcs.len() + 1;
         assert!(
             creates >= expected,
             "{creates} objects for {expected} things"
@@ -1154,13 +1294,9 @@ mod tests {
         let tile = g.layout.tiles[0];
         stand_at(&mut g, tile);
         g.farm.weather = Weather::Sunny;
-        // The bag holds two kinds of seed, so the soil asks which.
+        // The bar holds both kinds of seed; the first is picked, so the soil gets Silverleaf.
+        assert_eq!(g.bar.iter().filter(|&&e| e != 0).count(), 2);
         g.use_object(g.soil[0].0);
-        assert_eq!(
-            g.menu,
-            Some(Menu::Plant(0, vec![Crop::Silverleaf, Crop::Peacebloom]))
-        );
-        g.gossip_select(0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[0].crop, Some((Crop::Silverleaf, 0)));
         assert_eq!(g.farm.bag.count(Item::Seeds(Crop::Silverleaf)), 5);
@@ -1170,8 +1306,7 @@ mod tests {
             if !g.farm.tiles[0].watered {
                 let crop = g.crops[0].expect("growing").0;
                 g.use_object(crop);
-                run(&mut g, 2.0);
-                assert!(g.farm.tiles[0].watered);
+                assert!(g.farm.tiles[0].watered, "watering is instant");
                 assert_eq!(g.soil[0].1, SOIL_WET);
             }
             let bed = g.layout.bed;
@@ -1211,13 +1346,89 @@ mod tests {
     }
 
     #[test]
+    fn the_picked_bar_slot_is_what_gets_planted() {
+        let (mut g, mut rx) = game();
+        let tile = g.layout.tiles[1];
+        stand_at(&mut g, tile);
+        let seen = drain(&mut rx);
+        assert!(
+            seen.iter()
+                .any(|p| matches!(p, ServerPacket::ActionButtons { .. })),
+            "the seeds go on the bar"
+        );
+        g.command(".sel 2");
+        g.use_object(g.soil[1].0);
+        run(&mut g, 2.0);
+        assert_eq!(g.farm.tiles[1].crop.map(|c| c.0), Some(Crop::Peacebloom));
+        // An empty slot plants nothing.
+        g.command(".sel 9");
+        let tile = g.layout.tiles[2];
+        stand_at(&mut g, tile);
+        g.use_object(g.soil[2].0);
+        run(&mut g, 2.0);
+        assert_eq!(g.farm.tiles[2].crop, None);
+        // When the last Peacebloom seed goes, its slot empties and the others stay put.
+        g.command(".sel 1");
+        g.farm.bag.take(Item::Seeds(Crop::Peacebloom), 3);
+        g.sync_bag(None, false);
+        assert_eq!(g.bar[1], 0);
+        assert_eq!(g.selected_seed(), Some(Crop::Silverleaf));
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn a_wild_herb_is_picked_and_grows_back_tomorrow() {
+        let (mut g, mut rx) = game();
+        let (crop, at) = g.layout.wild[0];
+        stand_at(&mut g, at);
+        let herb = g.wild[0].expect("the herb stands");
+        g.cast(CastRequest {
+            spell: spells::HERB_GATHERING,
+            target: Target::GameObject(herb),
+        });
+        run(&mut g, 2.0);
+        assert_eq!(g.farm.bag.count(Item::Produce(crop)), 1);
+        assert!(g.wild[0].is_none());
+        g.command(".sleep");
+        assert!(g.wild[0].is_some());
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn a_pet_pen_animal_becomes_the_companion() {
+        let (mut g, mut rx) = game();
+        let (i, pet) = (g.layout.npcs.iter().enumerate())
+            .find_map(|(i, n)| match n.role {
+                Role::Pet(p) if PETS[p].0 == "Panda Cub" => Some((i, p)),
+                _ => None,
+            })
+            .expect("the panda is in the pen");
+        let entry = NPC_BASE + i as u32;
+        let guid = HIGH_UNIT << 48 | u64::from(entry) << 24 | i as u64;
+        drain(&mut rx);
+        g.gossip_hello(guid);
+        assert_eq!(g.menu, Some(Menu::Adopt(pet)));
+        g.gossip_select(0);
+        assert_eq!(g.companion(), pet);
+        assert_eq!(g.farm.companion.as_deref(), Some("Panda Cub"));
+        let seen = drain(&mut rx);
+        assert!(seen
+            .iter()
+            .any(|p| matches!(p, ServerPacket::UpdateObject { .. })));
+        // Option 1 sends it back for the farm dog.
+        g.gossip_hello(guid);
+        g.gossip_select(1);
+        assert_eq!(g.companion(), 0);
+        drain(&mut rx);
+    }
+
+    #[test]
     fn walking_away_breaks_a_cast() {
         let (mut g, mut rx) = game();
         let tile = g.layout.tiles[3];
         stand_at(&mut g, tile);
-        g.farm.bag.take(Item::Seeds(Crop::Silverleaf), 6);
         g.use_object(g.soil[3].0);
-        assert!(g.cast.is_some(), "one kind of seed plants at once");
+        assert!(g.cast.is_some(), "the picked seed plants");
         stand_at(&mut g, [tile[0] + 3.0, tile[1], tile[2]]);
         assert!(g.cast.is_none());
         run(&mut g, 2.0);
@@ -1279,6 +1490,13 @@ mod tests {
         assert_eq!(g.farm.clock.day, 2);
         assert_eq!(g.at, g.layout.home.position);
         drain(&mut rx);
+    }
+
+    #[test]
+    fn a_gameobject_guid_carries_its_entry_where_the_client_reads_it() {
+        let (mut g, _rx) = game();
+        let guid = g.fresh_guid(VEIN);
+        assert_eq!(benilla_protocol::guid::entry(guid), Some(VEIN));
     }
 
     #[test]

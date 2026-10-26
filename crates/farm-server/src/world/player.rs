@@ -43,6 +43,13 @@ const PLAYER_NEXT_LEVEL_XP: u16 = 717;
 const PLAYER_EXPLORED_ZONES_1: u16 = 1111;
 const EXPLORED_ZONE_WORDS: u16 = 64;
 const PLAYER_FIELD_COINAGE: u16 = 1176;
+/// `PLAYER_SKILL_INFO_1_1`: 128 skills of three words, the skill id with its step, then the value
+/// with its maximum, then a bonus.
+const PLAYER_SKILL_INFO_1_1: u16 = 718;
+/// `SkillLine.dbc` Herbalism and Mining, known at the top of the trade: the client lights the
+/// herb and pick cursors, and casts its gathering spells, only for a skill it can see.
+const SKILLS: [u32; 2] = [182, 186];
+const SKILL_VALUE: u32 = 300;
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER`.
 const TYPE_PLAYER: u32 = 0x01 | 0x08 | 0x10;
@@ -173,6 +180,12 @@ pub fn fields(c: &Character, is_self: bool, carried: &[Held], money: u32) -> Fie
             f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(h.slot), h.guid);
         }
         f.u32(PLAYER_FIELD_COINAGE, money);
+        for (i, skill) in SKILLS.into_iter().enumerate() {
+            let at = PLAYER_SKILL_INFO_1_1 + 3 * i as u16;
+            f.u32(at, skill)
+                .u32(at + 1, SKILL_VALUE | SKILL_VALUE << 16)
+                .u32(at + 2, 0);
+        }
     }
     f
 }

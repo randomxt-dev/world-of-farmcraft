@@ -12,8 +12,6 @@ pub const HERB_GATHERING: u32 = 2366;
 pub const MINING: u32 = 2575;
 /// "Plant Seeds" (`Spell.dbc` 5206): the bar shown while sowing.
 pub const PLANT_SEEDS: u32 = 5206;
-/// "Sprinkling Purified Water" (17155): the bar shown while watering.
-pub const WATERING: u32 = 17155;
 
 /// The spells the client opens nodes with: it casts the first known spell whose lock type the
 /// node's lock names, so they must be in the book.
@@ -35,6 +33,21 @@ pub fn action_buttons() -> Packet {
     let mut b = Body::default();
     for _ in 0..120 {
         b.u32(0);
+    }
+    Packet::new(opcode::SMSG_ACTION_BUTTONS, b.done())
+}
+
+/// `ACTION_BUTTON_ITEM`: an action slot's kind byte for an item, the entry below it.
+const ACTION_ITEM: u32 = 0x80;
+
+/// `SMSG_ACTION_BUTTONS` with `items` (entries) on the main bar's first slots: the hotbar.
+pub fn item_bar(items: &[u32]) -> Packet {
+    let mut b = Body::default();
+    for i in 0..120 {
+        match items.get(i).filter(|&&e| i < 12 && e != 0) {
+            Some(&entry) => b.u32(entry | ACTION_ITEM << 24),
+            None => b.u32(0),
+        };
     }
     Packet::new(opcode::SMSG_ACTION_BUTTONS, b.done())
 }

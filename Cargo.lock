@@ -3802,6 +3802,8 @@ dependencies = [
  "benilla-app",
  "benilla-buildstamp",
  "benilla-formats",
+ "benilla-ui",
+ "bevy",
  "farm-server",
  "rfd",
  "tokio",

@@ -22,11 +22,14 @@ Status: playable prototype on Windows. See [docs/PLAN.md](docs/PLAN.md).
 
 | Do | How |
 |---|---|
-| Plant | Right-click a dirt mound (pick the seed if you carry several kinds) |
+| Pick seeds | Scroll the mouse wheel or press 1-7: the lit bar slot is what you sow (Shift+wheel zooms) |
+| Plant | Right-click a dirt mound |
 | Water | Right-click a planted crop once a day; rain does it for you |
 | Harvest | Right-click a ripe crop |
 | Sleep | Right-click the hay pile by the farmhouse; past 2:00 you pass out |
 | Sell | Drop goods in the Shipping Crate, or sell to Brog Hamfist in the Goldshire inn |
 | Buy seeds | Brog Hamfist, <General Supplies> |
 | Mine | Copper veins in Fargodeep Mine, south-west of the farm |
+| Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
+| Pets | Visit the pet pen south of the field and right-click an animal to make it your companion |
 | Help | Talk to Ma Stonefield; type `.time` or `.home` in chat |

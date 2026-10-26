@@ -74,7 +74,12 @@ impl Server {
             }
         });
         let layout = Arc::new(Layout::stonefield(ground.as_ref()));
-        let saves = Saves::open(config.save.clone(), layout.tiles.len(), layout.veins.len())?;
+        let saves = Saves::open(
+            config.save.clone(),
+            layout.tiles.len(),
+            layout.veins.len(),
+            layout.wild.len(),
+        )?;
         let auth = TcpListener::bind((config.bind.as_str(), config.auth_port))
             .await
             .with_context(|| format!("binding realmd on {}:{}", config.bind, config.auth_port))?;

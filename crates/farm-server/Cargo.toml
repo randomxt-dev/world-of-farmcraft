@@ -1,0 +1,26 @@
+[package]
+name = "farm-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A minimal WoW 1.12.1 realmd + world server that hosts a World of Farmcraft farm"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sha1.workspace = true
+# The client half of the wire: opcodes, the wire helpers, the SRP6 constants and the header cipher.
+benilla-protocol = { path = "../benilla-protocol" }
+benilla-srp = { path = "../benilla-srp" }
+# Terrain heights for the plot, read from the player's own install.
+benilla-formats = { path = "../benilla-formats", default-features = false }
+farm-rules = { path = "../farm-rules" }
+num-bigint = "0.4.6"
+rand = "0.8.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

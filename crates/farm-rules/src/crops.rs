@@ -79,7 +79,11 @@ mod tests {
             let d = crop.def();
             let profit = d.sell_price * d.harvest - d.seed_price;
             assert!(profit > 0, "{} loses money", d.name);
-            assert!(profit >= last_profit, "{} earns less than a faster crop", d.name);
+            assert!(
+                profit >= last_profit,
+                "{} earns less than a faster crop",
+                d.name
+            );
             last_profit = profit;
         }
     }

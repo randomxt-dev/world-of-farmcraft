@@ -3777,6 +3777,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "farm-server"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "benilla-formats",
+ "benilla-protocol",
+ "benilla-srp",
+ "clap",
+ "farm-rules",
+ "num-bigint",
+ "rand 0.8.6",
+ "sha1 0.10.6",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "farmcraft"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "benilla-app",
+ "benilla-buildstamp",
+ "benilla-formats",
+ "farm-server",
+ "rfd",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

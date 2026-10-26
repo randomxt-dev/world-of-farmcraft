@@ -1,0 +1,36 @@
+[package]
+name = "farmcraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The World of Farmcraft launcher: the farm server in-process, then the stock benilla client logged in to it"
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+# The dev/player seam, as benilla's launcher: `--no-default-features` is the player build.
+default = ["dev"]
+dev = ["benilla-app/dev"]
+
+[dependencies]
+# `default-features = false`, or `--no-default-features` here still builds benilla-app with `dev`.
+benilla-app = { path = "../benilla-app", default-features = false }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+farm-server = { path = "../farm-server" }
+anyhow.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "net"] }
+tracing = "0.1"
+
+# The first run's folder picker for the player's own install.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.15"
+
+[build-dependencies]
+benilla-buildstamp = { path = "../benilla-buildstamp" }
+
+[[bin]]
+name = "farmcraft"
+path = "src/main.rs"
+test = false

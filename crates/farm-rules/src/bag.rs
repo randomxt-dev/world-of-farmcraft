@@ -133,7 +133,10 @@ mod tests {
         );
         assert!(bag.add(Item::CopperOre, STACK * 13));
         assert_eq!(bag.slots_used(), SLOTS);
-        assert!(bag.add(Item::Seeds(Crop::Peacebloom), 15), "the open stack fills");
+        assert!(
+            bag.add(Item::Seeds(Crop::Peacebloom), 15),
+            "the open stack fills"
+        );
         assert!(!bag.add(Item::Seeds(Crop::Peacebloom), 1));
         assert!(!bag.add(Item::Produce(Crop::Pumpkin), 1));
     }

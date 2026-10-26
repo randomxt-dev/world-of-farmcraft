@@ -1,102 +1,65 @@
-# Among Azeroth
+# World of Farmcraft
 
-Among Us played in World of Warcraft 1.12.1: crewmates do tasks around a real WoW map, impostors
-kill, bodies get reported, everyone meets and votes someone out. It is built on **benilla**, a
-from-scratch 1.12.1 client in Rust + Bevy, through its browser fork **wenilla**. Private fan
-project: non-commercial, no Blizzard branding, not affiliated with Blizzard.
+A cozy farming game set in Elwynn Forest, WoW 1.12.1: plant Azeroth's herbs and garden crops on
+Stonefield Farm, water them, sleep, harvest, ship or sell, mine copper in Fargodeep, with a wolf
+pup at your heel. Built on **benilla**, a from-scratch 1.12.1 client in Rust + Bevy, through a fork
+of **Among Azeroth**'s tiny 1.12.1 server. Private fan project: non-commercial, not affiliated with
+Blizzard. The plan and the verified asset ids: `docs/PLAN.md`.
 
-This file is authoritative for our crates and process. Upstream's rules for the client crates are
-`docs/METHOD.md`, `docs/MAP.md` and `docs/CONTRIBUTING.md`: read them before touching
-`crates/benilla-*`. `AGENTS.md` is wenilla's own fork process (PRs to `Arnesen/wenilla`, its
-realm deploy); only its wasm invariants apply to us.
+Upstream's rules for the client crates are `docs/METHOD.md`, `docs/MAP.md` and
+`docs/CONTRIBUTING.md`: read them before touching `crates/benilla-*`. `docs/AMONG-AZEROTH.md` is
+the Among Azeroth README this repo was forked from.
 
-## Non-negotiables
-
-- **Movement, camera and controls are regular WoW.** benilla's own player controller, follow
-  camera, movement packets and animation, untouched. No top-down camera, no custom hero
-  controller.
-- **1.12.1 only** (build 5875). benilla supports no other client version.
-- **Multiplayer is server-authoritative.** Roles, kills, bodies, meetings, votes, sabotage and win
-  conditions are decided by the server; a client only displays and requests.
-
-## Architecture (the plan)
-
-Modelled on Aethus's Azeroth Survivors native build, whose game crate `wenilla-rogue` ships its
-own `realmd.rs` + `server.rs` + `proto.rs`: a small 1.12.1 server the stock benilla client logs
-in to, so the client's real movement and world work unchanged. We do the same, multiplayer.
+## Architecture
 
 | crate | what |
 |---|---|
-| `crates/among-rules` | The game as a pure state machine: lobby, roles, tasks, kills, bodies, meetings, votes, ejections, sabotage, win check. No Bevy, no network, no game data; fully unit-tested. |
-| `crates/among-server` | A minimal 1.12.1 realmd + world server that speaks the original protocol, hosts the lobby and drives `among-rules`. Uses WoW's own death/ghost states, teleports for meetings, chat for discussion. |
-| `crates/among-azeroth` | The launcher: benilla through `benilla_app::run_with` plus our Bevy plugins (role reveal, task list, Use / Report / Kill / Sabotage, voting screen). Host mode starts `among-server` in-process. |
+| `crates/farm-rules` | The game as a pure state machine: clock and weather, crops, plot tiles, ore veins, the bag, the store, saves. No Bevy, no network, no game data; unit-tested. |
+| `crates/farm-server` | A minimal 1.12.1 realmd + world server (protocol code from `among-server`) that shows a farmer's farm through WoW's own objects: soil and crops are gameobjects, the store is Brog Hamfist's stock merchant window, saves are RON. `game.rs` is one farmer's session; `layout.rs` is where everything stands. |
+| `crates/farmcraft` | The launcher: starts `farm-server` on a background thread, points the stock client at it (`WOW_HOST`) and logs in (`WOW_USER`/`WOW_PASS`). |
 
-`benilla-protocol` and `benilla-srp` are the client half of the wire; the server half is ours.
-They are the reference for every packet we must answer.
+The stock client is unchanged: movement, camera, UI are regular WoW. Game rules go in
+`farm-rules` first with tests, then are shown by `farm-server`.
+
+`crates/among-*` are the Among Azeroth crates this repo was forked from, kept for reference until
+their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are upstream.
 
 ## Remotes
 
-- `wenilla`: the upstream we merge (benilla + browser build). `main` is based on `wenilla/main`.
-- `benilla`: wenilla's upstream; reference only.
-- `survivors`: OutThisLife/azeroth-survivors-re. Unrelated history: **never merge it.** It is a
-  top-down, server-less re-implementation that disables the player controller. Read it
-  (`git show survivors/main:<path>`) for HUD, menu and local-entity ideas only.
+- `origin`: github.com/randomxt-dev/world-of-farmcraft (private).
+- `upstream`: ballxxxxx/among-azeroth. Merged once as the base; later syncs are real merges.
 
-## Hard rules (from benilla's METHOD / wenilla's AGENTS, adapted)
+## Hard rules
 
-- **Never commit anything from a WoW install**: art, models, sounds, maps, DBC, MPQ contents,
-  FrameXML. Game data is read at runtime from `WOW_DATA` or a gitignored `WoW` junction at the
-  repo root. Never copy anything out of `D:\Games\AzerothSurvivors` either: its MPQs are not ours.
-- **The install is read-only.** Nothing we run writes into the WoW folder.
-- **Our features live in our crates.** A change inside an upstream file only when unavoidable:
-  the smallest possible, behind our own flag or `#[cfg]`, with a one-line comment saying why.
-  Every upstream line we touch conflicts at the next merge, so touch few.
-- **Upstream is merged, never copied.** A sync is a real merge commit with `wenilla/main` as the
-  second parent. Never GitHub's "Sync fork" button.
-- **Our settings are our own.** Never add rows to benilla's CVar table; our files go under
-  `benilla_app::config_dir()` (`benilla-config/`, gitignored).
+- **Never commit anything from a WoW install**: art, models, sounds, maps, DBC, MPQ contents.
+  Game data is read at runtime from `WOW_DATA` or the gitignored `WoW` junction at the repo root
+  (here it points at `your own 1.12.1 install`).
+- **The install is read-only.** Nothing we run writes into it.
+- **Our features live in our crates.** A change inside an upstream file only when unavoidable,
+  the smallest possible, with a one-line comment saying why.
+- **No vmangos (GPL) data copied in bulk.** Single facts (a spawn's coordinates, a display id)
+  are fine; tables are not.
 - **Code that can run in the browser**: no threads, no `std::time::Instant`, `SystemTime` or
-  `env::vars_os` (they panic on wasm); use `bevy::platform::time::Instant` or `web-time`.
-- **Our code is MIT OR Apache-2.0**, a claim about provenance: no original client code, no
-  bundled assets.
-- **Test accounts only.** A scripted login uses the account in `.probe-identity` (never
-  committed), never a real person's. Agent runs set `WOW_UNATTENDED=1` and `WOW_NOSOUND=1`.
-
-## Method
-
-1. **Reference first.** For anything WoW-defining (a packet, movement, death and ghost, visibility)
-   find what 1.12.1 does before building: benilla's protocol code, `reference/`,
-   [benilla-re](https://github.com/samwhosung/benilla-re), a packet trace
-   (`WOW_MOVE_TRACE=<file>` with `WOW_MOVE_TRACE_TAGS="in,out"`).
-2. **Build idiomatically.** Modern Rust and Bevy. Game rules go in `among-rules` first, with
-   tests, then get wired to the server and the HUD.
-3. **Measure, never eyeball.** Traces, logs and numbers settle timing and behaviour. Take one
-   simple screenshot at most; if it does not settle the question, hand the user a precise script
-   ("host a lobby, join with a second client, kill, does the body show?").
-4. **Close the loop on the symptom.** Reproduce a reported bug first, fix it, and show the same
-   check clean afterwards.
-5. **Commit small and often, on a branch.** Never say "done" without saying what was verified
-   and how.
-6. **Comments**: one line, what the code does and the fact behind it. No history, no changelogs
-   or status docs; git is the history.
+  `env::vars_os` in code meant for wasm.
+- **Commit small and often, on a branch.** Never say "done" without saying what was verified and
+  how.
 
 ## Gates
 
 - `cargo fmt --all -- --check`
-- `cargo clippy -p among-rules -p among-server -p among-azeroth --all-targets -- -D warnings`
-- `cargo test -p among-rules -p among-server` (must pass with no game data)
-- A change to a `benilla-*` crate also runs upstream's `scripts/check.sh` (bash: Git Bash or WSL).
-- Platform seams (`cfg(target_os)`, `#[link]`) are invisible to the other platform's gates: say
-  in the commit which platforms were built.
+- `cargo clippy -p farm-rules -p farm-server -p farmcraft --all-targets -- -D warnings`
+- `cargo test -p farm-rules -p farm-server` (needs no game data; every server packet is parsed
+  back through the client's own reader)
 
-## This machine
+## Running it
 
-- Windows 11, Ryzen 7 9800X3D, 32 GB, RTX 5070 Ti. Native builds use MSVC (Visual Studio
-  Community 2026). The repo lives on `D:`; `C:` is short on space, so keep `target/` here.
-- Rust is pinned by `rust-toolchain.toml`; rustup installs that toolchain on first use.
-- WSL Ubuntu 26.04 is available for upstream's bash scripts and the later browser build.
-- Game data: `WoW/Data` at the repo root (gitignored), the 14 MPQs of the English 1.12.1
-  (build 5875) client, MD5-verified against archive.org's `1.12.1-5875_enUS.zip`. benilla finds it
-  with no `WOW_DATA` set.
-- Run the stock client: `cargo run --release -p benilla` (release build ~6.5 min from clean). With
-  no server it parks at the login screen; it opens borderless fullscreen at 3440x1440.
+- Play: `play.bat`, or `cargo build --release -p farmcraft` then `target\release\farmcraft.exe`.
+  The farm saves to `target\release\benilla-config\farmcraft\save.ron` (`BENILLA_HOME` moves it).
+- Scripted run with a screenshot: make a save with
+  `target\release\examples\new_farmer.exe <dir>\farmcraft\save.ron Hoggle [demo]`, then run with
+  `BENILLA_HOME=<dir> WOW_CHAR=Hoggle WOW_UNATTENDED=1 WOW_NOSOUND=1 WOW_WIN=1600x900
+  WOW_LIVE_SHOT=<png> WOW_LIVE_SHOT_AT=22`. `WOW_PROBE_CHEST=<x>,<y>,<z>,0` makes the client
+  teleport (`.go xyz`) and right-click the nearest lockable object, e.g. a ripe crop.
+- In-game commands: `.time`, `.home`, and for testing `.sleep`, `.rain`, `.hour`, `.gold`.
+- Ground survey for placing things: `target\release\examples\survey.exe <x> <y> [radius]` with
+  `WOW_DATA` set.

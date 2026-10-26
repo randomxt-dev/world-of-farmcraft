@@ -18,7 +18,7 @@ const PLOT_CENTRE: [f32; 2] = [-9915.0, 360.0];
 pub const PLOT_ROWS: usize = 4;
 pub const PLOT_COLUMNS: usize = 4;
 /// Yards between tile centres.
-const TILE_STEP: f32 = 2.5;
+const TILE_STEP: f32 = 3.0;
 /// The field's height where the ground is not read.
 const FIELD_HEIGHT: f32 = 35.0;
 
@@ -103,7 +103,7 @@ impl Layout {
                 "Gramma Stonefield",
                 2959,
                 Kind::Humanoid,
-                [-9880.63, 322.619, 37.8244, 3.14159],
+                [-9880.63, 322.619, 37.8244, std::f32::consts::PI],
             ),
             npc(
                 "\"Auntie\" Bernice Stonefield",
@@ -151,7 +151,7 @@ impl Layout {
                 "Stormwind Guard",
                 3258,
                 Kind::Humanoid,
-                [-9455.43, 73.7274, 56.9503, 3.14159],
+                [-9455.43, 73.7274, 56.9503, std::f32::consts::PI],
             ),
             npc(
                 "Smith Argus",

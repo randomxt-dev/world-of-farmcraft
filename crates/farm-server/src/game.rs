@@ -128,9 +128,14 @@ fn object_template(entry: u32) -> Option<Template> {
     })
 }
 
-/// The size a crop of `crop` grown `age` days shows at.
+/// The size a crop of `crop` grown `age` days shows at: herb nodes are bush-sized at full scale,
+/// so a ripe herb stays within its tile; the garden crops are already small.
 fn crop_scale(crop: Crop, age: u32) -> f32 {
-    0.3 + 0.7 * crop.growth(age)
+    let full = match crop {
+        Crop::Pumpkin | Crop::Watermelon => 1.0,
+        _ => 0.6,
+    };
+    full * (0.3 + 0.7 * crop.growth(age))
 }
 
 /// "1g 2s 3c", leaving out what is zero.
@@ -421,8 +426,8 @@ impl Game {
         let owner = self.guid();
         let mut want = self.farm.bag.stacks();
         let mut kept: Vec<Option<Held>> = vec![None; self.bag.len()];
-        for slot in 0..self.bag.len() {
-            let Some(h) = self.bag[slot] else {
+        for (slot, held) in self.bag.iter().enumerate() {
+            let Some(h) = *held else {
                 continue;
             };
             if let Some(k) = want.iter().position(|&(i, _)| items::entry(i) == h.entry) {
@@ -498,11 +503,23 @@ impl Game {
 
     /// A right-click on a lockless object: soil or a growing crop, the hay bed, the crate.
     pub fn use_object(&mut self, object: u64) {
+        tracing::info!("farm: {} uses {object:#x}", self.me.name);
         if self.cast.is_some() || self.asleep.is_some() {
             return;
         }
         if let Some(i) = self.tile_of(object) {
             self.work_tile(i, object);
+        } else if let Some(v) = self.veins.iter().position(|&g| g == Some(object)) {
+            // A client that sends a plain use for the vein still swings the pick.
+            if !self.near(self.layout.veins[v].0) {
+                return self.notify("You need to be closer.");
+            }
+            self.start(
+                spells::MINING,
+                Target::GameObject(object),
+                MINE_TIME,
+                Job::Mine(v),
+            );
         } else if object == self.fixtures[0] {
             self.go_to_bed();
         } else if object == self.fixtures[1] {
@@ -547,7 +564,12 @@ impl Game {
             }
             Some((crop, age)) => {
                 if tile.ripe().is_some() {
-                    return self.notify("It's ripe: gather it!");
+                    return self.start(
+                        spells::HERB_GATHERING,
+                        Target::GameObject(object),
+                        HARVEST_TIME,
+                        Job::Harvest(i),
+                    );
                 }
                 if tile.watered {
                     let left = crop.def().days - age;
@@ -576,6 +598,7 @@ impl Game {
         let Target::GameObject(object) = cast.target else {
             return refuse(self);
         };
+        tracing::info!("farm: {} casts {} at {object:#x}", self.me.name, cast.spell);
         let job = match cast.spell {
             spells::HERB_GATHERING => self.tile_of(object).map(Job::Harvest),
             spells::MINING => self
@@ -649,6 +672,11 @@ impl Game {
             },
             Job::Harvest(i) => match self.farm.harvest(i) {
                 Ok((crop, n)) => {
+                    tracing::info!(
+                        "farm: {} harvested {n} {} from tile {i}",
+                        self.me.name,
+                        crop.name()
+                    );
                     self.sync_bag(Some((Item::Produce(crop), n)), false);
                     self.show_tile(i);
                 }
@@ -983,6 +1011,19 @@ impl Game {
                 self.farm.weather.name(),
                 coins(self.farm.money)
             )),
+            ".go" if words.next() == Some("xyz") => {
+                let n: Vec<f32> = words.filter_map(|w| w.parse().ok()).collect();
+                if let [x, y, z, ..] = n[..] {
+                    self.move_counter += 1;
+                    self.send(packets::teleport(
+                        self.guid(),
+                        self.move_counter,
+                        [x, y, z],
+                        0.0,
+                    ));
+                    self.at = [x, y, z];
+                }
+            }
             ".home" => {
                 self.move_counter += 1;
                 let home = self.layout.home;

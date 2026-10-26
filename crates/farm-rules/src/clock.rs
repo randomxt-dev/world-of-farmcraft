@@ -44,7 +44,7 @@ impl Weather {
     /// The day's weather: a quarter of days rain (snow in winter), the first day of a season is
     /// always clear.
     pub fn roll(seed: u64, day: u32, season: Season) -> Self {
-        if (day - 1) % SEASON_DAYS == 0 || rng::below(seed, u64::from(day), 4) != 0 {
+        if (day - 1).is_multiple_of(SEASON_DAYS) || rng::below(seed, u64::from(day), 4) != 0 {
             Weather::Sunny
         } else if season == Season::Winter {
             Weather::Snow

@@ -37,6 +37,15 @@
 | Fargodeep Mine | -9800, 130 |
 | Jasperlode Mine | -9120, -590 |
 
+## Status (2026-10-26)
+Built and verified: everything in weeks 1-4 below except chicken coop, on native Windows.
+- Verified by `cargo test` (39 tests) and real-client runs: login at Stonefield Farm, the plot,
+  crop stages, the wolf pup, and a real right-click harvest ("You receive loot: [Silverleaf]x2").
+- Not yet clicked through in the real client: planting menu, watering, Brog's merchant window,
+  mining, sleeping in the hay. The server side of each is covered by tests.
+- Crops: Silverleaf, Peacebloom, Earthroot, Mageroyal, Briarthorn (herb nodes), Pumpkin,
+  Watermelon. Corn and wheat need added `GameObjectDisplayInfo` rows (not done).
+
 ## Prototype (about 4 weeks)
 | Week | Goal |
 |---|---|

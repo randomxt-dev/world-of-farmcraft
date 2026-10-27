@@ -145,6 +145,13 @@ pub struct Fence {
     pub at: [f32; 3],
     pub facing: f32,
     pub style: u32,
+    /// Put up; `false` is a planned fence, marked out and waiting for wood.
+    #[serde(default = "built")]
+    pub built: bool,
+}
+
+fn built() -> bool {
+    true
 }
 
 /// Simple Wood one fence takes, and gives back when it is pulled up.
@@ -210,21 +217,34 @@ impl Farm {
         Ok(())
     }
 
-    /// Build a fence for [`FENCE_WOOD`] Simple Wood.
-    pub fn build(&mut self, fence: Fence) -> Result<(), Reject> {
+    /// Build a fence for [`FENCE_WOOD`] Simple Wood, or, without the wood, mark it out as planned.
+    /// Whether it went up.
+    pub fn build(&mut self, mut fence: Fence) -> bool {
+        fence.built = self.bag.take(Item::Wood, FENCE_WOOD);
+        self.fences.push(fence);
+        fence.built
+    }
+
+    /// Put up planned fence `f` now there is wood for it.
+    pub fn finish_fence(&mut self, f: usize) -> Result<(), Reject> {
+        match self.fences.get(f) {
+            None => return Err(Reject::NoSuchFence),
+            Some(fence) if fence.built => return Ok(()),
+            Some(_) => {}
+        }
         if !self.bag.take(Item::Wood, FENCE_WOOD) {
             return Err(Reject::NoWood);
         }
-        self.fences.push(fence);
+        self.fences[f].built = true;
         Ok(())
     }
 
-    /// Pull up fence `f`, getting its wood back.
+    /// Pull up fence `f`, getting its wood back if it was built.
     pub fn unbuild(&mut self, f: usize) -> Result<(), Reject> {
-        if f >= self.fences.len() {
+        let Some(fence) = self.fences.get(f) else {
             return Err(Reject::NoSuchFence);
-        }
-        if !self.bag.add(Item::Wood, FENCE_WOOD) {
+        };
+        if fence.built && !self.bag.add(Item::Wood, FENCE_WOOD) {
             return Err(Reject::BagFull);
         }
         self.fences.remove(f);
@@ -579,10 +599,14 @@ mod tests {
             at: [1.0, 2.0, 3.0],
             facing: 0.5,
             style: 6151,
+            built: true,
         };
-        assert_eq!(f.build(fence), Err(Reject::NoWood));
+        assert!(!f.build(fence), "no wood: planned");
+        assert!(!f.fences[0].built);
+        assert_eq!(f.finish_fence(0), Err(Reject::NoWood));
         f.bag.add(Item::Wood, 3);
-        f.build(fence).unwrap();
+        f.finish_fence(0).unwrap();
+        assert!(f.fences[0].built);
         assert_eq!(f.bag.count(Item::Wood), 1);
         f.unbuild(0).unwrap();
         assert_eq!(f.bag.count(Item::Wood), 3);

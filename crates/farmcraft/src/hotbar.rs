@@ -1,8 +1,10 @@
 //! The hotbar's client half: `hotbar.lua` in the stock UI's VM, which turns the main action bar
-//! into a seed picker driven by the mouse wheel and the number keys.
+//! into the farmer's tool and seed picker driven by the mouse wheel and the number keys.
 //!
 //! `FARMCRAFT_SELFTEST=1` checks it in a live run: a few seconds in the world, it turns the wheel
 //! down twice through the binding path, and logs the pick and the wheel bindings.
+//! `FARMCRAFT_SELFTEST=ride` instead presses the horse button, and `FARMCRAFT_SELFTEST=map` opens
+//! the world map, for screenshots of the mount and the farm's map icon.
 
 use benilla_ui::script::UiScript;
 use bevy::prelude::*;
@@ -39,6 +41,16 @@ fn self_test(
         return;
     }
     *done = true;
+    let lua = match std::env::var("FARMCRAFT_SELFTEST").as_deref() {
+        Ok("ride") => Some("UseAction(5) return 'ok'"),
+        Ok("map") => Some("ToggleWorldMap() return 'ok'"),
+        _ => None,
+    };
+    if let Some(lua) = lua {
+        let done = script.eval::<String>(lua);
+        info!("FARMCRAFT_SELFTEST: {done:?}");
+        return;
+    }
     let report = script.eval::<String>(
         r#"
         CameraZoomOut(1.0)
@@ -48,8 +60,8 @@ fn self_test(
             .. ", has " .. tostring(HasAction(1)) .. "/" .. tostring(HasAction(2)) .. "/" .. tostring(HasAction(3))
             .. ", shift-wheel " .. tostring(GetBindingAction("SHIFT-MOUSEWHEELUP"))
             .. ", wheel " .. tostring(GetBindingAction("MOUSEWHEELUP"))
-            .. ", tex " .. tostring(GetActionTexture(1)) .. "/" .. tostring(GetActionTexture(3))
-            .. ", has9 " .. tostring(HasAction(9)) .. ", count1 " .. tostring(GetActionCount(1))
+            .. ", tex " .. tostring(GetActionTexture(1)) .. "/" .. tostring(GetActionTexture(6))
+            .. ", has12 " .. tostring(HasAction(12)) .. ", count6 " .. tostring(GetActionCount(6))
         "#,
     );
     match report {

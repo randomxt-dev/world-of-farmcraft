@@ -1,21 +1,44 @@
--- World of Farmcraft's hotbar: the main action bar holds the farmer's seeds, one slot lit as the
--- pick. The mouse wheel moves the pick (Shift and the wheel zoom the camera), a number key or a
--- click picks a slot, and the server is told with ".sel <slot>"; a right-click on soil sows it.
+-- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-5 are tools
+-- (Till Soil, Watering Can, Axe, Build Fence, Horse), slots 6-12 the seeds carried. One slot is
+-- lit as the pick: the mouse wheel moves it (Shift and the wheel zoom the camera), a number key
+-- or a click picks a slot, and the server is told with ".sel <slot>". Till Soil, Build Fence and
+-- the Horse act at once when pressed; the can, the axe and the seeds say what a right-click on
+-- the farm does.
 
-FARMCRAFT_SLOT = 1
+FARMCRAFT_SLOT = 6
 
--- The last two buttons are tools, not seeds: the server puts ground-targeted spells there, and
--- these are the faces and words they wear.
+-- The tools: icon, name, tooltip, and whether pressing the button acts (casts) or only picks.
+-- The server puts borrowed spells on these buttons; these are the faces and words they wear.
 local TOOLS = {
-	[11] = {
+	[1] = {
 		"Interface\\Icons\\INV_Misc_Shovel_01",
 		"Till Soil",
 		"Click a spot in the field to dig a new plot mound.",
+		true,
 	},
-	[12] = {
+	[2] = {
+		"Interface\\Icons\\INV_Drink_Waterskin_01",
+		"Watering Can",
+		"Pick this, then right-click a planted crop to water it. Rain waters for you.",
+		false,
+	},
+	[3] = {
+		"Interface\\Icons\\INV_Axe_01",
+		"Axe",
+		"Right-click a Westfall oak to chop it down for Simple Wood.",
+		false,
+	},
+	[4] = {
 		"Interface\\Icons\\INV_TradeskillItem_01",
 		"Build Fence",
-		"Click the ground to put up a fence for 2 Simple Wood. Pick the kind at the fence gallery; right-click a fence to take it down.",
+		"Click where a fence starts, then where it runs to: sections go up along the line for 2 Simple Wood each, and keep going from the end. Click the end again to stop. Short of wood, the rest is marked out with posts: right-click a post to build it later.",
+		true,
+	},
+	[5] = {
+		"Interface\\Icons\\Ability_Mount_RidingHorse",
+		"Farm Horse",
+		"Mount up or step down. Riding is twice as fast as walking.",
+		true,
 	},
 }
 
@@ -42,13 +65,13 @@ end
 local function farm_light()
 	for i = 1, 12 do
 		local button = getglobal("ActionButton"..i)
-		if button and TOOLS[i] then
-			badge(button, nil)
-			getglobal("ActionButton"..i.."Icon"):SetTexture(TOOLS[i][1])
-			button:SetChecked(nil)
-		elseif button then
-			-- The rest of the bar holds only seeds.
-			badge(button, HasAction(i))
+		if button then
+			if TOOLS[i] then
+				badge(button, nil)
+				getglobal("ActionButton"..i.."Icon"):SetTexture(TOOLS[i][1])
+			else
+				badge(button, HasAction(i))
+			end
 			if i == FARMCRAFT_SLOT then
 				button:SetChecked(1)
 			else
@@ -79,7 +102,7 @@ function Farmcraft_Scroll(step)
 		elseif slot > 12 then
 			slot = 1
 		end
-		if HasAction(slot) and not TOOLS[slot] then
+		if HasAction(slot) then
 			break
 		end
 	end
@@ -105,11 +128,11 @@ end
 SetBinding("SHIFT-MOUSEWHEELUP", "CAMERAZOOMIN")
 SetBinding("SHIFT-MOUSEWHEELDOWN", "CAMERAZOOMOUT")
 
--- A press of a bar button, by key or by click, picks its slot instead of using the item.
--- The tools still cast: their press brings up the ground circle.
+-- A press of a bar button, by key or by click: the acting tools cast (Till Soil and Build Fence
+-- bring up the ground circle), everything else becomes the pick.
 local use_action = UseAction
 UseAction = function(slot, check_cursor, on_self)
-	if TOOLS[slot] then
+	if TOOLS[slot] and TOOLS[slot][4] then
 		return use_action(slot, check_cursor, on_self)
 	end
 	Farmcraft_Select(slot)

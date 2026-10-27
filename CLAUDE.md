@@ -16,7 +16,7 @@ the Among Azeroth README this repo was forked from.
 |---|---|
 | `crates/farm-rules` | The game as a pure state machine: clock and weather, crops, plot tiles, ore veins, the bag, the store, saves. No Bevy, no network, no game data; unit-tested. |
 | `crates/farm-server` | A minimal 1.12.1 realmd + world server (protocol code from `among-server`) that shows a farmer's farm through WoW's own objects: soil and crops are gameobjects, the store is Brog Hamfist's stock merchant window, saves are RON. `game.rs` is one farmer's session; `layout.rs` is where everything stands. |
-| `crates/farmcraft` | The launcher: starts `farm-server` on a background thread, points the stock client at it (`WOW_HOST`) and logs in (`WOW_USER`/`WOW_PASS`). Its `hotbar.lua` runs in the stock UI's VM: the action bar is a seed hotbar (wheel or number keys pick, Shift+wheel zooms) and tells the server the pick with `.sel <n>`; slots 11 and 12 are ground-targeted tools (Till Soil, Build Fence) wearing borrowed spells, renamed and re-iconed in Lua. |
+| `crates/farmcraft` | The launcher: starts `farm-server` on a background thread, points the stock client at it (`WOW_HOST`) and logs in (`WOW_USER`/`WOW_PASS`). Its `hotbar.lua` runs in the stock UI's VM: the action bar holds a button for every action (wheel or number keys pick, Shift+wheel zooms) and tells the server the pick with `.sel <n>`. Slots 1-5 are tools (Till Soil, Watering Can, Axe, Build Fence, Horse) wearing borrowed free spells, renamed and re-iconed in Lua; the can and the axe only pick. Slots 6-12 are seeds. |
 
 The stock client is unchanged: movement, camera, UI are regular WoW. Game rules go in
 `farm-rules` first with tests, then are shown by `farm-server`.
@@ -62,7 +62,10 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
   teleport (`.go xyz`) and right-click the nearest lockable object, e.g. a ripe crop.
 - Gameobject guids carry their entry in bits 24-47: the client reads the entry from the guid
   to ask for the template, and without it no lock, cursor or name works.
-- `FARMCRAFT_SELFTEST=1` turns the wheel twice in a live run and logs the hotbar's state.
+- `FARMCRAFT_SELFTEST=1` turns the wheel twice in a live run and logs the hotbar's state;
+  `=ride` presses the horse button, `=map` opens the world map.
+- `.go xyz` needs a z above the ground (70 is safe around the farm): below it you fall forever.
+- The game design (progression, economy, goals) is `docs/DESIGN.md`.
 - In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`
   (the nearest grove tree). `WOW_PROBE_CHAT=".go xyz x y z 0;.chop"` types them from a scripted run,
   `WOW_PROBE_CAM="<yaw>,<pitch>,<dist>@<s>"` parks the camera (negative pitch looks down).

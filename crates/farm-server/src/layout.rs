@@ -287,18 +287,20 @@ pub enum Role {
     Animal(Item, usize),
 }
 
-/// Every fence 1.12 has a gameobject look for: (name, display, scale). The fence gallery shows
-/// them all; a right-click picks the one the farmer builds.
-pub const FENCES: [(&str, u32, f32); 9] = [
-    ("Elwynn Wood Fence", 6151, 1.0),
-    ("Elwynn Rail Fence", 6150, 1.0),
-    ("Carnival Railing", 6157, 0.6),
-    ("Burning Steppes Fence", 6526, 1.0),
-    ("Wrought Iron Gate", 6353, 0.8),
-    ("Graveyard Gate", 6354, 0.8),
-    ("Rock Wall", 134, 0.7),
-    ("Ruined Wall", 3676, 0.4),
-    ("Old Ruined Wall", 6355, 0.4),
+/// The fence the farmer builds: Elwynn's split-rail fence (`ElwynnWoodFence01`), one 4.15 yd
+/// section long, running from its origin along its own -x.
+pub const FENCE_DISPLAY: u32 = 6151;
+pub const FENCE_LENGTH: f32 = 4.15;
+
+/// Elwynn's wild critters, scattered around the property: (name, display, scale).
+const CRITTERS: [(&str, u32, f32); 7] = [
+    ("Rabbit", 328, 1.0),
+    ("Squirrel", 134, 1.3),
+    ("Deer", 347, 1.0),
+    ("Fawn", 654, 0.6),
+    ("Hare", 1560, 0.75),
+    ("Prairie Dog", 1072, 1.0),
+    ("Toad", 901, 1.0),
 ];
 
 /// The farm's field grid: furrow `r` and step `c` from the starting plot's first row and first
@@ -327,8 +329,10 @@ pub struct Layout {
     /// The first furrow's number, counted in texture repeats.
     first_row: f32,
     /// The fence gallery: which of [`FENCES`] stands where.
-    pub fence_gallery: Vec<(usize, [f32; 3])>,
     pub bed_facing: f32,
+    /// The wild critters around the property: the index of each in `npcs`, and the spots it
+    /// wanders between, its home first.
+    pub critters: Vec<(usize, Vec<[f32; 3]>)>,
 }
 
 impl Layout {
@@ -571,6 +575,61 @@ impl Layout {
         bernice.look.npc_flags = NPC_VENDOR;
         bernice.role = Role::Store;
 
+        // Wild critters: rabbits, squirrels, deer and the like, on open grass around the property,
+        // off the crop field and clear of everything the farm puts down, each with a few spots
+        // nearby to wander between.
+        let mut taken: Vec<[f32; 2]> = Vec::new();
+        taken.extend(tiles.iter().map(|p| [p[0], p[1]]));
+        taken.extend(npcs.iter().map(|n| [n.at[0], n.at[1]]));
+        taken.extend(OAKS.iter().copied());
+        taken.extend(WILD.iter().map(|&(_, x, y)| [x, y]));
+        let open = |x: f32, y: f32, taken: &[[f32; 2]]| {
+            let clear = taken.iter().all(|t| (t[0] - x).hypot(t[1] - y) > 4.0);
+            let off_field = ground.is_none_or(|g| g.crop(x, y) < 30);
+            let on_ground = ground.is_none_or(|g| g.height(x, y).is_some());
+            clear && off_field && on_ground
+        };
+        let mut critters = Vec::new();
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f32 / (1u64 << 53) as f32
+        };
+        let mut placed = 0;
+        for _ in 0..2000 {
+            if placed == CRITTERS.len() * 3 {
+                break;
+            }
+            let angle = next() * std::f32::consts::TAU;
+            let radius = 30.0 + next() * 110.0;
+            let (x, y) = (
+                PLOT_CENTRE[0] + radius * angle.cos(),
+                PLOT_CENTRE[1] + radius * angle.sin(),
+            );
+            if !open(x, y, &taken) {
+                continue;
+            }
+            let (name, display, scale) = CRITTERS[placed % CRITTERS.len()];
+            let mut spots = vec![on_ground(x, y)];
+            for k in 0..5 {
+                let a = (k as f32 + next()) * std::f32::consts::TAU / 5.0;
+                let d = 2.0 + next() * 4.0;
+                let (sx, sy) = (x + d * a.cos(), y + d * a.sin());
+                if open(sx, sy, &taken) {
+                    spots.push(on_ground(sx, sy));
+                }
+            }
+            let mut n = npc(name, display, Kind::Critter, [x, y, spots[0][2], angle]);
+            n.look.level = 1;
+            n.look.scale = scale;
+            taken.push([x, y]);
+            critters.push((npcs.len(), spots));
+            npcs.push(n);
+            placed += 1;
+        }
+
         Self {
             home: Location {
                 map: MAP,
@@ -584,9 +643,7 @@ impl Layout {
             bed_facing: BED_FACING,
             field,
             first_row: first,
-            fence_gallery: (FENCES.iter().enumerate())
-                .map(|(i, _)| (i, on_ground(-9952.0, 330.0 + 5.0 * i as f32)))
-                .collect(),
+            critters,
             shipping: on_ground(-9904.0, 345.0),
             npcs,
             wild: WILD

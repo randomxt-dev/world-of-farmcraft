@@ -9,7 +9,9 @@ use std::time::Duration;
 use farm_rules::save::Character;
 use farm_rules::{Crop, DayReport, Farm, Fence, Item, Reject, TreeStage, Weather};
 
-use crate::layout::{Layout, Role, FENCES, PETS, PLOT_COLUMNS, PLOT_ROWS, TREES};
+use crate::layout::{
+    Layout, Role, FENCE_DISPLAY, FENCE_LENGTH, PETS, PLOT_COLUMNS, PLOT_ROWS, TREES,
+};
 use crate::saves::Saves;
 use crate::world::creatures::{self, Kind, Look, Shown};
 use crate::world::items::{self, Held};
@@ -63,9 +65,25 @@ const DAMP_DIRT: u32 = 498;
 const COPPER_VEIN: u32 = 310;
 /// `WORLD\GENERIC\HUMAN\PASSIVE DOODADS\BEDS\DUSKWOODBED.MDX`: a plain farmhouse bed.
 const INN_BED: u32 = 3471;
-/// Fences the farmer built, one entry per kind in [`FENCES`], and the gallery's samples.
-const FENCE_BASE: u32 = 55_000;
-const FENCE_SAMPLE_BASE: u32 = 55_100;
+/// A fence the farmer built, a planned one waiting for wood, and the start of a fence line.
+const FENCE: u32 = 55_000;
+const FENCE_PLAN: u32 = 55_001;
+const FENCE_START: u32 = 55_002;
+/// `World\Generic\Human\Passive Doodads\SignPosts\WoodSignPointerWorn01.mdx`: a marker post.
+const MARKER_POST: u32 = 22;
+/// The horse the farmer rides: Riding Horse's look, and the run speed in the saddle.
+const HORSE_DISPLAY: u32 = 2405;
+const RIDE_SPEED: f32 = 14.0;
+/// On foot: the 1.12 run speed.
+const WALK_SPEED: f32 = 7.0;
+/// The map's house icon (`POIIcons.blp` cell 4), flagging the farm.
+const HOUSE_ICON: u32 = 4;
+/// The client drops the map marker 480 s after it comes, or once the farmer is inside 10 yd of
+/// it; it is sent again a little sooner, and only from farther away.
+const MARKER_REFRESH: Duration = Duration::from_secs(420);
+const MARKER_NEAR: f32 = 12.0;
+/// A wild critter wanders every this often, one of them at a time.
+const WANDER_EVERY: Duration = Duration::from_millis(700);
 /// `SoundEntries.dbc`: an axe biting wood, its heavier last blow, a tree hitting the ground, wood
 /// picked up, and wood set down.
 const SOUND_CHOP: u32 = 3202;
@@ -129,19 +147,9 @@ fn object_template(entry: u32) -> Option<Template> {
         SOIL_WET => Template::new("Watered Soil", DAMP_DIRT, Use::Goober),
         VEIN => Template::new("Copper Vein", COPPER_VEIN, Use::Mine),
         BED => Template::new("Bed", INN_BED, Use::Goober),
-        e if (FENCE_BASE..FENCE_BASE + FENCES.len() as u32).contains(&e) => Template::new(
-            FENCES[(e - FENCE_BASE) as usize].0,
-            FENCES[(e - FENCE_BASE) as usize].1,
-            Use::Goober,
-        ),
-        e if (FENCE_SAMPLE_BASE..FENCE_SAMPLE_BASE + FENCES.len() as u32).contains(&e) => {
-            let (name, display, _) = FENCES[(e - FENCE_SAMPLE_BASE) as usize];
-            Template::new(
-                format!("{name} (right-click to build this)"),
-                display,
-                Use::Goober,
-            )
-        }
+        FENCE => Template::new("Elwynn Fence", FENCE_DISPLAY, Use::Goober),
+        FENCE_PLAN => Template::new("Planned Fence (2 Simple Wood)", MARKER_POST, Use::Goober),
+        FENCE_START => Template::new("Fence Line Start", MARKER_POST, Use::Goober),
         SHIPPING => Template::new("Shipping Crate", GRAIN_CRATE, Use::Goober),
         STUMP => Template::new("Tree Stump", STUMP_DISPLAY, Use::None),
         SAPLING => Template::new("Sapling", SAPLING_DISPLAY, Use::None),
@@ -275,11 +283,17 @@ pub struct Game {
     /// Each grove tree's object as shown: (guid, entry).
     trees: Vec<(u64, u32)>,
     chop: Option<Chop>,
-    /// The farmer's fences as shown, in the farm's order, and the gallery's samples.
+    /// The farmer's fences as shown, in the farm's order.
     fences: Vec<u64>,
-    samples: Vec<u64>,
-    /// The fence kind the Build Fence tool puts down, an index into [`FENCES`].
-    fence_style: usize,
+    /// The fence line being drawn: where it starts, and its marker.
+    fence_start: Option<([f32; 3], u64)>,
+    /// In the saddle.
+    mounted: bool,
+    /// Where each wild critter stands now, and the time to the next one's stroll.
+    critter_at: Vec<[f32; 3]>,
+    since_wander: Duration,
+    /// How long the farm's map marker has been up, while the client still shows it.
+    marker_age: Option<Duration>,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
@@ -315,6 +329,7 @@ impl Game {
         let veins = layout.veins.len();
         let wild = layout.wild.len();
         let grove = layout.trees.len();
+        let critter_at: Vec<[f32; 3]> = layout.critters.iter().map(|(_, spots)| spots[0]).collect();
         let at = layout.home.position;
         let told_hour = farm.clock.hour_minute().0;
         Self {
@@ -334,11 +349,14 @@ impl Game {
             trees: vec![(0, 0); grove],
             chop: None,
             fences: Vec::new(),
-            samples: Vec::new(),
-            fence_style: 0,
+            fence_start: None,
+            mounted: false,
+            critter_at,
+            since_wander: Duration::ZERO,
+            marker_age: None,
             tool: items::SHOVEL,
             bar: Vec::new(),
-            selected: 0,
+            selected: spells::SEED_SLOT0,
             fixtures: [0; 2],
             generation: 0,
             cast: None,
@@ -402,6 +420,8 @@ impl Game {
         self.sync_bag(None, false);
         self.show_world();
         self.send(self.weather_packet(true));
+        self.marker_age = None;
+        self.mark_home();
         self.say(&format!(
             "Welcome to Stonefield Farm! It's {}, {} and {}.",
             self.farm.clock.date(),
@@ -436,14 +456,6 @@ impl Game {
         for f in 0..self.farm.fences.len() {
             let guid = self.show_fence(f);
             self.fences.push(guid);
-        }
-        for (i, &(kind, at)) in self.layout.fence_gallery.clone().iter().enumerate() {
-            let entry = FENCE_SAMPLE_BASE + kind as u32;
-            let guid = self.fresh_guid(entry);
-            let t = object_template(entry).expect("a fence sample");
-            self.send(objects::create(guid, entry, &t, at, 0.0, FENCES[kind].2));
-            self.samples.push(guid);
-            let _ = i;
         }
         let fixtures = [
             (BED, self.layout.bed, self.layout.bed_facing),
@@ -510,11 +522,10 @@ impl Game {
         start || self.farm.dug.contains(&cell)
     }
 
-    /// Put up fence `f` of the farm's; its guid.
+    /// Put up fence `f` of the farm's, or its marker while it waits for wood; its guid.
     fn show_fence(&mut self, f: usize) -> u64 {
         let fence = self.farm.fences[f];
-        let kind = FENCES.iter().position(|k| k.1 == fence.style).unwrap_or(0);
-        let entry = FENCE_BASE + kind as u32;
+        let entry = if fence.built { FENCE } else { FENCE_PLAN };
         let guid = self.fresh_guid(entry);
         let t = object_template(entry).expect("a fence");
         self.send(objects::create(
@@ -523,9 +534,23 @@ impl Game {
             &t,
             fence.at,
             fence.facing,
-            FENCES[kind].2,
+            1.0,
         ));
         guid
+    }
+
+    /// The ends of every fence, built or planned, that a new line can join.
+    fn fence_ends(&self) -> Vec<[f32; 3]> {
+        let mut ends = Vec::new();
+        for f in &self.farm.fences {
+            ends.push(f.at);
+            ends.push([
+                f.at[0] - FENCE_LENGTH * f.facing.cos(),
+                f.at[1] - FENCE_LENGTH * f.facing.sin(),
+                f.at[2],
+            ]);
+        }
+        ends
     }
 
     /// Till Soil at a spot: the nearest field cell, if it is free, close by and in the field.
@@ -548,32 +573,103 @@ impl Game {
         );
     }
 
-    /// Build Fence at a spot: the picked kind, running across the farmer's view, for wood.
+    /// Build Fence at a spot. The first click starts a line, each next one runs fence sections
+    /// from there to the click, section by section, and carries the line on from its end; a
+    /// click on the line's start ends it. A click near a fence's end joins it. Sections the wood
+    /// runs out for are marked out with a post, to finish later.
     fn build_at(&mut self, p: [f32; 3]) {
-        if distance(self.at, p) > REACH * 2.0 {
+        if distance(self.at, p) > 30.0 {
             return self.notify("You need to be closer.");
         }
-        // Across the way the farmer faces, to the nearest eighth of a turn, so fences line up.
-        let eighth = std::f32::consts::FRAC_PI_4;
-        let facing = ((self.facing + std::f32::consts::FRAC_PI_2) / eighth).round() * eighth;
-        let fence = Fence {
-            at: p,
-            facing,
-            style: FENCES[self.fence_style].1,
+        let ends = self.fence_ends();
+        let p = (ends.iter())
+            .copied()
+            .filter(|e| distance(*e, p) < 2.0)
+            .min_by(|a, b| distance(*a, p).total_cmp(&distance(*b, p)))
+            .unwrap_or(p);
+        let Some((start, marker)) = self.fence_start.take() else {
+            let guid = self.fresh_guid(FENCE_START);
+            let t = object_template(FENCE_START).expect("a marker");
+            self.send(objects::create(guid, FENCE_START, &t, p, 0.0, 1.0));
+            self.fence_start = Some((p, guid));
+            return self.say(
+                "The fence starts here. Click where it should run to; click here again to stop.",
+            );
         };
-        match self.farm.build(fence) {
-            Ok(()) => {
-                let f = self.farm.fences.len() - 1;
-                let guid = self.show_fence(f);
-                self.fences.push(guid);
-                self.send(packets::play_sound(SOUND_WOOD_DOWN));
-                self.sync_bag(None, false);
-            }
-            Err(r) => self.refuse(&r),
+        self.send(crate::world::destroy(marker));
+        let length = distance(start, p);
+        if length < 1.5 {
+            return self.say("Fence line finished.");
         }
+        let sections = (length / FENCE_LENGTH).round().max(1.0) as usize;
+        let dir = [(p[0] - start[0]) / length, (p[1] - start[1]) / length];
+        let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
+        let (mut built, mut planned) = (0, 0);
+        let mut end = start;
+        for k in 0..sections {
+            let t = k as f32 * FENCE_LENGTH;
+            let at = [
+                start[0] + dir[0] * t,
+                start[1] + dir[1] * t,
+                start[2] + (p[2] - start[2]) * (t / length).min(1.0),
+            ];
+            let fence = Fence {
+                at,
+                facing,
+                style: FENCE_DISPLAY,
+                built: true,
+            };
+            if self.farm.build(fence) {
+                built += 1;
+            } else {
+                planned += 1;
+            }
+            let guid = self.show_fence(self.farm.fences.len() - 1);
+            self.fences.push(guid);
+            let t = t + FENCE_LENGTH;
+            end = [
+                start[0] + dir[0] * t,
+                start[1] + dir[1] * t,
+                start[2] + (p[2] - start[2]) * (t / length).min(1.0),
+            ];
+        }
+        if built > 0 {
+            self.send(packets::play_sound(SOUND_WOOD_DOWN));
+            self.sync_bag(None, false);
+        }
+        let mut line = format!("{built} fence sections built");
+        if planned > 0 {
+            line += &format!(
+                ", {planned} marked out: right-click a post to build it once you have {} Simple Wood",
+                farm_rules::FENCE_WOOD
+            );
+        }
+        self.say(&format!("{line}."));
+        // Carry the line on from where it ended.
+        let guid = self.fresh_guid(FENCE_START);
+        let t = object_template(FENCE_START).expect("a marker");
+        self.send(objects::create(guid, FENCE_START, &t, end, 0.0, 1.0));
+        self.fence_start = Some((end, guid));
     }
 
-    /// Show grove tree `t` as it stands: a tree, a stump the day it fell, then a sapling.
+    /// Mount or dismount the farm horse.
+    fn ride(&mut self, mount: bool) {
+        if self.mounted == mount {
+            return;
+        }
+        self.mounted = mount;
+        let display = if mount { HORSE_DISPLAY } else { 0 };
+        self.send(player::mount_change(self.guid(), display));
+        self.move_counter += 1;
+        let speed = if mount { RIDE_SPEED } else { WALK_SPEED };
+        self.send(packets::force_run_speed(
+            self.guid(),
+            self.move_counter,
+            speed,
+        ));
+    }
+
+    /// Show grove tree `t` as it stands    /// Show grove tree `t` as it stands: a tree, a stump the day it fell, then a sapling.
     fn show_tree(&mut self, t: usize) {
         let (kind, at) = self.layout.trees[t];
         let (entry, scale) = match self.farm.tree(t) {
@@ -607,6 +703,7 @@ impl Game {
 
     /// Start chopping tree `t`: the axe comes out and swings until it falls.
     fn start_chop(&mut self, t: usize) {
+        self.ride(false);
         if distance(self.at, self.layout.trees[t].1) > TREE_REACH {
             return self.notify("You need to be closer.");
         }
@@ -819,7 +916,8 @@ impl Game {
 
     /// The seed in the picked bar slot, if it holds one the farmer still has.
     fn selected_seed(&self) -> Option<Crop> {
-        match items::item_of(*self.bar.get(self.selected)?) {
+        let seed = self.selected.checked_sub(spells::SEED_SLOT0)?;
+        match items::item_of(*self.bar.get(seed)?) {
             Some(Item::Seeds(c)) if self.farm.bag.count(Item::Seeds(c)) > 0 => Some(c),
             _ => None,
         }
@@ -851,6 +949,7 @@ impl Game {
 
     fn start(&mut self, spell: u32, target: Target, time: Duration, job: Job) {
         self.menu = None;
+        self.ride(false);
         if matches!(job, Job::Plant(..) | Job::Harvest(_) | Job::Till(_)) {
             self.wield(items::SHOVEL);
         }
@@ -887,23 +986,33 @@ impl Game {
                 MINE_TIME,
                 Job::Mine(v),
             );
-        } else if let Some(f) = self.fences.iter().position(|&g| g == object) {
-            match self.farm.unbuild(f) {
-                Ok(()) => {
-                    self.send(crate::world::destroy(object));
-                    self.fences.remove(f);
-                    self.send(packets::play_sound(SOUND_WOOD_UP));
-                    self.sync_bag(Some((Item::Wood, farm_rules::FENCE_WOOD)), false);
-                }
-                Err(r) => self.refuse(&r),
+        } else if self.fence_start.is_some_and(|(_, g)| g == object) {
+            if let Some((_, marker)) = self.fence_start.take() {
+                self.send(crate::world::destroy(marker));
             }
-        } else if let Some(k) = self.samples.iter().position(|&g| g == object) {
-            self.fence_style = self.layout.fence_gallery[k].0;
-            self.say(&format!(
-                "Build Fence will put up {}s now ({} Simple Wood each).",
-                FENCES[self.fence_style].0,
-                farm_rules::FENCE_WOOD
-            ));
+            self.say("Fence line finished.");
+        } else if let Some(f) = self.fences.iter().position(|&g| g == object) {
+            if self.farm.fences[f].built {
+                match self.farm.unbuild(f) {
+                    Ok(()) => {
+                        self.send(crate::world::destroy(object));
+                        self.fences.remove(f);
+                        self.send(packets::play_sound(SOUND_WOOD_UP));
+                        self.sync_bag(Some((Item::Wood, farm_rules::FENCE_WOOD)), false);
+                    }
+                    Err(r) => self.refuse(&r),
+                }
+            } else {
+                match self.farm.finish_fence(f) {
+                    Ok(()) => {
+                        self.send(crate::world::destroy(object));
+                        self.fences[f] = self.show_fence(f);
+                        self.send(packets::play_sound(SOUND_WOOD_DOWN));
+                        self.sync_bag(None, false);
+                    }
+                    Err(r) => self.refuse(&r),
+                }
+            }
         } else if let Some(t) = self.trees.iter().position(|&(g, _)| g == object) {
             self.start_chop(t);
         } else if let Some(w) = self.wild.iter().position(|&g| g == Some(object)) {
@@ -932,7 +1041,7 @@ impl Game {
                 None if self.bar.iter().all(|&e| e == 0) => {
                     self.notify("You have no seeds. Brog Hamfist in Goldshire sells them.")
                 }
-                None => self.notify("Pick seeds on your bar: scroll the mouse wheel or press 1-9."),
+                None => self.notify("Pick seeds on your bar (slots 6 to 12) to plant them."),
             },
             Some((crop, age)) => {
                 if tile.ripe().is_some() {
@@ -951,8 +1060,10 @@ impl Game {
                         crop.name()
                     ));
                 }
+                if self.selected != spells::CAN_SLOT {
+                    return self.notify("Pick the watering can (slot 2) to water.");
+                }
                 // Watering is instant: the soil darkening is the feedback.
-                self.wield(items::SHOVEL);
                 match self.farm.water(i) {
                     Ok(()) => self.show_tile(i),
                     Err(r) => self.refuse(&r),
@@ -964,7 +1075,7 @@ impl Game {
     /// The client's own cast: Herb Gathering on a ripe crop, Mining on a vein.
     pub fn cast(&mut self, cast: CastRequest) {
         let refuse = |g: &Game| g.send(spells::cast_failed(cast.spell, spells::FAILED_SILENT));
-        if self.cast.is_some() || self.asleep.is_some() {
+        if (self.cast.is_some() || self.asleep.is_some()) && cast.spell != spells::RIDE {
             return refuse(self);
         }
         if let Target::Ground(p) = cast.target {
@@ -975,6 +1086,11 @@ impl Game {
                 spells::BUILD_FENCE => self.build_at(p),
                 _ => {}
             };
+        }
+        if cast.spell == spells::RIDE {
+            self.send(spells::cast_ok(cast.spell));
+            let mount = !self.mounted;
+            return self.ride(mount);
         }
         let Target::GameObject(object) = cast.target else {
             return refuse(self);
@@ -1021,6 +1137,7 @@ impl Game {
         let walked = distance(at, self.at) > 0.3;
         self.at = at;
         self.facing = facing;
+        self.mark_home();
         if walked {
             self.interrupt();
             self.stop_chop();
@@ -1112,6 +1229,7 @@ impl Game {
     }
 
     fn go_to_bed(&mut self) {
+        self.ride(false);
         if !self.near(self.layout.bed) {
             return self.notify("You need to be closer.");
         }
@@ -1197,8 +1315,35 @@ impl Game {
     }
 
     /// Run `dt` of the game: casts finish, the day runs and the dog follows.
+    /// Keeps a house on the map where the farm is, whenever the farmer is away from it.
+    fn mark_home(&mut self) {
+        let home = self.layout.home.position;
+        if (self.at[0] - home[0]).hypot(self.at[1] - home[1]) < MARKER_NEAR {
+            self.marker_age = None;
+            return;
+        }
+        if self.marker_age.is_some_and(|age| age < MARKER_REFRESH) {
+            return;
+        }
+        self.marker_age = Some(Duration::ZERO);
+        self.send(packets::gossip_poi(
+            home[0],
+            home[1],
+            HOUSE_ICON,
+            "Stonefield Farm",
+        ));
+    }
+
     pub fn tick(&mut self, dt: Duration) {
         self.tick_chop(dt);
+        if let Some(age) = &mut self.marker_age {
+            *age += dt;
+        }
+        self.since_wander += dt;
+        if self.since_wander >= WANDER_EVERY && !self.critter_at.is_empty() {
+            self.since_wander = Duration::ZERO;
+            self.wander();
+        }
         if let Some(mut c) = self.cast.take() {
             if c.left <= dt {
                 self.finish(c);
@@ -1236,6 +1381,24 @@ impl Game {
         if self.since_save >= AUTOSAVE {
             self.save();
         }
+    }
+
+    /// One wild critter strolls to another of its spots.
+    fn wander(&mut self) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let c = rng.gen_range(0..self.critter_at.len());
+        let (npc, spots) = &self.layout.critters[c];
+        let to = spots[rng.gen_range(0..spots.len())];
+        let from = self.critter_at[c];
+        if distance(from, to) < 0.5 {
+            return;
+        }
+        let entry = NPC_BASE + *npc as u32;
+        let guid = HIGH_UNIT << 48 | u64::from(entry) << 24 | *npc as u64;
+        let ms = (distance(from, to) / 2.0 * 1000.0) as u32;
+        self.send(creatures::move_to(guid, from, to, ms, false));
+        self.critter_at[c] = to;
     }
 
     fn walk_dog(&mut self) {
@@ -1636,6 +1799,7 @@ mod tests {
         g.farm.weather = Weather::Sunny;
         // The bar holds both kinds of seed; the first is picked, so the soil gets Silverleaf.
         assert_eq!(g.bar.iter().filter(|&&e| e != 0).count(), 2);
+        assert_eq!(g.selected, spells::SEED_SLOT0);
         g.use_object(g.soil[0].0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[0].crop, Some((Crop::Silverleaf, 0)));
@@ -1645,7 +1809,9 @@ mod tests {
         for _ in 0..Crop::Silverleaf.def().days {
             if !g.farm.tiles[0].watered {
                 let crop = g.crops[0].expect("growing").0;
+                g.command(".sel 2");
                 g.use_object(crop);
+                g.command(".sel 6");
                 assert!(g.farm.tiles[0].watered, "watering is instant");
                 assert_eq!(g.soil[0].1, SOIL_WET);
             }
@@ -1696,19 +1862,20 @@ mod tests {
                 .any(|p| matches!(p, ServerPacket::ActionButtons { .. })),
             "the seeds go on the bar"
         );
-        g.command(".sel 2");
+        g.command(".sel 7");
         g.use_object(g.soil[1].0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[1].crop.map(|c| c.0), Some(Crop::Peacebloom));
         // An empty slot plants nothing.
         g.command(".sel 9");
+        // Slot 9 is Earthroot's, and there are no Earthroot seeds.
         let tile = g.layout.tiles[2];
         stand_at(&mut g, tile);
         g.use_object(g.soil[2].0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[2].crop, None);
         // When the last Peacebloom seed goes, its slot empties and the others stay put.
-        g.command(".sel 1");
+        g.command(".sel 6");
         g.farm.bag.take(Item::Seeds(Crop::Peacebloom), 3);
         g.sync_bag(None, false);
         assert_eq!(g.bar[1], 0);
@@ -1821,24 +1988,62 @@ mod tests {
     }
 
     #[test]
-    fn fences_cost_wood_come_in_the_picked_kind_and_come_back_up() {
+    fn a_fence_line_runs_sections_and_marks_out_what_the_wood_cannot_cover() {
         let (mut g, mut rx) = game();
-        let p = [g.at[0] + 3.0, g.at[1], g.at[2]];
+        let a = [g.at[0] + 2.0, g.at[1], g.at[2]];
+        let b = [a[0] + FENCE_LENGTH * 3.0, a[1], a[2]];
         g.farm.bag.add(Item::Wood, 4);
-        let sample = g.samples[1];
-        g.use_object(sample);
-        g.cast(CastRequest {
-            spell: spells::BUILD_FENCE,
-            target: Target::Ground(p),
-        });
-        assert_eq!(g.farm.fences.len(), 1);
-        assert_eq!(g.farm.fences[0].style, FENCES[1].1);
-        assert_eq!(g.farm.bag.count(Item::Wood), 2);
-        let fence = g.fences[0];
-        g.use_object(fence);
-        assert!(g.farm.fences.is_empty() && g.fences.is_empty());
-        assert_eq!(g.farm.bag.count(Item::Wood), 4);
+        let click = |g: &mut Game, p: [f32; 3]| {
+            let body = benilla_protocol::messages::cast_spell_at_dest(spells::BUILD_FENCE, p);
+            g.cast(CastRequest::read(&body).unwrap());
+        };
+        click(&mut g, a);
+        assert!(g.fence_start.is_some());
+        click(&mut g, b);
+        assert_eq!(g.farm.fences.len(), 3);
+        assert_eq!(g.farm.fences.iter().filter(|f| f.built).count(), 2);
+        assert_eq!(g.farm.bag.count(Item::Wood), 0);
+        // Sections join end to end along the line.
+        let ends = g.fence_ends();
+        assert!(ends.iter().any(|e| distance(*e, b) < 0.01));
+        // The line carries on from its end; a click there finishes it.
+        assert!(g.fence_start.is_some_and(|(p, _)| distance(p, b) < 0.01));
+        click(&mut g, b);
+        assert!(g.fence_start.is_none());
+        // A marked-out section goes up once there is wood.
+        g.farm.bag.add(Item::Wood, 2);
+        let planned = g.farm.fences.iter().position(|f| !f.built).unwrap();
+        let marker = g.fences[planned];
+        g.use_object(marker);
+        assert!(g.farm.fences[planned].built);
         drain(&mut rx);
+    }
+
+    #[test]
+    fn the_horse_speeds_the_farmer_up_and_work_brings_them_down() {
+        let (mut g, mut rx) = game();
+        g.cast(CastRequest {
+            spell: spells::RIDE,
+            target: Target::Caster,
+        });
+        assert!(g.mounted);
+        let tile = g.layout.tiles[0];
+        g.moved(tile, 0.0);
+        g.use_object(g.soil[0].0);
+        assert!(!g.mounted, "planting dismounts");
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn critters_wander_between_their_spots() {
+        let (mut g, mut rx) = game();
+        assert!(!g.layout.critters.is_empty());
+        drain(&mut rx);
+        run(&mut g, 10.0);
+        let moves = (drain(&mut rx).iter())
+            .filter(|p| matches!(p, ServerPacket::MonsterMove { .. }))
+            .count();
+        assert!(moves > 3, "{moves} moves");
     }
 
     #[test]
@@ -1927,6 +2132,30 @@ mod tests {
         assert_eq!(g.farm.clock.day, 2);
         assert_eq!(g.at, g.layout.home.position);
         drain(&mut rx);
+    }
+
+    #[test]
+    fn the_farm_is_on_the_map_while_the_farmer_is_away() {
+        let (mut g, mut rx) = game();
+        let markers = |rx: &mut UnboundedReceiver<Packet>| {
+            (drain(rx).iter())
+                .filter(|p| matches!(p, ServerPacket::GossipPoi(_)))
+                .count()
+        };
+        markers(&mut rx);
+        let home = g.layout.home.position;
+        stand_at(&mut g, home);
+        assert_eq!(markers(&mut rx), 0);
+        let away = [home[0] + 40.0, home[1], home[2]];
+        stand_at(&mut g, away);
+        stand_at(&mut g, [away[0] + 1.0, away[1], away[2]]);
+        assert_eq!(markers(&mut rx), 1);
+        run(&mut g, 421.0);
+        stand_at(&mut g, away);
+        assert_eq!(markers(&mut rx), 1);
+        stand_at(&mut g, home);
+        stand_at(&mut g, away);
+        assert_eq!(markers(&mut rx), 1);
     }
 
     #[test]

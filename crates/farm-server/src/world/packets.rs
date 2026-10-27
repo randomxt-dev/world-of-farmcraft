@@ -308,14 +308,14 @@ pub fn name_query_response(c: &Character) -> Packet {
 /// `SMSG_GOSSIP_POI`: the receiver's one map flag at world `x, y`, drawn on the world map and the
 /// minimap, with a gold rim arrow when out of minimap range. Flags 99 and the red flag icon 6 are
 /// what vmangos sends; `data` 0 ranks it before every `AreaPOI.dbc` landmark.
-pub fn gossip_poi(x: f32, y: f32, name: &str) -> Packet {
+pub fn gossip_poi(x: f32, y: f32, icon: u32, name: &str) -> Packet {
     Packet::new(
         opcode::SMSG_GOSSIP_POI,
         Body::default()
             .u32(99)
             .f32(x)
             .f32(y)
-            .u32(6)
+            .u32(icon)
             .u32(0)
             .cstring(name)
             .done(),

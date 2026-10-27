@@ -27,6 +27,7 @@ const UNIT_FIELD_BOUNDINGRADIUS: u16 = 129;
 const UNIT_FIELD_COMBATREACH: u16 = 130;
 const UNIT_FIELD_DISPLAYID: u16 = 131;
 const UNIT_FIELD_NATIVEDISPLAYID: u16 = 132;
+const UNIT_FIELD_MOUNTDISPLAYID: u16 = 133;
 const UNIT_FIELD_BYTES_1: u16 = 138;
 const UNIT_MOD_CAST_SPEED: u16 = 145;
 /// Byte 0 is the sheath state: 0 sheathed, 1 the melee weapon in hand.
@@ -242,6 +243,13 @@ pub fn slot_change(owner: u64, slot: u8, guid: u64) -> Packet {
 pub fn money_change(owner: u64, money: u32) -> Packet {
     let mut f = Fields::default();
     f.u32(PLAYER_FIELD_COINAGE, money);
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
+}
+
+/// The values update that seats the farmer on `display` (0 to step down), for them and everyone.
+pub fn mount_change(owner: u64, display: u32) -> Packet {
+    let mut f = Fields::default();
+    f.u32(UNIT_FIELD_MOUNTDISPLAYID, display);
     Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
 }
 

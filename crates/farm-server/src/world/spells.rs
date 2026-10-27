@@ -13,16 +13,21 @@ pub const MINING: u32 = 2575;
 /// "Plant Seeds" (`Spell.dbc` 5206): the bar shown while sowing.
 pub const PLANT_SEEDS: u32 = 5206;
 
-/// "zzOLDEarthquake" (424): ground-targeted, so its button asks for a spot in the field. The
-/// server shows the dig as [`PLANT_SEEDS`]; the hotbar names it Till Soil.
-pub const TILL: u32 = 424;
-/// "Sand Storms" (10094): ground-targeted and without a look of its own; the hotbar names it
-/// Build Fence.
-pub const BUILD_FENCE: u32 = 10094;
+/// "Festival Fortune!" (26462): ground-targeted, free, 0 to 30 yd, no item needed, so its button
+/// asks for a spot in the field. The server shows the dig as [`PLANT_SEEDS`]; the hotbar names it
+/// Till Soil.
+pub const TILL: u32 = 26462;
+/// "Spotlight" (25823): ground-targeted like [`TILL`]; the hotbar names it Build Fence.
+pub const BUILD_FENCE: u32 = 25823;
+/// "Brown Horse" (458): the farm horse; the server mounts or dismounts on the press.
+pub const RIDE: u32 = 458;
+/// "Salt Flats Racer Normal" (6602): free and instant, a placeholder for the buttons that only
+/// pick a tool (the watering can, the axe); the hotbar never casts it.
+pub const PICK: u32 = 6602;
 
 /// The spells the client opens nodes with: it casts the first known spell whose lock type the
 /// node's lock names, so they must be in the book.
-const BOOK: [u32; 4] = [HERB_GATHERING, MINING, TILL, BUILD_FENCE];
+const BOOK: [u32; 6] = [HERB_GATHERING, MINING, TILL, BUILD_FENCE, RIDE, PICK];
 
 /// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns.
 pub fn initial_spells() -> Packet {
@@ -47,16 +52,25 @@ pub fn action_buttons() -> Packet {
 /// `ACTION_BUTTON_ITEM`: an action slot's kind byte for an item, the entry below it.
 const ACTION_ITEM: u32 = 0x80;
 
-/// The hotbar's tool buttons: Till Soil and Build Fence, in the main bar's last two slots.
-pub const TOOL_SLOTS: [(usize, u32); 2] = [(10, TILL), (11, BUILD_FENCE)];
+/// The hotbar's tools, slot by slot (from 0): Till Soil, the watering can, the axe, Build
+/// Fence, the horse. The seeds follow.
+pub const TOOL_SLOTS: [(usize, u32); 5] =
+    [(0, TILL), (1, PICK), (2, PICK), (3, BUILD_FENCE), (4, RIDE)];
+/// The watering can's slot, and the first seed slot (from 0).
+pub const CAN_SLOT: usize = 1;
+pub const SEED_SLOT0: usize = 5;
 
-/// `SMSG_ACTION_BUTTONS` with `items` (entries) on the main bar's first slots and the tools in
-/// its last two: the hotbar.
+/// `SMSG_ACTION_BUTTONS` with the tools in the main bar's first slots and `items` (each crop's
+/// seed entry, 0 for none) after them: the hotbar.
 pub fn item_bar(items: &[u32]) -> Packet {
     let mut b = Body::default();
     for i in 0..120 {
         let tool = TOOL_SLOTS.iter().find(|(slot, _)| *slot == i);
-        match (tool, items.get(i).filter(|&&e| i < 10 && e != 0)) {
+        let seed = (i.checked_sub(SEED_SLOT0))
+            .filter(|_| i < 12)
+            .and_then(|k| items.get(k))
+            .filter(|&&e| e != 0);
+        match (tool, seed) {
             (Some(&(_, spell)), _) => b.u32(spell),
             (None, Some(&entry)) => b.u32(entry | ACTION_ITEM << 24),
             (None, None) => b.u32(0),

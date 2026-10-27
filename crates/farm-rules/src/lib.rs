@@ -12,4 +12,4 @@ pub mod save;
 pub use bag::{Bag, Item};
 pub use clock::{Clock, Season, Weather};
 pub use crops::{Crop, CropDef};
-pub use farm::{DayReport, Farm, Reject, Tile, TreeStage};
+pub use farm::{DayReport, Farm, Fence, Reject, Tile, TreeStage, FENCE_WOOD};

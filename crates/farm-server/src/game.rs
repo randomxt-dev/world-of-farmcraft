@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use farm_rules::save::Character;
-use farm_rules::{Crop, DayReport, Farm, Item, Reject, TreeStage, Weather};
+use farm_rules::{Crop, DayReport, Farm, Fence, Item, Reject, TreeStage, Weather};
 
-use crate::layout::{Layout, Role, PETS, TREES};
+use crate::layout::{Layout, Role, FENCES, PETS, PLOT_COLUMNS, PLOT_ROWS, TREES};
 use crate::saves::Saves;
 use crate::world::creatures::{self, Kind, Look, Shown};
 use crate::world::items::{self, Held};
@@ -61,8 +61,18 @@ const DIRT: u32 = 20;
 /// damp earth.
 const DAMP_DIRT: u32 = 498;
 const COPPER_VEIN: u32 = 310;
-/// `World\Azeroth\Elwynn\PassiveDoodads\Haystacks\haystack01.mdx`.
-const HAYSTACK: u32 = 251;
+/// `WORLD\GENERIC\HUMAN\PASSIVE DOODADS\BEDS\DUSKWOODBED.MDX`: a plain farmhouse bed.
+const INN_BED: u32 = 3471;
+/// Fences the farmer built, one entry per kind in [`FENCES`], and the gallery's samples.
+const FENCE_BASE: u32 = 55_000;
+const FENCE_SAMPLE_BASE: u32 = 55_100;
+/// `SoundEntries.dbc`: an axe biting wood, its heavier last blow, a tree hitting the ground, wood
+/// picked up, and wood set down.
+const SOUND_CHOP: u32 = 3202;
+const SOUND_CHOP_LAST: u32 = 3203;
+const SOUND_TREE_FALL: u32 = 921;
+const SOUND_WOOD_UP: u32 = 1199;
+const SOUND_WOOD_DOWN: u32 = 1216;
 /// `World\Generic\Human\Passive Doodads\Crates\CrateGrain01.mdx`.
 const GRAIN_CRATE: u32 = 347;
 
@@ -118,7 +128,20 @@ fn object_template(entry: u32) -> Option<Template> {
         SOIL_DRY => Template::new("Tilled Soil", DIRT, Use::Goober),
         SOIL_WET => Template::new("Watered Soil", DAMP_DIRT, Use::Goober),
         VEIN => Template::new("Copper Vein", COPPER_VEIN, Use::Mine),
-        BED => Template::new("Hay Bed", HAYSTACK, Use::Goober),
+        BED => Template::new("Bed", INN_BED, Use::Goober),
+        e if (FENCE_BASE..FENCE_BASE + FENCES.len() as u32).contains(&e) => Template::new(
+            FENCES[(e - FENCE_BASE) as usize].0,
+            FENCES[(e - FENCE_BASE) as usize].1,
+            Use::Goober,
+        ),
+        e if (FENCE_SAMPLE_BASE..FENCE_SAMPLE_BASE + FENCES.len() as u32).contains(&e) => {
+            let (name, display, _) = FENCES[(e - FENCE_SAMPLE_BASE) as usize];
+            Template::new(
+                format!("{name} (right-click to build this)"),
+                display,
+                Use::Goober,
+            )
+        }
         SHIPPING => Template::new("Shipping Crate", GRAIN_CRATE, Use::Goober),
         STUMP => Template::new("Tree Stump", STUMP_DISPLAY, Use::None),
         SAPLING => Template::new("Sapling", SAPLING_DISPLAY, Use::None),
@@ -192,6 +215,8 @@ enum Job {
     Harvest(usize),
     Mine(usize),
     Forage(usize),
+    /// Dig a new plot tile at a field cell.
+    Till((i32, i32)),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -250,6 +275,11 @@ pub struct Game {
     /// Each grove tree's object as shown: (guid, entry).
     trees: Vec<(u64, u32)>,
     chop: Option<Chop>,
+    /// The farmer's fences as shown, in the farm's order, and the gallery's samples.
+    fences: Vec<u64>,
+    samples: Vec<u64>,
+    /// The fence kind the Build Fence tool puts down, an index into [`FENCES`].
+    fence_style: usize,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
@@ -277,7 +307,11 @@ impl Game {
         let mut farm = farm;
         farm.fit(layout.tiles.len(), layout.veins.len(), layout.wild.len());
         farm.fit_grove(layout.trees.len());
-        let tiles = layout.tiles.len();
+        let animals = (layout.npcs.iter())
+            .filter(|n| matches!(n.role, Role::Animal(..)))
+            .count();
+        farm.fit_animals(animals);
+        let tiles = farm.tiles.len();
         let veins = layout.veins.len();
         let wild = layout.wild.len();
         let grove = layout.trees.len();
@@ -299,6 +333,9 @@ impl Game {
             wild: vec![None; wild],
             trees: vec![(0, 0); grove],
             chop: None,
+            fences: Vec::new(),
+            samples: Vec::new(),
+            fence_style: 0,
             tool: items::SHOVEL,
             bar: Vec::new(),
             selected: 0,
@@ -384,7 +421,7 @@ impl Game {
     }
 
     fn show_world(&mut self) {
-        for i in 0..self.layout.tiles.len() {
+        for i in 0..self.farm.tiles.len() {
             self.show_tile(i);
         }
         for v in 0..self.layout.veins.len() {
@@ -396,8 +433,20 @@ impl Game {
         for t in 0..self.layout.trees.len() {
             self.show_tree(t);
         }
+        for f in 0..self.farm.fences.len() {
+            let guid = self.show_fence(f);
+            self.fences.push(guid);
+        }
+        for (i, &(kind, at)) in self.layout.fence_gallery.clone().iter().enumerate() {
+            let entry = FENCE_SAMPLE_BASE + kind as u32;
+            let guid = self.fresh_guid(entry);
+            let t = object_template(entry).expect("a fence sample");
+            self.send(objects::create(guid, entry, &t, at, 0.0, FENCES[kind].2));
+            self.samples.push(guid);
+            let _ = i;
+        }
         let fixtures = [
-            (BED, self.layout.bed, 0.6),
+            (BED, self.layout.bed, self.layout.bed_facing),
             (SHIPPING, self.layout.shipping, 1.0),
         ];
         for (i, (entry, at, facing)) in fixtures.into_iter().enumerate() {
@@ -441,6 +490,87 @@ impl Game {
             owner: None,
         };
         self.send(creatures::create(&dog, &companion_look(pet)));
+    }
+
+    /// Where tile `i` lies: the starting plot's, then the cells the farmer dug.
+    fn tile_pos(&self, i: usize) -> [f32; 3] {
+        let base = self.layout.tiles.len();
+        match i.checked_sub(base) {
+            None => self.layout.tiles[i],
+            Some(d) => (self.farm.dug.get(d))
+                .and_then(|&cell| self.layout.cell_pos(cell))
+                .unwrap_or(self.at),
+        }
+    }
+
+    /// Whether field cell `cell` already holds a tile.
+    fn is_dug(&self, cell: (i32, i32)) -> bool {
+        let start =
+            (0..PLOT_ROWS as i32).contains(&cell.0) && (0..PLOT_COLUMNS as i32).contains(&cell.1);
+        start || self.farm.dug.contains(&cell)
+    }
+
+    /// Put up fence `f` of the farm's; its guid.
+    fn show_fence(&mut self, f: usize) -> u64 {
+        let fence = self.farm.fences[f];
+        let kind = FENCES.iter().position(|k| k.1 == fence.style).unwrap_or(0);
+        let entry = FENCE_BASE + kind as u32;
+        let guid = self.fresh_guid(entry);
+        let t = object_template(entry).expect("a fence");
+        self.send(objects::create(
+            guid,
+            entry,
+            &t,
+            fence.at,
+            fence.facing,
+            FENCES[kind].2,
+        ));
+        guid
+    }
+
+    /// Till Soil at a spot: the nearest field cell, if it is free, close by and in the field.
+    fn till_at(&mut self, p: [f32; 3]) {
+        let Some(cell) = self.layout.cell_at(p[0], p[1]) else {
+            return self.notify("Dig in the field: the furrowed ground by the farmhouse.");
+        };
+        if self.is_dug(cell) {
+            return self.notify("That ground is already dug.");
+        }
+        let at = self.layout.cell_pos(cell).unwrap_or(p);
+        if !self.near(at) {
+            return self.notify("You need to be closer.");
+        }
+        self.start(
+            spells::PLANT_SEEDS,
+            Target::Caster,
+            PLANT_TIME,
+            Job::Till(cell),
+        );
+    }
+
+    /// Build Fence at a spot: the picked kind, running across the farmer's view, for wood.
+    fn build_at(&mut self, p: [f32; 3]) {
+        if distance(self.at, p) > REACH * 2.0 {
+            return self.notify("You need to be closer.");
+        }
+        // Across the way the farmer faces, to the nearest eighth of a turn, so fences line up.
+        let eighth = std::f32::consts::FRAC_PI_4;
+        let facing = ((self.facing + std::f32::consts::FRAC_PI_2) / eighth).round() * eighth;
+        let fence = Fence {
+            at: p,
+            facing,
+            style: FENCES[self.fence_style].1,
+        };
+        match self.farm.build(fence) {
+            Ok(()) => {
+                let f = self.farm.fences.len() - 1;
+                let guid = self.show_fence(f);
+                self.fences.push(guid);
+                self.send(packets::play_sound(SOUND_WOOD_DOWN));
+                self.sync_bag(None, false);
+            }
+            Err(r) => self.refuse(&r),
+        }
     }
 
     /// Show grove tree `t` as it stands: a tree, a stump the day it fell, then a sapling.
@@ -504,6 +634,12 @@ impl Game {
         }
         if chop.swings > 0 {
             self.send(packets::emote(self.guid(), SWING));
+            let sound = if chop.swings == 1 {
+                SOUND_CHOP_LAST
+            } else {
+                SOUND_CHOP
+            };
+            self.send(packets::play_sound(sound));
             chop.swings -= 1;
             chop.next = SWING_EVERY;
             self.chop = Some(chop);
@@ -514,6 +650,7 @@ impl Game {
             Ok(n) => {
                 self.sync_bag(Some((Item::Wood, n)), false);
                 self.show_tree(chop.tree);
+                self.send(packets::play_sound(SOUND_TREE_FALL));
                 self.say("Timber!");
             }
             Err(r) => self.refuse(&r),
@@ -548,7 +685,7 @@ impl Game {
     /// Show tile `i` as the farm has it: dry or watered soil, and its crop at its size.
     fn show_tile(&mut self, i: usize) {
         let tile = self.farm.tiles[i];
-        let at = self.layout.tiles[i];
+        let at = self.tile_pos(i);
         let soil = if tile.watered { SOIL_WET } else { SOIL_DRY };
         if self.soil[i].1 != soil {
             if self.soil[i].0 != 0 {
@@ -714,7 +851,7 @@ impl Game {
 
     fn start(&mut self, spell: u32, target: Target, time: Duration, job: Job) {
         self.menu = None;
-        if matches!(job, Job::Plant(..) | Job::Harvest(_)) {
+        if matches!(job, Job::Plant(..) | Job::Harvest(_) | Job::Till(_)) {
             self.wield(items::SHOVEL);
         }
         let ms = time.as_millis() as u32;
@@ -750,6 +887,23 @@ impl Game {
                 MINE_TIME,
                 Job::Mine(v),
             );
+        } else if let Some(f) = self.fences.iter().position(|&g| g == object) {
+            match self.farm.unbuild(f) {
+                Ok(()) => {
+                    self.send(crate::world::destroy(object));
+                    self.fences.remove(f);
+                    self.send(packets::play_sound(SOUND_WOOD_UP));
+                    self.sync_bag(Some((Item::Wood, farm_rules::FENCE_WOOD)), false);
+                }
+                Err(r) => self.refuse(&r),
+            }
+        } else if let Some(k) = self.samples.iter().position(|&g| g == object) {
+            self.fence_style = self.layout.fence_gallery[k].0;
+            self.say(&format!(
+                "Build Fence will put up {}s now ({} Simple Wood each).",
+                FENCES[self.fence_style].0,
+                farm_rules::FENCE_WOOD
+            ));
         } else if let Some(t) = self.trees.iter().position(|&(g, _)| g == object) {
             self.start_chop(t);
         } else if let Some(w) = self.wild.iter().position(|&g| g == Some(object)) {
@@ -762,7 +916,7 @@ impl Game {
     }
 
     fn work_tile(&mut self, i: usize, object: u64) {
-        let at = self.layout.tiles[i];
+        let at = self.tile_pos(i);
         if !self.near(at) {
             return self.notify("You need to be closer.");
         }
@@ -813,6 +967,15 @@ impl Game {
         if self.cast.is_some() || self.asleep.is_some() {
             return refuse(self);
         }
+        if let Target::Ground(p) = cast.target {
+            // The press is shown as another spell or none: free the client's button.
+            self.send(spells::cast_ok(cast.spell));
+            return match cast.spell {
+                spells::TILL => self.till_at(p),
+                spells::BUILD_FENCE => self.build_at(p),
+                _ => {}
+            };
+        }
         let Target::GameObject(object) = cast.target else {
             return refuse(self);
         };
@@ -842,7 +1005,7 @@ impl Game {
         };
         let at = match job {
             Job::Mine(v) => self.layout.veins[v].0,
-            Job::Harvest(i) => self.layout.tiles[i],
+            Job::Harvest(i) => self.tile_pos(i),
             Job::Forage(w) => self.layout.wild[w].1,
             _ => self.at,
         };
@@ -890,6 +1053,14 @@ impl Game {
                 }
                 Err(r) => self.refuse(&r),
             },
+            Job::Till(cell) => {
+                if self.farm.till(cell) {
+                    self.soil.push((0, 0));
+                    self.crops.push(None);
+                    let i = self.farm.tiles.len() - 1;
+                    self.show_tile(i);
+                }
+            }
             Job::Forage(w) => {
                 let crop = self.layout.wild[w].0;
                 match self.farm.forage(w, crop) {
@@ -990,7 +1161,7 @@ impl Game {
         self.send(self.clock_packet());
         self.send(self.weather_packet(false));
         self.told_hour = self.farm.clock.hour_minute().0;
-        for i in 0..self.layout.tiles.len() {
+        for i in 0..self.farm.tiles.len() {
             self.show_tile(i);
         }
         for v in 0..self.layout.veins.len() {
@@ -1100,6 +1271,15 @@ impl Game {
         };
         match self.layout.npcs[i].role {
             Role::Advice => self.send(packets::gossip_menu(npc, TEXT_MA, &[])),
+            Role::Animal(item, a) => {
+                if distance(self.at, self.layout.npcs[i].at) > REACH {
+                    return self.notify("You need to be closer.");
+                }
+                match self.farm.collect(a, item) {
+                    Ok(()) => self.sync_bag(Some((item, 1)), false),
+                    Err(r) => self.refuse(&r),
+                }
+            }
             Role::Pet(pet) => {
                 self.menu = Some(Menu::Adopt(pet));
                 let mut options = Vec::new();
@@ -1318,7 +1498,7 @@ impl Game {
                     t.watered = t.crop.is_some() && t.ripe().is_none();
                 }
                 self.send(self.weather_packet(false));
-                for i in 0..self.layout.tiles.len() {
+                for i in 0..self.farm.tiles.len() {
                     self.show_tile(i);
                 }
             }
@@ -1341,6 +1521,10 @@ impl Game {
                     self.start_chop(t);
                 }
             }
+            ".gps" => self.say(&format!(
+                "You stand at {:.1}, {:.1}, {:.1}, facing {:.2}.",
+                self.at[0], self.at[1], self.at[2], self.facing
+            )),
             ".gold" => {
                 self.farm.money += 10_000;
                 self.sync_money();
@@ -1600,6 +1784,78 @@ mod tests {
         g.command(".sleep");
         g.command(".sleep");
         assert_eq!(g.trees[0].1, TREE_BASE + g.layout.trees[0].0 as u32);
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn till_soil_digs_a_new_tile_in_the_field_only() {
+        let (mut g, mut rx) = game();
+        let before = g.farm.tiles.len();
+        let cell = (1, 7);
+        let p = g
+            .layout
+            .cell_pos(cell)
+            .expect("a field cell beside the plot");
+        g.moved(p, 0.0);
+        // The very bytes the client sends for a ground-targeted press.
+        let body = benilla_protocol::messages::cast_spell_at_dest(spells::TILL, p);
+        g.cast(CastRequest::read(&body).unwrap());
+        run(&mut g, 2.0);
+        assert_eq!(g.farm.tiles.len(), before + 1);
+        assert_eq!(g.farm.dug, vec![cell]);
+        assert_eq!(g.tile_pos(before), p);
+        assert_ne!(g.soil[before].0, 0, "the new mound stands");
+        // The same cell again, and a spot off the field, dig nothing.
+        g.cast(CastRequest {
+            spell: spells::TILL,
+            target: Target::Ground(p),
+        });
+        run(&mut g, 2.0);
+        g.cast(CastRequest {
+            spell: spells::TILL,
+            target: Target::Ground([p[0] + 500.0, p[1], p[2]]),
+        });
+        run(&mut g, 2.0);
+        assert_eq!(g.farm.tiles.len(), before + 1);
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn fences_cost_wood_come_in_the_picked_kind_and_come_back_up() {
+        let (mut g, mut rx) = game();
+        let p = [g.at[0] + 3.0, g.at[1], g.at[2]];
+        g.farm.bag.add(Item::Wood, 4);
+        let sample = g.samples[1];
+        g.use_object(sample);
+        g.cast(CastRequest {
+            spell: spells::BUILD_FENCE,
+            target: Target::Ground(p),
+        });
+        assert_eq!(g.farm.fences.len(), 1);
+        assert_eq!(g.farm.fences[0].style, FENCES[1].1);
+        assert_eq!(g.farm.bag.count(Item::Wood), 2);
+        let fence = g.fences[0];
+        g.use_object(fence);
+        assert!(g.farm.fences.is_empty() && g.fences.is_empty());
+        assert_eq!(g.farm.bag.count(Item::Wood), 4);
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn a_cow_gives_milk_once_a_day() {
+        let (mut g, mut rx) = game();
+        let i = (g.layout.npcs.iter())
+            .position(|n| matches!(n.role, Role::Animal(Item::Milk, _)))
+            .expect("a cow");
+        let at = g.layout.npcs[i].at;
+        g.moved(at, 0.0);
+        let guid = HIGH_UNIT << 48 | u64::from(NPC_BASE + i as u32) << 24 | i as u64;
+        g.gossip_hello(guid);
+        g.gossip_hello(guid);
+        assert_eq!(g.farm.bag.count(Item::Milk), 1);
+        g.command(".sleep");
+        g.gossip_hello(guid);
+        assert_eq!(g.farm.bag.count(Item::Milk), 2);
         drain(&mut rx);
     }
 

@@ -264,6 +264,11 @@ pub fn headline(text: &str) -> Packet {
     )
 }
 
+/// `SMSG_PLAY_SOUND`: `SoundEntries.dbc` row `sound`, played flat for the receiver.
+pub fn play_sound(sound: u32) -> Packet {
+    Packet::new(opcode::SMSG_PLAY_SOUND, Body::default().u32(sound).done())
+}
+
 /// `SMSG_EMOTE`: `guid` plays `Emotes.dbc` row `emote`'s animation, as everyone nearby sees it.
 pub fn emote(guid: u64, emote: u32) -> Packet {
     Packet::new(

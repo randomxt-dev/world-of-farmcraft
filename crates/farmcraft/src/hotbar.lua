@@ -4,6 +4,21 @@
 
 FARMCRAFT_SLOT = 1
 
+-- The last two buttons are tools, not seeds: the server puts ground-targeted spells there, and
+-- these are the faces and words they wear.
+local TOOLS = {
+	[11] = {
+		"Interface\\Icons\\INV_Misc_Shovel_01",
+		"Till Soil",
+		"Click a spot in the field to dig a new plot mound.",
+	},
+	[12] = {
+		"Interface\\Icons\\INV_TradeskillItem_01",
+		"Build Fence",
+		"Click the ground to put up a fence for 2 Simple Wood. Pick the kind at the fence gallery; right-click a fence to take it down.",
+	},
+}
+
 -- Seeds wear their crop's own icon; a little seed sack in the corner tells them from the crop.
 local SEED_BADGE = "Interface\\Icons\\INV_Misc_Food_Wheat_02"
 
@@ -27,8 +42,12 @@ end
 local function farm_light()
 	for i = 1, 12 do
 		local button = getglobal("ActionButton"..i)
-		if button then
-			-- The bar holds only seeds.
+		if button and TOOLS[i] then
+			badge(button, nil)
+			getglobal("ActionButton"..i.."Icon"):SetTexture(TOOLS[i][1])
+			button:SetChecked(nil)
+		elseif button then
+			-- The rest of the bar holds only seeds.
 			badge(button, HasAction(i))
 			if i == FARMCRAFT_SLOT then
 				button:SetChecked(1)
@@ -60,7 +79,7 @@ function Farmcraft_Scroll(step)
 		elseif slot > 12 then
 			slot = 1
 		end
-		if HasAction(slot) then
+		if HasAction(slot) and not TOOLS[slot] then
 			break
 		end
 	end
@@ -87,8 +106,33 @@ SetBinding("SHIFT-MOUSEWHEELUP", "CAMERAZOOMIN")
 SetBinding("SHIFT-MOUSEWHEELDOWN", "CAMERAZOOMOUT")
 
 -- A press of a bar button, by key or by click, picks its slot instead of using the item.
-UseAction = function(slot)
+-- The tools still cast: their press brings up the ground circle.
+local use_action = UseAction
+UseAction = function(slot, check_cursor, on_self)
+	if TOOLS[slot] then
+		return use_action(slot, check_cursor, on_self)
+	end
 	Farmcraft_Select(slot)
+end
+
+-- The tools' tooltips name what they do, not the borrowed spell.
+local set_tooltip = ActionButton_SetTooltip
+ActionButton_SetTooltip = function()
+	local tool = TOOLS[ActionButton_GetPagedID(this)]
+	if not tool then
+		return set_tooltip()
+	end
+	GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+	GameTooltip:SetText(tool[2])
+	GameTooltip:AddLine(tool[3], 1, 1, 1, 1)
+	GameTooltip:Show()
+end
+
+-- A button's full update puts the spell's icon back; the tools keep theirs.
+local update = ActionButton_Update
+ActionButton_Update = function()
+	update()
+	farm_light()
 end
 
 -- The stock button code lights the button of the action being cast; keep the pick lit instead.

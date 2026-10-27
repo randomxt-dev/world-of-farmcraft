@@ -26,9 +26,12 @@ Status: playable prototype on Windows. See [docs/PLAN.md](docs/PLAN.md).
 | Plant | Right-click a dirt mound |
 | Water | Right-click a planted crop once a day; rain does it for you |
 | Harvest | Right-click a ripe crop |
-| Sleep | Right-click the hay pile by the farmhouse; past 2:00 you pass out |
+| Sleep | Right-click the bed inside the farmhouse; past 2:00 you pass out |
 | Sell | Drop goods in the Shipping Crate, or sell to Brog Hamfist in the Goldshire inn |
-| Buy seeds | Brog Hamfist, <General Supplies> |
+| Buy seeds | Auntie Bernice by the farmhouse, or Brog Hamfist in the Goldshire inn |
+| Dig more plots | Hotbar slot 11 (Till Soil), then click a furrow in the field |
+| Fences | Hotbar slot 12 (Build Fence, 2 Simple Wood), then click the ground. Right-click a sample in the fence gallery to pick the kind; right-click your fence to take it down |
+| Animals | Right-click the cows, sheep and chickens once a day for milk, wool and eggs |
 | Mine | Copper veins in Fargodeep Mine, south-west of the farm |
 | Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
 | Chop trees | Right-click one of the Westfall oaks around the property: three axe swings and it falls for Simple Wood. A sapling comes up the next day and is a tree again in 3 |

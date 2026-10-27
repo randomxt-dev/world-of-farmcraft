@@ -3,7 +3,9 @@
 //! the farm and Goldshire where Elwynn has always had them. World coordinates (x north, y west,
 //! z up) on map 0, zone 12; the villagers' spots are vmangos's `creature` spawns.
 
-use farm_rules::Crop;
+use std::collections::BTreeMap;
+
+use farm_rules::{Crop, Item};
 
 use crate::ground::Ground;
 use crate::world::creatures::{Kind, Look, Stand, NPC_GOSSIP, NPC_VENDOR};
@@ -27,6 +29,9 @@ const TILE_STEP: f32 = 1.4;
 /// pattern and checked from a top-down camera in game: each plot row sits on a row of leaves.
 const TEXTURE_REPEAT: f32 = 100.0 / 3.0 / 8.0;
 const ROW_PHASE: f32 = 0.32 * TEXTURE_REPEAT;
+/// The farmhouse bed, on the floor of the farmhouse's back room, and the way it lies.
+const BED: [f32; 3] = [-9879.0, 319.8, 37.8];
+const BED_FACING: f32 = 0.6;
 /// The furrows' heading, along (1, -1): the soil mounds lie lengthwise on it.
 pub const FURROW_FACING: f32 = -std::f32::consts::FRAC_PI_4;
 /// The field's height where the ground is not read.
@@ -278,7 +283,26 @@ pub enum Role {
     Advice,
     /// One of the pet pen's animals: a right-click offers it as the farmer's companion.
     Pet(usize),
+    /// A farm animal that gives `Item` once a day, the `usize`th of them.
+    Animal(Item, usize),
 }
+
+/// Every fence 1.12 has a gameobject look for: (name, display, scale). The fence gallery shows
+/// them all; a right-click picks the one the farmer builds.
+pub const FENCES: [(&str, u32, f32); 9] = [
+    ("Elwynn Wood Fence", 6151, 1.0),
+    ("Elwynn Rail Fence", 6150, 1.0),
+    ("Carnival Railing", 6157, 0.6),
+    ("Burning Steppes Fence", 6526, 1.0),
+    ("Wrought Iron Gate", 6353, 0.8),
+    ("Graveyard Gate", 6354, 0.8),
+    ("Rock Wall", 134, 0.7),
+    ("Ruined Wall", 3676, 0.4),
+    ("Old Ruined Wall", 6355, 0.4),
+];
+
+/// The farm's field grid: furrow `r` and step `c` from the starting plot's first row and first
+/// tile. Every cell the crop texture is painted under can be dug.
 
 #[derive(Clone, Debug)]
 pub struct Layout {
@@ -297,6 +321,46 @@ pub struct Layout {
     /// The grove: which of [`TREES`] stands where. `FARMCRAFT_TREE_LINE=1` lines them up in order
     /// instead, south-west of the pen, to look at.
     pub trees: Vec<(usize, [f32; 3])>,
+    /// Every field cell that can hold a plot tile, with its ground point; the starting plot is
+    /// rows 0.. and steps 0.. of [`PLOT_ROWS`] by [`PLOT_COLUMNS`].
+    pub field: BTreeMap<(i32, i32), [f32; 3]>,
+    /// The first furrow's number, counted in texture repeats.
+    first_row: f32,
+    /// The fence gallery: which of [`FENCES`] stands where.
+    pub fence_gallery: Vec<(usize, [f32; 3])>,
+    pub bed_facing: f32,
+}
+
+impl Layout {
+    /// The field cell nearest world `x, y`, if it is one that can be dug.
+    pub fn cell_at(&self, x: f32, y: f32) -> Option<(i32, i32)> {
+        let r = ((x + y - ROW_PHASE) / TEXTURE_REPEAT - self.first_row).round() as i32;
+        let mid = row_mid(ROW_PHASE + TEXTURE_REPEAT * (self.first_row + r as f32));
+        let along = [FURROW_FACING.cos(), FURROW_FACING.sin()];
+        let t = (x - mid[0]) * along[0] + (y - mid[1]) * along[1];
+        let c = (t / TILE_STEP + (PLOT_COLUMNS - 1) as f32 / 2.0).round() as i32;
+        let cell = (r, c);
+        self.field.contains_key(&cell).then_some(cell)
+    }
+
+    /// The ground point of field cell `cell`.
+    pub fn cell_pos(&self, cell: (i32, i32)) -> Option<[f32; 3]> {
+        self.field.get(&cell).copied()
+    }
+}
+
+/// The point of the furrow on the line `x + y = row_sum` nearest the plot centre.
+fn row_mid(row_sum: f32) -> [f32; 2] {
+    let shift = (row_sum - (PLOT_CENTRE[0] + PLOT_CENTRE[1])) / 2.0;
+    [PLOT_CENTRE[0] + shift, PLOT_CENTRE[1] + shift]
+}
+
+/// The point of furrow `r`, step `c` of the grid whose first furrow is `first`.
+fn grid_point(first: f32, r: i32, c: i32) -> [f32; 2] {
+    let mid = row_mid(ROW_PHASE + TEXTURE_REPEAT * (first + r as f32));
+    let along = [FURROW_FACING.cos(), FURROW_FACING.sin()];
+    let t = (c as f32 - (PLOT_COLUMNS - 1) as f32 / 2.0) * TILE_STEP;
+    [mid[0] + t * along[0], mid[1] + t * along[1]]
 }
 
 fn npc(name: &str, display: u32, kind: Kind, at: [f32; 4]) -> Npc {
@@ -319,7 +383,26 @@ impl Layout {
             ((centre_sum - ROW_PHASE) / TEXTURE_REPEAT).round() - (PLOT_ROWS as f32 - 1.0) / 2.0;
         let first = first.round();
         let along = [FURROW_FACING.cos(), FURROW_FACING.sin()];
+        let mut field = BTreeMap::new();
+        for r in -12..14 {
+            for c in -30..36 {
+                let [x, y] = grid_point(first, r, c);
+                let in_field = match ground {
+                    Some(g) => g.crop(x, y) > 60,
+                    None => (-3..7).contains(&r) && (-6..12).contains(&c),
+                };
+                if in_field {
+                    field.insert((r, c), on_ground(x, y));
+                }
+            }
+        }
         let mut tiles = Vec::new();
+        for r in 0..PLOT_ROWS {
+            for c in 0..PLOT_COLUMNS {
+                let [x, y] = grid_point(first, r as i32, c as i32);
+                field.insert((r as i32, c as i32), on_ground(x, y));
+            }
+        }
         for r in 0..PLOT_ROWS {
             let row_sum = ROW_PHASE + TEXTURE_REPEAT * (first + r as f32);
             // The point of this furrow nearest the plot centre.
@@ -437,6 +520,7 @@ impl Layout {
             ),
         ];
         // The farm's own animals, in the yard between the farmhouse and the barn.
+        let mut animals = 0;
         for (name, display, x, y, facing) in [
             ("Cow", 1060, -9838.0, 380.0, 4.0),
             ("Cow", 1060, -9842.0, 388.0, 2.2),
@@ -444,10 +528,23 @@ impl Layout {
             ("Chicken", 304, -9893.0, 322.0, 0.5),
             ("Chicken", 304, -9896.0, 324.0, 2.5),
             ("Pig", 10015, -9872.0, 380.0, 5.0),
+            ("Chicken", 304, -9890.0, 319.0, 4.0),
+            ("Sheep", 856, -9866.0, 400.0, 3.0),
         ] {
             let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), facing]);
             n.look.level = 1;
             n.look.scale = PETS.iter().find(|p| p.0 == name).map_or(1.0, |p| p.2);
+            let product = match name {
+                "Cow" => Some(Item::Milk),
+                "Sheep" => Some(Item::Wool),
+                "Chicken" => Some(Item::Egg),
+                _ => None,
+            };
+            if let Some(item) = product {
+                n.role = Role::Animal(item, animals);
+                n.look.npc_flags = NPC_GOSSIP;
+                animals += 1;
+            }
             npcs.push(n);
         }
         // The pet pen: every companion in rows on the grass south of the field, facing the house.
@@ -469,6 +566,10 @@ impl Layout {
         brog.look.npc_flags = NPC_VENDOR;
         brog.role = Role::Store;
         npcs[1].look.stand = Stand::Sit;
+        let bernice = &mut npcs[2];
+        bernice.look.subname = "Seeds".into();
+        bernice.look.npc_flags = NPC_VENDOR;
+        bernice.role = Role::Store;
 
         Self {
             home: Location {
@@ -479,7 +580,13 @@ impl Layout {
             },
             tiles,
             veins: VEINS.iter().map(|v| ([v[0], v[1], v[2]], v[3])).collect(),
-            bed: on_ground(-9902.0, 318.0),
+            bed: BED,
+            bed_facing: BED_FACING,
+            field,
+            first_row: first,
+            fence_gallery: (FENCES.iter().enumerate())
+                .map(|(i, _)| (i, on_ground(-9952.0, 330.0 + 5.0 * i as f32)))
+                .collect(),
             shipping: on_ground(-9904.0, 345.0),
             npcs,
             wild: WILD
@@ -518,7 +625,11 @@ mod tests {
                 "on a furrow: {phase}"
             );
         }
-        assert_eq!(l.npcs.iter().filter(|n| n.role == Role::Store).count(), 1);
+        assert_eq!(
+            l.npcs.iter().filter(|n| n.role == Role::Store).count(),
+            2,
+            "Brog and Bernice"
+        );
         assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
         assert!(!OAKS.is_empty());
     }

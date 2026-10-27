@@ -106,6 +106,9 @@ pub fn entry(item: Item) -> u32 {
         Item::Produce(c) => produce(c).0,
         Item::CopperOre => 2770,
         Item::Wood => WOOD.0,
+        Item::Egg => 6889,
+        Item::Milk => 1179,
+        Item::Wool => 2592,
     }
 }
 
@@ -114,7 +117,13 @@ pub fn item_of(entry: u32) -> Option<Item> {
     let mut all = Crop::ALL
         .iter()
         .flat_map(|&c| [Item::Seeds(c), Item::Produce(c)])
-        .chain([Item::CopperOre, Item::Wood]);
+        .chain([
+            Item::CopperOre,
+            Item::Wood,
+            Item::Egg,
+            Item::Milk,
+            Item::Wool,
+        ]);
     all.find(|&i| self::entry(i) == entry)
 }
 
@@ -147,6 +156,23 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
             ),
             Item::CopperOre => {
                 ItemTemplate::goods(entry, "Copper Ore", 4681, item.sell_price(), String::new())
+            }
+            Item::Egg => ItemTemplate::goods(
+                entry,
+                "Small Egg",
+                18046,
+                item.sell_price(),
+                "Still warm.".into(),
+            ),
+            Item::Milk => ItemTemplate::goods(
+                entry,
+                "Ice Cold Milk",
+                18090,
+                item.sell_price(),
+                "Fresh from the Stonefield cows.".into(),
+            ),
+            Item::Wool => {
+                ItemTemplate::goods(entry, "Wool Cloth", 7418, item.sell_price(), String::new())
             }
             Item::Wood => ItemTemplate::goods(
                 entry,

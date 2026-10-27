@@ -13,9 +13,16 @@ pub const MINING: u32 = 2575;
 /// "Plant Seeds" (`Spell.dbc` 5206): the bar shown while sowing.
 pub const PLANT_SEEDS: u32 = 5206;
 
+/// "zzOLDEarthquake" (424): ground-targeted, so its button asks for a spot in the field. The
+/// server shows the dig as [`PLANT_SEEDS`]; the hotbar names it Till Soil.
+pub const TILL: u32 = 424;
+/// "Sand Storms" (10094): ground-targeted and without a look of its own; the hotbar names it
+/// Build Fence.
+pub const BUILD_FENCE: u32 = 10094;
+
 /// The spells the client opens nodes with: it casts the first known spell whose lock type the
 /// node's lock names, so they must be in the book.
-const BOOK: [u32; 2] = [HERB_GATHERING, MINING];
+const BOOK: [u32; 4] = [HERB_GATHERING, MINING, TILL, BUILD_FENCE];
 
 /// `SMSG_INITIAL_SPELLS`: `u8 0`, a `u16` count of `{u16 spell, u16 0}`, no cooldowns.
 pub fn initial_spells() -> Packet {
@@ -40,20 +47,26 @@ pub fn action_buttons() -> Packet {
 /// `ACTION_BUTTON_ITEM`: an action slot's kind byte for an item, the entry below it.
 const ACTION_ITEM: u32 = 0x80;
 
-/// `SMSG_ACTION_BUTTONS` with `items` (entries) on the main bar's first slots: the hotbar.
+/// The hotbar's tool buttons: Till Soil and Build Fence, in the main bar's last two slots.
+pub const TOOL_SLOTS: [(usize, u32); 2] = [(10, TILL), (11, BUILD_FENCE)];
+
+/// `SMSG_ACTION_BUTTONS` with `items` (entries) on the main bar's first slots and the tools in
+/// its last two: the hotbar.
 pub fn item_bar(items: &[u32]) -> Packet {
     let mut b = Body::default();
     for i in 0..120 {
-        match items.get(i).filter(|&&e| i < 12 && e != 0) {
-            Some(&entry) => b.u32(entry | ACTION_ITEM << 24),
-            None => b.u32(0),
+        let tool = TOOL_SLOTS.iter().find(|(slot, _)| *slot == i);
+        match (tool, items.get(i).filter(|&&e| i < 10 && e != 0)) {
+            (Some(&(_, spell)), _) => b.u32(spell),
+            (None, Some(&entry)) => b.u32(entry | ACTION_ITEM << 24),
+            (None, None) => b.u32(0),
         };
     }
     Packet::new(opcode::SMSG_ACTION_BUTTONS, b.done())
 }
 
 /// What a cast aims at, as `SpellCastTargets` carries it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Target {
     /// Mask 0: the caster itself, or the spell's implicit target.
     Caster,
@@ -61,10 +74,13 @@ pub enum Target {
     Unit(u64),
     /// `TARGET_FLAG_GAMEOBJECT`.
     GameObject(u64),
+    /// `TARGET_FLAG_DEST_LOCATION`: a spot on the ground.
+    Ground([f32; 3]),
 }
 
 const TARGET_FLAG_UNIT: u16 = 0x0002;
 const TARGET_FLAG_GAMEOBJECT: u16 = 0x0800;
+const TARGET_FLAG_DEST_LOCATION: u16 = 0x0040;
 
 impl Target {
     fn write(self, b: &mut Body) {
@@ -72,13 +88,18 @@ impl Target {
             Target::Caster => b.u16(0),
             Target::Unit(g) => b.u16(TARGET_FLAG_UNIT).packed_guid(g),
             Target::GameObject(g) => b.u16(TARGET_FLAG_GAMEOBJECT).packed_guid(g),
+            Target::Ground(p) => b
+                .u16(TARGET_FLAG_DEST_LOCATION)
+                .f32(p[0])
+                .f32(p[1])
+                .f32(p[2]),
         };
     }
 }
 
 /// A client's `CMSG_CAST_SPELL`: `u32` spell, then `SpellCastTargets`. Only the unit and
 /// gameobject guids matter here; any other target reads as [`Target::Caster`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CastRequest {
     pub spell: u32,
     pub target: Target,
@@ -94,6 +115,14 @@ impl CastRequest {
             Target::Unit(read_packed_guid(&mut cur)?)
         } else if mask & TARGET_FLAG_GAMEOBJECT != 0 {
             Target::GameObject(read_packed_guid(&mut cur)?)
+        } else if mask & TARGET_FLAG_DEST_LOCATION != 0 {
+            use benilla_protocol::wire::read_f32_le;
+            let p = [
+                read_f32_le(&mut cur)?,
+                read_f32_le(&mut cur)?,
+                read_f32_le(&mut cur)?,
+            ];
+            Target::Ground(p)
         } else {
             Target::Caster
         };
@@ -145,7 +174,7 @@ pub fn spell_go(caster: u64, spell: u32, target: Target) -> Packet {
         .u16(0x0100);
     match target {
         Target::Unit(g) | Target::GameObject(g) => b.u8(1).u64(g),
-        Target::Caster => b.u8(0),
+        Target::Caster | Target::Ground(_) => b.u8(0),
     };
     b.u8(0); // no misses
     target.write(&mut b);

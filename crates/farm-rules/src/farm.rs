@@ -59,6 +59,10 @@ pub enum Reject {
     Picked,
     NoSuchTree,
     Felled,
+    NoSuchAnimal,
+    Collected,
+    NoWood,
+    NoSuchFence,
 }
 
 impl Reject {
@@ -77,6 +81,10 @@ impl Reject {
             Reject::Mined => "That vein is spent until tomorrow.".into(),
             Reject::NoSuchVein => "There is no vein there.".into(),
             Reject::NoSuchTree => "There is no tree there.".into(),
+            Reject::NoSuchAnimal => "There is no animal there.".into(),
+            Reject::Collected => "Come back tomorrow.".into(),
+            Reject::NoWood => format!("You need {FENCE_WOOD} Simple Wood. Chop an oak!"),
+            Reject::NoSuchFence => "There is no fence there.".into(),
             Reject::Felled => "It hasn't grown back yet.".into(),
             Reject::Picked => "Someone picked that already. It grows back tomorrow.".into(),
         }
@@ -119,7 +127,28 @@ pub struct Farm {
     /// The day each grove tree was felled, while it grows back.
     #[serde(default)]
     pub felled: Vec<Option<u32>>,
+    /// Plot cells the farmer dug beyond the starting plot, as (furrow, step) on the field's grid;
+    /// their tiles follow the starting ones in `tiles`.
+    #[serde(default)]
+    pub dug: Vec<(i32, i32)>,
+    /// Each farm animal's product collected today, by index.
+    #[serde(default)]
+    pub collected: Vec<bool>,
+    /// Fences the farmer built.
+    #[serde(default)]
+    pub fences: Vec<Fence>,
 }
+
+/// A fence the farmer built: where it stands, which way it runs, and which look it has.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Fence {
+    pub at: [f32; 3],
+    pub facing: f32,
+    pub style: u32,
+}
+
+/// Simple Wood one fence takes, and gives back when it is pulled up.
+pub const FENCE_WOOD: u32 = 2;
 
 impl Farm {
     /// A new farm of `tiles` empty tiles and `veins` ore veins: 2 silver and a few seeds.
@@ -139,14 +168,67 @@ impl Farm {
             foraged: Vec::new(),
             companion: None,
             felled: Vec::new(),
+            dug: Vec::new(),
+            collected: Vec::new(),
+            fences: Vec::new(),
         }
     }
 
     /// Fit a loaded farm to a layout of `tiles` tiles, `veins` veins and `wild` wild herbs.
     pub fn fit(&mut self, tiles: usize, veins: usize, wild: usize) {
-        self.tiles.resize(tiles, Tile::default());
+        self.tiles.resize(tiles + self.dug.len(), Tile::default());
         self.mined.resize(veins, false);
         self.foraged.resize(wild, false);
+    }
+
+    /// Fit a loaded farm to `animals` farm animals.
+    pub fn fit_animals(&mut self, animals: usize) {
+        self.collected.resize(animals, false);
+    }
+
+    /// Dig a new plot cell `cell`; its tile is the new last one. `false` if it is already dug.
+    pub fn till(&mut self, cell: (i32, i32)) -> bool {
+        if self.dug.contains(&cell) {
+            return false;
+        }
+        self.dug.push(cell);
+        self.tiles.push(Tile::default());
+        true
+    }
+
+    /// Collect farm animal `a`'s `item` for the day: an egg, a pail of milk, a fleece.
+    pub fn collect(&mut self, a: usize, item: Item) -> Result<(), Reject> {
+        match self.collected.get(a) {
+            None => return Err(Reject::NoSuchAnimal),
+            Some(true) => return Err(Reject::Collected),
+            Some(false) => {}
+        }
+        if !self.bag.add(item, 1) {
+            return Err(Reject::BagFull);
+        }
+        self.collected[a] = true;
+        Ok(())
+    }
+
+    /// Build a fence for [`FENCE_WOOD`] Simple Wood.
+    pub fn build(&mut self, fence: Fence) -> Result<(), Reject> {
+        if !self.bag.take(Item::Wood, FENCE_WOOD) {
+            return Err(Reject::NoWood);
+        }
+        self.fences.push(fence);
+        Ok(())
+    }
+
+    /// Pull up fence `f`, getting its wood back.
+    pub fn unbuild(&mut self, f: usize) -> Result<(), Reject> {
+        if f >= self.fences.len() {
+            return Err(Reject::NoSuchFence);
+        }
+        if !self.bag.add(Item::Wood, FENCE_WOOD) {
+            return Err(Reject::BagFull);
+        }
+        self.fences.remove(f);
+        Ok(())
     }
 
     /// Fit a loaded farm to a grove of `trees` trees.
@@ -318,6 +400,7 @@ impl Farm {
         }
         self.mined.iter_mut().for_each(|m| *m = false);
         self.foraged.iter_mut().for_each(|f| *f = false);
+        self.collected.iter_mut().for_each(|c| *c = false);
         self.clock.next_day();
         self.weather = Weather::roll(self.seed, self.clock.day, self.clock.season());
         if self.weather.waters() {
@@ -468,6 +551,42 @@ mod tests {
         assert_eq!(f.tree(1), TreeStage::Tree);
         assert!(f.chop(1).is_ok());
         assert_eq!(f.chop(5), Err(Reject::NoSuchTree));
+    }
+
+    #[test]
+    fn animals_give_once_a_day_dug_cells_add_tiles_and_fences_cost_wood() {
+        let mut f = farm();
+        f.fit_animals(2);
+        f.collect(0, Item::Egg).unwrap();
+        assert_eq!(f.collect(0, Item::Egg), Err(Reject::Collected));
+        assert_eq!(f.collect(3, Item::Egg), Err(Reject::NoSuchAnimal));
+        f.sleep();
+        assert!(f.collect(0, Item::Egg).is_ok());
+        assert_eq!(f.bag.count(Item::Egg), 2);
+
+        let tiles = f.tiles.len();
+        assert!(f.till((5, 2)));
+        assert!(!f.till((5, 2)));
+        assert_eq!(f.tiles.len(), tiles + 1);
+        f.fit(tiles, 2, 0);
+        assert_eq!(
+            f.tiles.len(),
+            tiles + 1,
+            "a loaded farm keeps its dug tiles"
+        );
+
+        let fence = Fence {
+            at: [1.0, 2.0, 3.0],
+            facing: 0.5,
+            style: 6151,
+        };
+        assert_eq!(f.build(fence), Err(Reject::NoWood));
+        f.bag.add(Item::Wood, 3);
+        f.build(fence).unwrap();
+        assert_eq!(f.bag.count(Item::Wood), 1);
+        f.unbuild(0).unwrap();
+        assert_eq!(f.bag.count(Item::Wood), 3);
+        assert!(f.fences.is_empty());
     }
 
     #[test]

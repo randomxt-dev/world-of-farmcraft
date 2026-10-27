@@ -13,6 +13,9 @@ pub enum Item {
     Produce(Crop),
     CopperOre,
     Wood,
+    Egg,
+    Milk,
+    Wool,
 }
 
 /// Items in one backpack slot.
@@ -27,6 +30,9 @@ impl Item {
             Item::Produce(c) => c.name().to_owned(),
             Item::CopperOre => "Copper Ore".to_owned(),
             Item::Wood => "Simple Wood".to_owned(),
+            Item::Egg => "Small Egg".to_owned(),
+            Item::Milk => "Ice Cold Milk".to_owned(),
+            Item::Wool => "Wool Cloth".to_owned(),
         }
     }
 
@@ -37,6 +43,9 @@ impl Item {
             Item::Produce(c) => c.def().sell_price,
             Item::CopperOre => 15,
             Item::Wood => 6,
+            Item::Egg => 8,
+            Item::Milk => 20,
+            Item::Wool => 30,
         }
     }
 

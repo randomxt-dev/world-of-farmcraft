@@ -9,9 +9,11 @@ pub mod farm;
 pub mod quests;
 pub mod rng;
 pub mod save;
+pub mod skills;
 
 pub use bag::{Bag, Item};
 pub use clock::{Clock, Season, Weather};
 pub use crops::{Crop, CropDef};
 pub use farm::{DayReport, Farm, Fence, Reject, Tile, TreeStage, FENCE_WOOD};
 pub use quests::{Deed, Goal, Marker, Quest, Quests, Unlock, Villager, QUESTS};
+pub use skills::{Skill, Skills};

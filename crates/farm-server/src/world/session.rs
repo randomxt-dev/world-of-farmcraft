@@ -276,6 +276,17 @@ impl Session {
                     game.gossip_hello(npc);
                 }
             }
+            opcode::CMSG_TEXT_EMOTE => {
+                let id = read_u32_le(&mut cur)?;
+                if let Some(game) = &mut self.game {
+                    game.text_emote(id);
+                }
+            }
+            opcode::CMSG_CANCEL_AURA => {
+                if let Some(game) = &mut self.game {
+                    game.cancel_aura();
+                }
+            }
             opcode::CMSG_QUESTGIVER_STATUS_QUERY => {
                 let npc = read_u64_le(&mut cur)?;
                 if let Some(game) = &self.game {

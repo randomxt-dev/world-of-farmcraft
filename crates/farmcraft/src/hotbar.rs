@@ -16,6 +16,7 @@ pub struct HotbarPlugin;
 impl Plugin for HotbarPlugin {
     fn build(&self, app: &mut App) {
         lua_hooks::register(app, "hotbar", include_str!("hotbar.lua").to_owned());
+        lua_hooks::register(app, "markers", include_str!("markers.lua").to_owned());
         if std::env::var_os("FARMCRAFT_SELFTEST").is_some() {
             app.add_systems(PostUpdate, self_test);
         }

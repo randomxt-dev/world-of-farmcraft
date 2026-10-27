@@ -15,6 +15,8 @@ pub(super) const AXE_PRICE: u32 = 100;
 pub(super) const PICK_PRICE: u32 = 200;
 
 const VILLAGERS: [Villager; 3] = [Villager::Ma, Villager::Farley, Villager::Brog];
+/// The addon prefix the map markers travel under.
+const MARKERS_PREFIX: &str = "FarmcraftMarks";
 
 /// The greeting texts of the villagers' gossip windows.
 pub(super) const TEXT_FARLEY: u32 = 4;
@@ -104,15 +106,32 @@ impl Game {
         }
     }
 
-    /// Sends each villager's marker that changed.
+    /// Sends each villager's marker that changed, over their head and to the maps.
     pub(super) fn refresh_markers(&mut self) {
+        let mut changed = false;
         for (k, v) in VILLAGERS.into_iter().enumerate() {
             let s = status(self.farm.marker(v));
             if self.markers[k] != s {
                 self.markers[k] = s;
+                changed = true;
                 self.send(quests::status(self.villager_guid(v), s));
             }
         }
+        if changed {
+            self.send_markers();
+        }
+    }
+
+    /// The villagers' markers for the minimap and world map, which `markers.lua` draws: an addon
+    /// line of `x,y,status` per villager, in world yards.
+    pub(super) fn send_markers(&self) {
+        let rows: Vec<String> = (VILLAGERS.iter().enumerate())
+            .map(|(k, &v)| {
+                let at = self.layout.npcs[self.npc_index(self.villager_guid(v)).unwrap_or(0)].at;
+                format!("{:.1},{:.1},{}", at[0], at[1], self.markers[k] % 8)
+            })
+            .collect();
+        self.send(packets::addon(self.guid(), MARKERS_PREFIX, &rows.join(";")));
     }
 
     /// `CMSG_QUESTGIVER_STATUS_QUERY`.
@@ -134,7 +153,9 @@ impl Game {
     pub(super) fn villager_hello(&mut self, npc: u64, v: Villager) {
         let mut options = Vec::new();
         match v {
-            Villager::Brog => options.push("Let me browse your goods.".to_owned()),
+            Villager::Brog if self.farm.has(Unlock::Market) => {
+                options.push("Let me browse your goods.".to_owned())
+            }
             Villager::Farley if self.farm.has(Unlock::Market) => {
                 options.push("I have produce to sell.".to_owned())
             }
@@ -323,6 +344,7 @@ impl Game {
         self.sync_quest_log();
         self.refresh_markers();
         self.say(&format!("Skipped to quest {}.", n + 1));
+        self.save();
     }
 
     /// Something new is the farmer's: put it on the bar or in the world.
@@ -331,7 +353,13 @@ impl Game {
             Unlock::WateringCan => self.say("New on your bar: the Watering Can (2)."),
             Unlock::Axe => self.say("New on your bar: the Woodcutter's Axe (3)."),
             Unlock::Fence => self.say("New on your bar: Build Fence (4)."),
-            Unlock::Horse => self.say("New on your bar: the Farm Horse (5). Press 5 to ride."),
+            Unlock::Horse => {
+                self.say("Biscuit the farm horse waits by the house: right-click him, or press 5.");
+                if let Some(h) = self.horse() {
+                    self.show_npc(h);
+                }
+            }
+            Unlock::Tilling => self.say("New on your bar: Till Soil (1)."),
             Unlock::ShippingCrate => {
                 self.show_fixture(1);
                 self.say("The Shipping Crate stands by your farmhouse now.");

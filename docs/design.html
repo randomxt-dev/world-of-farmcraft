@@ -281,7 +281,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
         <span class="chip">Wild Peacebloom &amp; Silverleaf to forage</span>
         <span class="chip">Westfall oaks that regrow</span>
         <span class="chip">Fence lines, posts when short on wood</span>
-        <span class="chip">Dig new plots with the shovel</span>
+        <span class="chip">Plant with the shovel</span>
         <span class="chip">Pet pen, ~58 companions</span>
         <span class="chip">Wandering critters</span>
         <span class="chip">Farmhouse icon on the map</span>
@@ -484,23 +484,23 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
     {
       name: "Farmer", ic: "🌱", days: "Days 1–2", built: true,
       intro: "You arrive with a Shovel, 8 Silverleaf seeds and 2 silver. Ma Stonefield is waiting at the farm.",
-      unlocks: ["Watering Can", "Farm Horse (hotbar slot 5, twice walking speed)", "10 copper"],
-      cando: ["Plant, water and harvest Silverleaf", "Dig new plots with the shovel", "Sleep to pass the night", "Ride anywhere in Elwynn"],
+      unlocks: ["Watering Can", "Biscuit the farm horse, by the house (hotbar slot 5, twice walking speed)"],
+      cando: ["Plant, water and harvest Silverleaf", "/sleep in the farmhouse to pass the night", "Ride anywhere in Elwynn"],
       quests: [
         q(1, "Breaking Ground", MA, MA, "Plant your 8 Silverleaf seeds.", "Watering Can", true, "\"That soil's been resting long enough. Let's see what it remembers.\""),
-        q(2, "Thirsty Work", MA, MA, "Water 8 crops.", "10 copper. Ma explains that rain waters for you.", true),
-        q(3, "Early to Bed", MA, MA, "Sleep in your bed in the farmhouse.", "The Farm Horse, the old family horse: hotbar slot 5, twice walking speed.", true)
+        q(2, "Thirsty Work", MA, MA, "Water 8 crops.", "Ma explains that rain waters for you.", true),
+        q(3, "Early to Bed", MA, MA, "Type /sleep inside the farmhouse.", "Biscuit, the old farm horse, waiting by the house: right-click him or press 5, twice walking speed.", true)
       ]
     },
     {
       name: "Market", ic: "🍺", days: "Days 2–3", built: true,
       intro: "Ride the old horse to Goldshire and put Stonefield back on the market.",
-      unlocks: ["Farley buys your produce", "Shipping Crate at the farm (Farley's cart collects each morning)", "1s 25c in rewards"],
+      unlocks: ["Farley buys your produce", "Till Soil: Brog's old hoe, to dig plots beyond the first patch", "Shipping Crate at the farm (Farley's cart collects each morning)"],
       cando: ["Sell at the Lion's Pride Inn", "Buy any seed from Brog", "Ship from home overnight"],
       quests: [
-        q(4, "Market Day", MA, FARLEY, "Ride to Goldshire and tell Innkeeper Farley the Stonefield farm is growing again.", "25 copper. Farley now buys your produce.", true),
-        q(5, "Seeds for Spring", FARLEY, BROG, "Buy 10 seeds from Brog Hamfist.", "20 copper", true),
-        q(6, "The First Harvest", BROG, FARLEY, "Bring Farley 10 Silverleaf. Water daily; it ripens in 2 days.", "80 copper and the Shipping Crate at the farm. Farley's cart collects it each morning.", true)
+        q(4, "Market Day", MA, FARLEY, "Ride to Goldshire and tell Innkeeper Farley the Stonefield farm is growing again.", "Farley now buys your produce.", true),
+        q(5, "Seeds for Spring", FARLEY, BROG, "Buy 10 seeds from Brog Hamfist (his shelf only shows seeds you can still afford 10 of).", "Till Soil: Brog's old hoe, to dig new plots", true),
+        q(6, "The First Harvest", BROG, FARLEY, "Bring Farley 10 Silverleaf. Water daily; it ripens in 2 days.", "90 copper for the Silverleaf, and the Shipping Crate at the farm. Farley's cart collects it each morning.", true)
       ]
     },
     {
@@ -528,7 +528,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
       unlocks: ["Mining Pick (bought, 2s)", "Copper ore from Fargodeep"],
       cando: ["Mine copper veins that refill each morning", "Stockpile ore for the smith"],
       quests: [
-        q(10, "Into Fargodeep", BROG, BROG, "Buy a Mining Pick from Brog (2s) and mine 5 Copper Ore in Fargodeep Mine.", "1 silver", true, "\"You'll want a candle down there. And to not mention my name to the kobolds.\"")
+        q(10, "Into Fargodeep", BROG, BROG, "Buy a Mining Pick from Brog (2s) and mine 5 Copper Ore in Fargodeep Mine.", "You're a miner: Farley buys copper too", true, "\"You'll want a candle down there. And to not mention my name to the kobolds.\"")
       ]
     },
     {

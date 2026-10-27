@@ -283,7 +283,12 @@ pub enum Role {
     Pet(usize),
     /// A farm animal that gives `Item` once a day, the `usize`th of them.
     Animal(Item, usize),
+    /// The farm horse, waiting by the house: a right-click rides it.
+    Horse,
 }
+
+/// The farm horse's look, standing or ridden: a brown horse.
+pub const HORSE_DISPLAY: u32 = 2405;
 
 /// The fence the farmer builds: Elwynn's split-rail fence (`ElwynnWoodFence01`), one 4.15 yd
 /// section long, running from its origin along its own -x.
@@ -572,6 +577,17 @@ impl Layout {
         farley.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER | NPC_VENDOR;
         farley.role = Role::Quest(Villager::Farley);
         npcs[1].look.stand = Stand::Sit;
+        let mut horse = npc(
+            "Biscuit",
+            HORSE_DISPLAY,
+            Kind::Beast,
+            [-9905.5, 351.5, height(-9905.5, 351.5), 5.1],
+        );
+        horse.look.subname = "Farm Horse".into();
+        horse.look.npc_flags = NPC_GOSSIP;
+        horse.look.level = 1;
+        horse.role = Role::Horse;
+        npcs.push(horse);
 
         // Wild critters: rabbits, squirrels, deer and the like, on open grass around the property,
         // off the crop field and clear of everything the farm puts down, each with a few spots
@@ -633,7 +649,8 @@ impl Layout {
                 map: MAP,
                 zone: ZONE,
                 position: home,
-                orientation: 2.49,
+                // Facing Ma Stonefield by the farmhouse, who has the first quest.
+                orientation: (npcs[0].at[1] - home[1]).atan2(npcs[0].at[0] - home[0]),
             },
             tiles,
             veins: VEINS.iter().map(|v| ([v[0], v[1], v[2]], v[3])).collect(),

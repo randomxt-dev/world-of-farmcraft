@@ -12,6 +12,8 @@ pub const HERB_GATHERING: u32 = 2366;
 pub const MINING: u32 = 2575;
 /// "Plant Seeds" (`Spell.dbc` 5206): the bar shown while sowing.
 pub const PLANT_SEEDS: u32 = 5206;
+/// Watering's cast bar: a spell with no visual, renamed "Watering" by the hotbar's Lua.
+pub const WATERING: u32 = 5404;
 
 /// "Festival Fortune!" (26462): ground-targeted, free, 0 to 30 yd, no item needed, so its button
 /// asks for a spot in the field. The server shows the dig as [`PLANT_SEEDS`]; the hotbar names it

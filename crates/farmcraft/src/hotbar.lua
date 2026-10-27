@@ -1,10 +1,11 @@
 -- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-5 are tools
 -- (Till Soil, Watering Can, Axe, Build Fence, Horse), each there once a quest or Brog's shop
--- gives it, slots 6-12 the seeds carried. One slot is
--- lit as the pick: the mouse wheel moves it (Shift and the wheel zoom the camera), a number key
--- or a click picks a slot, and the server is told with ".sel <slot>". Till Soil, Build Fence and
--- the Horse act at once when pressed; the can, the axe and the seeds say what a right-click on
--- the farm does.
+-- gives it, slots 6-12 the seeds carried. One slot is lit as the pick: the mouse wheel moves it
+-- (Shift and the wheel zoom the camera), a number key or a click picks a slot, and the server is
+-- told with ".sel <slot>". Till Soil and Build Fence cast at once when pressed, the Horse sends
+-- ".ride" (the client won't cast while mounted, so a cast could never step down); the can, the
+-- axe and the seeds say what a right-click on the farm does. Also here: the farm's own names on
+-- borrowed skill lines and cast bars, and every quest tracked on screen.
 
 FARMCRAFT_SLOT = 6
 
@@ -14,7 +15,7 @@ local TOOLS = {
 	[1] = {
 		"Interface\\Icons\\INV_Misc_Shovel_01",
 		"Till Soil",
-		"Click a spot in the field to dig a new plot mound.",
+		"Click a furrow in the field to dig a new plot mound.",
 		true,
 	},
 	[2] = {
@@ -38,7 +39,7 @@ local TOOLS = {
 	[5] = {
 		"Interface\\Icons\\Ability_Mount_RidingHorse",
 		"Farm Horse",
-		"Mount up or step down. Riding is twice as fast as walking.",
+		"Mount up, or press again to step down. Riding is twice as fast as walking. Biscuit waits by the house when you're on foot.",
 		true,
 	},
 }
@@ -136,6 +137,12 @@ SetBinding("SHIFT-MOUSEWHEELDOWN", "CAMERAZOOMOUT")
 -- bring up the ground circle), everything else becomes the pick.
 local use_action = UseAction
 UseAction = function(slot, check_cursor, on_self)
+	if slot == 5 then
+		if HasAction(5) then
+			SendChatMessage(".ride", "SAY")
+		end
+		return
+	end
 	if TOOLS[slot] and TOOLS[slot][4] then
 		return use_action(slot, check_cursor, on_self)
 	end
@@ -187,5 +194,58 @@ ContainerFrame_Update = function(frame)
 		end
 	end
 end
+
+-- The skills the farm adds wear borrowed skill lines; these are their own names.
+local SKILL_NAMES = {
+	["Skinning"] = "Lumberjacking",
+	["Engineering"] = "Woodworking",
+	["Leatherworking"] = "Shepherding",
+}
+local get_skill_line = GetSkillLineInfo
+GetSkillLineInfo = function(i)
+	local name, header, expanded, rank, temp, modifier, max, abandon, step, cost, level, kind, text =
+		get_skill_line(i)
+	return SKILL_NAMES[name] or name, header, expanded, rank, temp, modifier, max, abandon, step,
+		cost, level, kind, text
+end
+local chat_event = ChatFrame_OnEvent
+ChatFrame_OnEvent = function(e)
+	if e == "CHAT_MSG_SKILL" and arg1 then
+		for from, to in pairs(SKILL_NAMES) do
+			arg1 = string.gsub(arg1, from, to)
+		end
+	end
+	return chat_event(e)
+end
+
+-- Cast bars of borrowed spells, named for what the farmer is doing.
+local CAST_NAMES = {
+	["Gazban Water Form"] = "Watering",
+}
+local cast_event = CastingBarFrame_OnEvent
+CastingBarFrame_OnEvent = function()
+	cast_event()
+	if event == "SPELLCAST_START" and CAST_NAMES[arg1] then
+		local text = CastingBarText or CastingBarFrameText
+		if text then
+			text:SetText(CAST_NAMES[arg1])
+		end
+	end
+end
+
+-- Every quest in the log is tracked on screen, under the minimap.
+local function watch_all()
+	for i = 1, GetNumQuestLogEntries() do
+		local _, _, _, header = GetQuestLogTitle(i)
+		if not header and not IsQuestWatched(i) then
+			AddQuestWatch(i)
+		end
+	end
+	QuestWatch_Update()
+end
+local watcher = CreateFrame("Frame")
+watcher:RegisterEvent("QUEST_LOG_UPDATE")
+watcher:SetScript("OnEvent", watch_all)
+watch_all()
 
 farm_light()

@@ -29,15 +29,15 @@ Lion's Pride Inn in Goldshire.
 | Quest | Giver → turn in | Unlocks |
 |---|---|---|
 | 1 Breaking Ground: plant your 8 seeds | Ma → Ma | Watering Can |
-| 2 Thirsty Work: water 8 crops | Ma → Ma | 10c |
-| 3 Early to Bed: sleep in your bed | Ma → Ma | Farm Horse |
+| 2 Thirsty Work: water 8 crops | Ma → Ma | |
+| 3 Early to Bed: /sleep in the farmhouse | Ma → Ma | Biscuit the farm horse |
 | 4 Market Day: ride to Goldshire | Ma → Farley | Farley buys your produce |
-| 5 Seeds for Spring: buy 10 seeds | Farley → Brog | 20c |
+| 5 Seeds for Spring: buy 10 seeds | Farley → Brog | Till Soil |
 | 6 The First Harvest: bring 10 Silverleaf | Brog → Farley | Shipping Crate at the farm |
 | 7 Timber!: buy an axe, bring 4 wood | Brog → Ma | Build Fence |
 | 8 Good Fences: build 8 sections | Ma → Ma | A pair of hens |
 | 9 Eggs for Breakfast: gather 3 eggs | Ma → Ma | The cow and the sheep |
-| 10 Into Fargodeep: buy a pick, mine 5 copper | Brog → Brog | 1s |
+| 10 Into Fargodeep: buy a pick, mine 5 copper | Brog → Brog | |
 
 | Do | How |
 |---|---|
@@ -45,12 +45,12 @@ Lion's Pride Inn in Goldshire.
 | Plant | Pick a seed, then right-click a dirt mound |
 | Water | Pick the watering can, then right-click a planted crop once a day; rain does it for you |
 | Harvest | Right-click a ripe crop |
-| Sleep | Right-click the bed inside the farmhouse; past 2:00 you pass out |
+| Sleep | Type /sleep inside the farmhouse (or right-click the bed); past 2:00 you pass out |
 | Sell | To Innkeeper Farley in the Goldshire inn, or drop goods in the Shipping Crate once you have it |
 | Buy | Seeds, the axe and the pick from Brog Hamfist in the Goldshire inn |
 | Dig more plots | Press 1 (Till Soil), then click a furrow in the field |
 | Fences | Press 4, click where the fence starts, then where it goes: Elwynn split rail goes up along the line, 2 Simple Wood a section, and carries on from the end. Click the end again to stop. Short of wood, the rest is marked with posts: right-click one to build it later. Right-click a fence to take it down |
-| Horse | Press 5 to mount or step down: twice as fast, for trips to Goldshire |
+| Horse | Right-click Biscuit by the house, or press 5; 5 again (or clicking off a buff) steps down. Twice as fast, for trips to Goldshire |
 | Animals | Right-click the cows, sheep and chickens once a day for milk, wool and eggs |
 | Mine | Copper veins in Fargodeep Mine, south-west of the farm |
 | Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
@@ -59,4 +59,6 @@ Lion's Pride Inn in Goldshire.
 | Pets | Visit the pet pen south of the field and right-click an animal to make it your companion |
 | Wildlife | Rabbits, squirrels, deer, hares, prairie dogs and toads wander the property |
 | Map | The farm is a house on the world map and minimap whenever you are away |
+| Quests | Tracked on the right of the screen; ! and ? also show on the minimap and the world map |
+| Skills | Herbalism, Mining, Lumberjacking, Woodworking and Shepherding start at 1/75 and rise as in WoW (orange, yellow, green, gray); see the Skills tab |
 | Help | Talk to Ma Stonefield; type `.time`, `.home` or `.gps` in chat. `.quest <n>` skips to quest n, for testing |

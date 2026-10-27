@@ -33,15 +33,15 @@ have a quest and a yellow **?** when you can turn one in.
 | # | Phase | Quest | Giver → turn-in | Objective | Reward |
 |---|---|---|---|---|---|
 | 1 | Farmer (days 1–2) | Breaking Ground | Ma → Ma | Plant your 8 Silverleaf seeds | Watering Can |
-| 2 | | Thirsty Work | Ma → Ma | Water 8 crops | 10c; Ma explains rain waters for you |
-| 3 | | Early to Bed | Ma → Ma | Sleep in your bed in the farmhouse | Farm Horse (hotbar slot 5, 2× walking speed) |
-| 4 | Market (days 2–3) | Market Day | Ma → Farley | Ride to Goldshire, tell Farley the farm is growing again | 25c; Farley buys your produce |
-| 5 | | Seeds for Spring | Farley → Brog | Buy 10 seeds from Brog | 20c |
-| 6 | | The First Harvest | Brog → Farley | Bring Farley 10 Silverleaf (water daily, ripe in 2 days) | 80c and the Shipping Crate at the farm |
+| 2 | | Thirsty Work | Ma → Ma | Water 8 crops | Ma explains rain waters for you |
+| 3 | | Early to Bed | Ma → Ma | Type /sleep in the farmhouse | Biscuit the farm horse, by the house (slot 5, 2× walking speed) |
+| 4 | Market (days 2–3) | Market Day | Ma → Farley | Ride to Goldshire, tell Farley the farm is growing again | Farley buys your produce |
+| 5 | | Seeds for Spring | Farley → Brog | Buy 10 seeds from Brog (only seeds you can afford 10 of) | Till Soil (Brog's hoe) |
+| 6 | | The First Harvest | Brog → Farley | Bring Farley 10 Silverleaf (water daily, ripe in 2 days) | 90c for the Silverleaf, and the Shipping Crate at the farm |
 | 7 | Woodcutter & Builder | Timber! | Brog → Ma | Buy a Woodcutter's Axe (1s), chop Westfall oaks, bring 4 Simple Wood | Build Fence |
 | 8 | | Good Fences | Ma → Ma | Build 8 fence sections (2 wood each) | A pair of hens |
 | 9 | Rancher | Eggs for Breakfast | Ma → Ma | Gather 3 eggs | The cow and the sheep: milk and wool daily |
-| 10 | Miner | Into Fargodeep | Brog → Brog | Buy a Mining Pick (2s), mine 5 Copper Ore | 1s |
+| 10 | Miner | Into Fargodeep | Brog → Brog | Buy a Mining Pick (2s), mine 5 Copper Ore | Farley buys copper |
 
 Farley's cart collects the Shipping Crate each morning.
 

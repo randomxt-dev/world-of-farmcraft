@@ -1,7 +1,9 @@
 //! Server packet builders. Each layout is the one `benilla-protocol`'s `parse_server` reads, and
 //! the tests parse every builder's bytes back through it.
 
-use benilla_protocol::messages::{opcode, AUTH_OK, CHAT_MSG_SYSTEM, LANGUAGE_ADDON};
+use benilla_protocol::messages::{
+    opcode, AUTH_OK, CHAT_MSG_PARTY, CHAT_MSG_SYSTEM, LANGUAGE_ADDON,
+};
 use benilla_protocol::wire::{read_cstring, read_u32_le};
 
 use super::socket::Packet;
@@ -352,6 +354,31 @@ pub fn system_message(text: &str) -> Packet {
             .cstring(text)
             .u8(0)
             .done(),
+    )
+}
+
+/// An addon line under `prefix` from `sender`: never shown, it fires `CHAT_MSG_ADDON` in the UI.
+pub fn addon(sender: u64, prefix: &str, text: &str) -> Packet {
+    let line = format!("{prefix}\t{text}");
+    Packet::new(
+        opcode::SMSG_MESSAGECHAT,
+        Body::default()
+            .u8(CHAT_MSG_PARTY)
+            .u32(LANGUAGE_ADDON)
+            .u64(sender)
+            .u64(sender)
+            .u32(line.len() as u32 + 1)
+            .cstring(&line)
+            .u8(0)
+            .done(),
+    )
+}
+
+/// `SMSG_TEXT_EMOTE`: `who` did text emote `id` (at no one), as `/sleep` or `/wave` shows.
+pub fn text_emote(who: u64, id: u32) -> Packet {
+    Packet::new(
+        opcode::SMSG_TEXT_EMOTE,
+        Body::default().u64(who).u32(id).u32(0).u32(1).u8(0).done(),
     )
 }
 

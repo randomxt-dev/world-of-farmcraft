@@ -9,6 +9,7 @@ use crate::bag::{Bag, Item};
 use crate::clock::{Clock, Weather};
 use crate::crops::Crop;
 use crate::quests::{Deed, Goal, Marker, Quests, Unlock, Villager, QUESTS};
+use crate::skills::{Skill, Skills};
 
 /// Copper a new farmer starts with: 2 silver.
 pub const START_MONEY: u32 = 200;
@@ -100,6 +101,7 @@ impl Reject {
                 Unlock::Horse => "You don't have a horse yet.".into(),
                 Unlock::Axe => "You need an axe. Brog Hamfist in Goldshire sells them.".into(),
                 Unlock::Fence => "You don't know how to build fences yet.".into(),
+                Unlock::Tilling => "You need a hoe to dig new plots. Brog Hamfist has one.".into(),
                 Unlock::MiningPick => {
                     "You need a Mining Pick. Brog Hamfist in Goldshire sells them.".into()
                 }
@@ -162,6 +164,11 @@ pub struct Farm {
     /// Tools and the like, won from quests or bought; the shovel is always there.
     #[serde(default)]
     pub unlocked: BTreeSet<Unlock>,
+    #[serde(default)]
+    pub skills: Skills,
+    /// Skill tries so far, which salt each try's roll.
+    #[serde(default)]
+    pub practiced: u64,
 }
 
 /// A fence the farmer built: where it stands, which way it runs, and which look it has.
@@ -204,7 +211,16 @@ impl Farm {
             fences: Vec::new(),
             quests: Quests::default(),
             unlocked: BTreeSet::new(),
+            skills: Skills::default(),
+            practiced: 0,
         }
+    }
+
+    /// One try at `skill` on something of `difficulty`: the new level if it went up.
+    pub fn practice(&mut self, skill: Skill, difficulty: u32) -> Option<u32> {
+        self.practiced += 1;
+        let roll = crate::rng::below(self.seed, self.practiced << 8 | skill as u64, 100) as u32;
+        self.skills.practice(skill, difficulty, roll)
     }
 
     pub fn has(&self, u: Unlock) -> bool {
@@ -754,7 +770,7 @@ mod tests {
         let money = f.money;
         f.turn_in(5).unwrap();
         assert_eq!(f.bag.count(Item::Produce(Crop::Silverleaf)), 2);
-        assert_eq!(f.money, money + 80);
+        assert_eq!(f.money, money + 90);
         assert!(f.has(Unlock::ShippingCrate));
         assert_eq!(f.marker(Villager::Brog), Marker::Offer);
     }

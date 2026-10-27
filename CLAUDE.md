@@ -68,7 +68,12 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
 - The game design (progression, economy, goals) is `docs/DESIGN.md`.
 - Progression is a quest chain (`farm-rules/src/quests.rs`, shown by `farm-server/src/game/quests.rs`
   through WoW's own quest windows, log and `!`/`?`): tools, the crate and the animals are locked
-  until a quest or Brog's shop gives them.
+  until a quest or Brog's shop gives them. Quests pay money only for goods handed over.
+- Skills (`farm-rules/src/skills.rs`) wear borrowed `SkillLine.dbc` lines: Lumberjacking on
+  Skinning, Woodworking on Engineering, Shepherding on Leatherworking; `hotbar.lua` renames them
+  in the Skills tab and the skill-up line. Watering's cast bar is a borrowed spell renamed the same way.
+- `markers.lua` draws the villagers' !/? on the minimap and world map from an addon line the
+  server sends (`FarmcraftMarks`), placing them with Elwynn's `WorldMapArea.dbc` bounds.
 - In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`,
   `.quest <n>` (skip to quest n with what the earlier ones unlock), `.talk ma|farley|brog` (open their window)
   (the nearest grove tree). `WOW_PROBE_CHAT=".go xyz x y z 0;.chop"` types them from a scripted run,

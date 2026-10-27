@@ -52,10 +52,10 @@ const QUEST_LOG_SLOTS: u16 = 20;
 /// `PLAYER_SKILL_INFO_1_1`: 128 skills of three words, the skill id with its step, then the value
 /// with its maximum, then a bonus.
 const PLAYER_SKILL_INFO_1_1: u16 = 718;
-/// `SkillLine.dbc` Herbalism and Mining, known at the top of the trade: the client lights the
-/// herb and pick cursors, and casts its gathering spells, only for a skill it can see.
-const SKILLS: [u32; 2] = [182, 186];
-const SKILL_VALUE: u32 = 300;
+/// A skill as the player's fields carry it: the `SkillLine.dbc` id, the level and the cap. The
+/// client lights the herb and pick cursors, and casts its gathering spells, only for a skill it
+/// can see.
+pub type SkillLine = (u32, u32, u32);
 
 /// `TYPEMASK_OBJECT | TYPEMASK_UNIT | TYPEMASK_PLAYER`.
 const TYPE_PLAYER: u32 = 0x01 | 0x08 | 0x10;
@@ -167,7 +167,13 @@ pub fn pick(owner: u64) -> Held {
 
 /// The player's create-time descriptor; `is_self` adds what only the owner is sent: the bags,
 /// the purse, the explored map.
-pub fn fields(c: &Character, is_self: bool, carried: &[Held], money: u32) -> Fields {
+pub fn fields(
+    c: &Character,
+    is_self: bool,
+    carried: &[Held],
+    money: u32,
+    skills: &[SkillLine],
+) -> Fields {
     let mut f = Fields::default();
     let (power, pool) = power(c.class);
     f.u64(OBJECT_FIELD_GUID, c.guid)
@@ -225,14 +231,23 @@ pub fn fields(c: &Character, is_self: bool, carried: &[Held], money: u32) -> Fie
             f.u64(PLAYER_FIELD_INV_SLOT_HEAD + 2 * u16::from(h.slot), h.guid);
         }
         f.u32(PLAYER_FIELD_COINAGE, money);
-        for (i, skill) in SKILLS.into_iter().enumerate() {
-            let at = PLAYER_SKILL_INFO_1_1 + 3 * i as u16;
-            f.u32(at, skill)
-                .u32(at + 1, SKILL_VALUE | SKILL_VALUE << 16)
-                .u32(at + 2, 0);
-        }
+        skill_fields(&mut f, skills);
     }
     f
+}
+
+fn skill_fields(f: &mut Fields, skills: &[SkillLine]) {
+    for (i, &(id, level, cap)) in skills.iter().enumerate() {
+        let at = PLAYER_SKILL_INFO_1_1 + 3 * i as u16;
+        f.u32(at, id).u32(at + 1, level | cap << 16).u32(at + 2, 0);
+    }
+}
+
+/// The values update that writes the farmer's skills, in the same order as at login.
+pub fn skill_change(owner: u64, skills: &[SkillLine]) -> Packet {
+    let mut f = Fields::default();
+    skill_fields(&mut f, skills);
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
 }
 
 /// The values update that puts `guid` (0 to empty it) in the backpack's `slot`.
@@ -284,7 +299,13 @@ pub fn stand_change(owner: u64, stand: u8) -> Packet {
 
 /// The `SMSG_UPDATE_OBJECT` that creates the farmer at `living` for themself: their worn and
 /// carried items first, then the body, as vmangos builds it.
-pub fn create_self(c: &Character, living: &Living, carried: &[Held], money: u32) -> Packet {
+pub fn create_self(
+    c: &Character,
+    living: &Living,
+    carried: &[Held],
+    money: u32,
+    skills: &[SkillLine],
+) -> Packet {
     let mut blocks = Vec::new();
     for h in outfit(c.guid).iter().chain(carried) {
         blocks.push(items::create_block(h, c.guid));
@@ -293,7 +314,7 @@ pub fn create_self(c: &Character, living: &Living, carried: &[Held], money: u32)
         c.guid,
         true,
         living,
-        &fields(c, true, carried, money),
+        &fields(c, true, carried, money, skills),
     ));
     Packet::new(opcode::SMSG_UPDATE_OBJECT, update::join(&blocks))
 }
@@ -317,13 +338,14 @@ pub fn login_packets(
     clock: Packet,
     carried: &[Held],
     money: u32,
+    skills: &[SkillLine],
 ) -> Vec<Packet> {
     vec![
         packets::login_verify_world(at),
         spells::initial_spells(),
         spells::action_buttons(),
         clock,
-        create_self(c, &standing(at), carried, money),
+        create_self(c, &standing(at), carried, money, skills),
     ]
 }
 
@@ -402,6 +424,7 @@ mod tests {
             packets::time_speed(6, 0, 1, 1.2),
             &carried,
             200,
+            &[(182, 1, 75), (186, 1, 75)],
         ) {
             let (parsed, tail) = parse_server_with_tail(p.opcode, &p.body).expect("parses");
             assert_eq!(tail, 0, "{:#06x} left bytes unread", p.opcode);

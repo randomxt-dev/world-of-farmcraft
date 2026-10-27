@@ -23,6 +23,8 @@ pub enum Unlock {
     /// The cow and the sheep.
     Herd,
     MiningPick,
+    /// Till Soil, to dig plots beyond the first patch.
+    Tilling,
 }
 
 /// The villagers who give and take quests.
@@ -101,7 +103,7 @@ pub const QUESTS: [Quest; 10] = [
         giver: Villager::Ma,
         ender: Villager::Ma,
         goal: Goal::Do(Deed::Water, 8, "Crops watered"),
-        money: 10,
+        money: 0,
         unlocks: None,
         details: "A sprout that isn't watered doesn't grow, and that's the whole of farming in a \
                   sentence.$B$BPick the watering can on your bar and right-click each planted \
@@ -117,21 +119,21 @@ pub const QUESTS: [Quest; 10] = [
         goal: Goal::Do(Deed::Sleep, 1, "Nights slept in your bed"),
         money: 0,
         unlocks: Some(Unlock::Horse),
-        details: "Crops grow overnight, and so do farmers. Your bed's inside the farmhouse; \
-                  right-click it and sleep till morning.$B$BStay up past two and you'll drop \
-                  where you stand, and Goldshire's healer doesn't work for free.",
-        objectives: "Sleep in your bed in the Stonefield farmhouse, then see Ma Stonefield.",
+        details: "Crops grow overnight, and so do farmers. Your bed's inside the farmhouse: \
+                  go in and type /sleep, and you'll wake in the morning.$B$BStay up past two and \
+                  you'll drop where you stand, and Goldshire's healer doesn't work for free.",
+        objectives: "Type /sleep inside the Stonefield farmhouse, then see Ma Stonefield.",
         progress: "Bed's inside, dear. Through the door.",
-        reward: "Rested? Good. Now, the old farm horse has been eating his head off in the \
-                 paddock. He's yours; he'll get you to Goldshire and back twice as quick as \
-                 your own feet.",
+        reward: "Rested? Good. Now, the old farm horse has been eating his head off by the \
+                 house. He's yours: right-click him to ride, or press 5 anywhere, and again to \
+                 get down. He'll get you to Goldshire and back twice as quick as your feet.",
     },
     Quest {
         title: "Market Day",
         giver: Villager::Ma,
         ender: Villager::Farley,
         goal: Goal::Visit,
-        money: 25,
+        money: 0,
         unlocks: Some(Unlock::Market),
         details: "A farm that doesn't sell is a garden. Ride up the road north-east to Goldshire \
                   and find Innkeeper Farley at the Lion's Pride Inn.$B$BTell him the Stonefield \
@@ -146,21 +148,23 @@ pub const QUESTS: [Quest; 10] = [
         giver: Villager::Farley,
         ender: Villager::Brog,
         goal: Goal::Do(Deed::BuySeeds, 10, "Seeds bought"),
-        money: 20,
-        unlocks: None,
+        money: 0,
+        unlocks: Some(Unlock::Tilling),
         details: "One field of Silverleaf won't fill my larder. Brog Hamfist, right here in the \
                   inn, sells seeds of every sort.$B$BBuy ten from him. Peacebloom grows quick and \
                   Earthroot sells better, if you've the coin.",
         objectives: "Buy 10 seeds from Brog Hamfist in the Lion's Pride Inn.",
         progress: "Seeds are on the shelf, friend. Have a look.",
-        reward: "Farley sent you? Then you'll be back, and I like customers who come back.",
+        reward: "Farley sent you? Then you'll be back, and I like customers who come back. \
+                 Ten more seeds want ten more mounds: take this old hoe. Pick Till Soil on \
+                 your bar and click the furrows to dig new ones.",
     },
     Quest {
         title: "The First Harvest",
         giver: Villager::Brog,
         ender: Villager::Farley,
         goal: Goal::Bring(Item::Produce(Crop::Silverleaf), 10),
-        money: 80,
+        money: 90,
         unlocks: Some(Unlock::ShippingCrate),
         details: "Farley's waiting on that first harvest of yours, and so's my lunch.\
                   $B$BSilverleaf ripens in two days if you water it each morning. Right-click a \
@@ -221,15 +225,15 @@ pub const QUESTS: [Quest; 10] = [
         giver: Villager::Brog,
         ender: Villager::Brog,
         goal: Goal::Do(Deed::Mine, 5, "Copper Ore mined"),
-        money: 100,
+        money: 0,
         unlocks: None,
         details: "There's copper in Fargodeep Mine, south-west of your farm, and the kobolds \
                   can't dig it all.$B$BI sell a Mining Pick for two silver. Buy one, mine five \
                   Copper Ore, and come tell me about it. Mind the candles.",
         objectives: "Buy a Mining Pick from Brog Hamfist and mine 5 Copper Ore in Fargodeep Mine.",
         progress: "Find the copper yet?",
-        reward: "Now you're a farmer and a miner both. Copper sells, and one day a smith will \
-                 want it for your tools.",
+        reward: "Now you're a farmer and a miner both. Farley pays for copper too, and one \
+                 day a smith will want it for your tools.",
     },
 ];
 

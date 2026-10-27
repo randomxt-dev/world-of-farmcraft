@@ -7,10 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use farm_rules::save::Character;
-use farm_rules::{Crop, DayReport, Deed, Farm, Fence, Item, Reject, TreeStage, Unlock, Weather};
+use farm_rules::{
+    Crop, DayReport, Deed, Farm, Fence, Item, Reject, Skill, TreeStage, Unlock, Weather,
+};
 
 use crate::layout::{
-    Layout, Role, FENCE_DISPLAY, FENCE_LENGTH, PETS, PLOT_COLUMNS, PLOT_ROWS, TREES,
+    Layout, Role, FENCE_DISPLAY, FENCE_LENGTH, HORSE_DISPLAY, PETS, PLOT_COLUMNS, PLOT_ROWS, TREES,
 };
 use crate::saves::Saves;
 use crate::world::creatures::{self, Kind, Look, Shown};
@@ -76,7 +78,6 @@ const FENCE_START: u32 = 55_002;
 /// `World\Generic\Human\Passive Doodads\SignPosts\WoodSignPointerWorn01.mdx`: a marker post.
 const MARKER_POST: u32 = 22;
 /// The horse the farmer rides: Riding Horse's look, and the run speed in the saddle.
-const HORSE_DISPLAY: u32 = 2405;
 const RIDE_SPEED: f32 = 14.0;
 /// On foot: the 1.12 run speed.
 const WALK_SPEED: f32 = 7.0;
@@ -107,6 +108,32 @@ const MOUND_TURN: f32 = 0.0;
 const REACH: f32 = 6.0;
 /// How long each job's cast bar runs.
 const PLANT_TIME: Duration = Duration::from_millis(1500);
+const WATER_TIME: Duration = Duration::from_millis(1200);
+/// How far from the bed `/sleep` still counts as in the farmhouse.
+const HOUSE_REACH: f32 = 10.0;
+/// `EmotesText.dbc`'s SLEEP.
+const TEXT_EMOTE_SLEEP: u32 = 87;
+/// The `SkillLine.dbc` lines the farmer's skills wear: Herbalism and Mining as themselves,
+/// Lumberjacking, Woodworking and Shepherding on Skinning, Engineering and Leatherworking, which
+/// the hotbar's Lua renames.
+const SKILL_LINES: [(Skill, u32); 5] = [
+    (Skill::Herbalism, 182),
+    (Skill::Mining, 186),
+    (Skill::Lumberjacking, 393),
+    (Skill::Woodworking, 202),
+    (Skill::Shepherding, 165),
+];
+
+/// How hard a crop is to gather, as Herbalism reckons it: the herb's own skill in the game.
+fn herb_difficulty(crop: Crop) -> u32 {
+    match crop {
+        Crop::Silverleaf | Crop::Peacebloom => 1,
+        Crop::Earthroot => 15,
+        Crop::Pumpkin => 25,
+        Crop::Mageroyal | Crop::Watermelon => 50,
+        Crop::Briarthorn => 70,
+    }
+}
 const HARVEST_TIME: Duration = Duration::from_millis(1500);
 const MINE_TIME: Duration = Duration::from_millis(2500);
 /// How long the farmer lies in the hay before morning comes.
@@ -232,6 +259,7 @@ enum Job {
     Harvest(usize),
     Mine(usize),
     Forage(usize),
+    Water(usize),
     /// Dig a new plot tile at a field cell.
     Till((i32, i32)),
 }
@@ -438,6 +466,7 @@ impl Game {
             self.clock_packet(),
             &carried,
             self.farm.money,
+            &self.skill_lines(),
         ) {
             self.send(p);
         }
@@ -490,7 +519,11 @@ impl Game {
             self.show_fixture(1);
         }
         for i in 0..self.layout.npcs.len() {
-            if self.animal_unlock(i).is_none_or(|u| self.farm.has(u)) {
+            let waits = match self.layout.npcs[i].role {
+                Role::Horse => Some(Unlock::Horse),
+                _ => self.animal_unlock(i),
+            };
+            if waits.is_none_or(|u| self.farm.has(u)) {
                 self.show_npc(i);
             }
         }
@@ -604,6 +637,9 @@ impl Game {
 
     /// Till Soil at a spot: the nearest field cell, if it is free, close by and in the field.
     fn till_at(&mut self, p: [f32; 3]) {
+        if !self.farm.has(Unlock::Tilling) {
+            return self.refuse(&Reject::Locked(Unlock::Tilling));
+        }
         let Some(cell) = self.layout.cell_at(p[0], p[1]) else {
             return self.notify("Dig in the field: the furrowed ground by the farmhouse.");
         };
@@ -690,6 +726,7 @@ impl Game {
             self.sync_bag(None, false);
             for _ in 0..built {
                 self.noted(Deed::BuildFence);
+                self.practice(Skill::Woodworking, 1);
             }
         }
         let mut line = format!("{built} fence sections built");
@@ -713,6 +750,13 @@ impl Game {
             return;
         }
         self.mounted = mount;
+        if let Some(h) = self.horse() {
+            if mount {
+                self.send(crate::world::destroy(npc_guid(h)));
+            } else {
+                self.show_npc(h);
+            }
+        }
         let display = if mount { HORSE_DISPLAY } else { 0 };
         self.send(player::mount_change(self.guid(), display));
         self.move_counter += 1;
@@ -722,6 +766,40 @@ impl Game {
             self.move_counter,
             speed,
         ));
+    }
+
+    /// The farm horse's index among the villagers, once it is the farmer's.
+    fn horse(&self) -> Option<usize> {
+        if !self.farm.has(Unlock::Horse) {
+            return None;
+        }
+        (self.layout.npcs.iter()).position(|n| n.role == Role::Horse)
+    }
+
+    /// `.ride`, the hotbar's horse button: up if the farmer has a horse, or down.
+    fn toggle_ride(&mut self) {
+        if !self.farm.has(Unlock::Horse) {
+            return self.refuse(&Reject::Locked(Unlock::Horse));
+        }
+        let mount = !self.mounted;
+        self.ride(mount);
+    }
+
+    /// One try at `skill` on something of `difficulty`; a point shows in the skills.
+    fn practice(&mut self, skill: Skill, difficulty: u32) {
+        if self.farm.practice(skill, difficulty).is_some() {
+            self.send(player::skill_change(self.guid(), &self.skill_lines()));
+        }
+    }
+
+    /// The farmer's skills as the player's fields carry them.
+    fn skill_lines(&self) -> Vec<player::SkillLine> {
+        (SKILL_LINES.iter())
+            .map(|&(skill, id)| {
+                let (level, cap) = self.farm.skills.get(skill);
+                (id, level, cap)
+            })
+            .collect()
     }
 
     /// Show grove tree `t` as it stands    /// Show grove tree `t` as it stands: a tree, a stump the day it fell, then a sapling.
@@ -804,6 +882,7 @@ impl Game {
         match self.farm.chop(chop.tree) {
             Ok(n) => {
                 self.sync_bag(Some((Item::Wood, n)), false);
+                self.practice(Skill::Lumberjacking, 1);
                 self.show_tree(chop.tree);
                 self.send(packets::play_sound(SOUND_TREE_FALL));
                 self.say("Timber!");
@@ -951,7 +1030,7 @@ impl Game {
     /// changes; the counts are the client's own, read from the bags.
     fn sync_bar(&mut self) {
         let tools = [
-            true,
+            self.farm.has(Unlock::Tilling),
             self.farm.has(Unlock::WateringCan),
             self.farm.has(Unlock::Axe),
             self.farm.has(Unlock::Fence),
@@ -1081,6 +1160,7 @@ impl Game {
                         self.send(packets::play_sound(SOUND_WOOD_DOWN));
                         self.sync_bag(None, false);
                         self.noted(Deed::BuildFence);
+                        self.practice(Skill::Woodworking, 1);
                     }
                     Err(r) => self.refuse(&r),
                 }
@@ -1138,14 +1218,12 @@ impl Game {
                 if self.selected != spells::CAN_SLOT {
                     return self.notify("Pick the watering can (slot 2) to water.");
                 }
-                // Watering is instant: the soil darkening is the feedback.
-                match self.farm.water(i) {
-                    Ok(()) => {
-                        self.show_tile(i);
-                        self.noted(Deed::Water);
-                    }
-                    Err(r) => self.refuse(&r),
-                }
+                self.start(
+                    spells::WATERING,
+                    Target::GameObject(object),
+                    WATER_TIME,
+                    Job::Water(i),
+                );
             }
         }
     }
@@ -1264,11 +1342,19 @@ impl Game {
                     self.show_tile(i);
                 }
             }
+            Job::Water(i) => match self.farm.water(i) {
+                Ok(()) => {
+                    self.show_tile(i);
+                    self.noted(Deed::Water);
+                }
+                Err(r) => self.refuse(&r),
+            },
             Job::Forage(w) => {
                 let crop = self.layout.wild[w].0;
                 match self.farm.forage(w, crop) {
                     Ok((n, seed)) => {
                         self.sync_bag(Some((Item::Produce(crop), n)), false);
+                        self.practice(Skill::Herbalism, herb_difficulty(crop));
                         if seed {
                             self.say(&format!(
                                 "You found a {} seed! Plant it at home.",
@@ -1289,6 +1375,7 @@ impl Game {
                     );
                     self.sync_bag(Some((Item::Produce(crop), n)), false);
                     self.show_tile(i);
+                    self.practice(Skill::Herbalism, herb_difficulty(crop));
                 }
                 Err(r) => self.refuse(&r),
             },
@@ -1296,6 +1383,7 @@ impl Game {
                 Ok(n) => {
                     self.sync_bag(Some((Item::CopperOre, n)), false);
                     self.show_vein(v);
+                    self.practice(Skill::Mining, 1);
                     for _ in 0..n {
                         self.noted(Deed::Mine);
                     }
@@ -1318,13 +1406,36 @@ impl Game {
     }
 
     fn go_to_bed(&mut self) {
-        self.ride(false);
         if !self.near(self.layout.bed) {
             return self.notify("You need to be closer.");
         }
+        self.lie_down();
+    }
+
+    fn lie_down(&mut self) {
+        self.ride(false);
         self.say("You settle into bed...");
         self.send(player::stand_change(self.guid(), 3));
         self.asleep = Some(SLEEP_TIME);
+    }
+
+    /// `CMSG_TEXT_EMOTE`: the emote plays for the farmer, and `/sleep` in the farmhouse ends
+    /// the day.
+    pub fn text_emote(&mut self, id: u32) {
+        self.send(packets::text_emote(self.guid(), id));
+        if id != TEXT_EMOTE_SLEEP || self.asleep.is_some() || self.cast.is_some() {
+            return;
+        }
+        if distance(self.at, self.layout.bed) <= HOUSE_REACH {
+            self.lie_down();
+        } else {
+            self.notify("Sleep inside the farmhouse to end the day.");
+        }
+    }
+
+    /// `CMSG_CANCEL_AURA`: the farmer clicked off a buff; any of them steps down off the horse.
+    pub fn cancel_aura(&mut self) {
+        self.ride(false);
     }
 
     fn ship(&mut self) {
@@ -1457,7 +1568,7 @@ impl Game {
         if hour != self.told_hour {
             self.told_hour = hour;
             match hour {
-                22 => self.say("It's getting late. Your bed is in the farmhouse."),
+                22 => self.say("It's getting late. Type /sleep in the farmhouse to go to bed."),
                 1 => self.notify("You're exhausted! Get to bed before 2:00."),
                 _ => {}
             }
@@ -1524,6 +1635,14 @@ impl Game {
         };
         match self.layout.npcs[i].role {
             Role::Quest(v) => self.villager_hello(npc, v),
+            Role::Horse => {
+                if distance(self.at, self.layout.npcs[i].at) > REACH {
+                    return self.notify("You need to be closer.");
+                }
+                if self.farm.has(Unlock::Horse) {
+                    self.ride(true);
+                }
+            }
             Role::Animal(item, a) => {
                 if distance(self.at, self.layout.npcs[i].at) > REACH {
                     return self.notify("You need to be closer.");
@@ -1534,6 +1653,12 @@ impl Game {
                         if item == Item::Egg {
                             self.noted(Deed::GatherEgg);
                         }
+                        let difficulty = match item {
+                            Item::Egg => 1,
+                            Item::Milk => 25,
+                            _ => 50,
+                        };
+                        self.practice(Skill::Shepherding, difficulty);
                     }
                     Err(r) => self.refuse(&r),
                 }
@@ -1608,7 +1733,13 @@ impl Game {
             display: items::template(entry).map_or(0, |t| t.display_id),
             price,
         };
+        // While Seeds for Spring is on, only seeds the farmer can still buy enough of: the quest
+        // can't be spent out of reach.
+        let seeds_left = (self.farm.quests.is_active(4))
+            .then(|| 10u32.saturating_sub(self.farm.quests.count(4)))
+            .filter(|&n| n > 0);
         let mut wares: Vec<Ware> = (Crop::ALL.iter())
+            .filter(|c| seeds_left.is_none_or(|n| c.def().seed_price * n <= self.farm.money))
             .map(|&c| ware(items::entry(Item::Seeds(c)), c.def().seed_price))
             .collect();
         let sent_for = |q: usize| self.farm.quests.done > q || self.farm.quests.is_active(q);
@@ -1623,7 +1754,7 @@ impl Game {
 
     /// The merchant window: Brog's shelf, or Farley's empty one to sell produce into.
     pub fn list_inventory(&self, vendor: u64) {
-        if self.is(vendor, farm_rules::Villager::Brog) {
+        if self.is(vendor, farm_rules::Villager::Brog) && self.farm.has(Unlock::Market) {
             self.send(packets::list_inventory(vendor, &self.wares()));
         } else if self.is(vendor, farm_rules::Villager::Farley) && self.farm.has(Unlock::Market) {
             self.send(packets::list_inventory(vendor, &[]));
@@ -1677,8 +1808,12 @@ impl Game {
                 self.sync_money();
                 self.sync_bag(Some((item, n)), true);
                 if matches!(item, Item::Seeds(_)) {
+                    let shelf = self.wares();
                     for _ in 0..n {
                         self.noted(Deed::BuySeeds);
+                    }
+                    if self.wares() != shelf {
+                        self.list_inventory(vendor);
                     }
                 }
             }
@@ -1849,6 +1984,8 @@ impl Game {
                 let npc = self.villager_guid(who);
                 self.gossip_hello(npc);
             }
+            ".ride" => self.toggle_ride(),
+            ".markers" => self.send_markers(),
             ".quest" => {
                 if let Some(n) = words.next().and_then(|w| w.parse::<usize>().ok()) {
                     self.skip_to_quest(n.saturating_sub(1));
@@ -1920,6 +2057,7 @@ mod tests {
                 Unlock::Hens,
                 Unlock::Herd,
                 Unlock::MiningPick,
+                Unlock::Tilling,
             ]
             .into_iter()
             .collect();
@@ -1998,8 +2136,10 @@ mod tests {
                 let crop = g.crops[0].expect("growing").0;
                 g.command(".sel 2");
                 g.use_object(crop);
+                assert!(g.cast.is_some(), "watering takes a moment");
+                run(&mut g, 1.5);
                 g.command(".sel 6");
-                assert!(g.farm.tiles[0].watered, "watering is instant");
+                assert!(g.farm.tiles[0].watered);
                 assert_eq!(g.soil[0].1, SOIL_WET);
             }
             let bed = g.layout.bed;
@@ -2365,7 +2505,7 @@ mod tests {
         };
         assert!(statuses(&mut rx).contains(&(ma, 5)), "Ma has a yellow !");
         // Only the shovel and the seeds are on the bar; there is no can to water with.
-        assert_eq!(g.bar_tools, [true, false, false, false, false]);
+        assert_eq!(g.bar_tools, [false; 5], "only seeds: the shovel plants");
 
         // Breaking Ground: plant all eight seeds.
         g.gossip_hello(ma);
@@ -2403,6 +2543,7 @@ mod tests {
             let tile = g.tile_pos(i);
             stand_at(&mut g, tile);
             g.use_object(g.crops[i].unwrap().0);
+            run(&mut g, 1.5);
         }
         g.quest_choose(ma, 901);
         g.quest_accept(ma, 902);
@@ -2423,6 +2564,67 @@ mod tests {
         assert_eq!(g.farm.quests.count(4), 10);
         g.quest_choose(brog, 904);
         assert_eq!(g.farm.quests.done, 5);
+        assert!(g.bar_tools[0], "Brog's hoe: Till Soil");
+        drain(&mut rx);
+    }
+
+    #[test]
+    fn sleep_in_the_house_the_horse_by_it_and_skills_that_grow() {
+        let (mut g, mut rx) = game();
+        // /sleep away from the house only plays the emote; in it, the day ends.
+        g.text_emote(TEXT_EMOTE_SLEEP);
+        assert!(g.asleep.is_none());
+        let bed = g.layout.bed;
+        stand_at(&mut g, [bed[0] + 3.0, bed[1], bed[2]]);
+        let day = g.farm.clock.day;
+        g.text_emote(TEXT_EMOTE_SLEEP);
+        run(&mut g, 3.5);
+        assert_eq!(g.farm.clock.day, day + 1);
+
+        // The horse waits by the house: a right-click rides, the bar's 5 steps down.
+        let h = g.horse().unwrap();
+        let at = g.layout.npcs[h].at;
+        stand_at(&mut g, at);
+        g.gossip_hello(npc_guid(h));
+        assert!(g.mounted);
+        g.command(".ride");
+        assert!(!g.mounted);
+        g.command(".ride");
+        g.cancel_aura();
+        assert!(!g.mounted, "clicking off the buff steps down too");
+
+        // Felling a tree is an orange try: Lumberjacking goes up.
+        assert_eq!(g.farm.skills.get(Skill::Lumberjacking).0, 1);
+        let tree = g.layout.trees[0].1;
+        stand_at(&mut g, tree);
+        g.command(".chop");
+        run(&mut g, 4.0);
+        assert_eq!(g.farm.skills.get(Skill::Lumberjacking).0, 2);
+        assert!(drain(&mut rx).iter().all(|_| true));
+    }
+
+    #[test]
+    fn brog_only_shelves_seeds_the_seed_quest_can_still_be_finished_with() {
+        let (mut g, mut rx) = new_game(false);
+        g.skip_to_quest(4);
+        let brog = g.villager_guid(farm_rules::Villager::Brog);
+        let farley = g.villager_guid(farm_rules::Villager::Farley);
+        g.quest_accept(farley, 904);
+        g.farm.money = 200;
+        let shelf = |g: &Game| g.wares().iter().map(|w| w.entry).collect::<Vec<_>>();
+        let pumpkin = items::entry(Item::Seeds(Crop::Pumpkin));
+        assert!(!shelf(&g).contains(&pumpkin), "10 pumpkins would cost 15s");
+        assert!(shelf(&g).contains(&items::entry(Item::Seeds(Crop::Peacebloom))));
+        g.buy(brog, items::entry(Item::Seeds(Crop::Peacebloom)), 6);
+        // 110c left for 4 more: everything up to Earthroot's 30c still fits.
+        g.buy(brog, pumpkin, 1);
+        assert_eq!(g.farm.bag.count(Item::Seeds(Crop::Pumpkin)), 0);
+        g.buy(brog, items::entry(Item::Seeds(Crop::Silverleaf)), 4);
+        assert_eq!(g.farm.quests.count(4), 10);
+        assert!(
+            shelf(&g).contains(&pumpkin),
+            "the whole shelf once it is done"
+        );
         drain(&mut rx);
     }
 

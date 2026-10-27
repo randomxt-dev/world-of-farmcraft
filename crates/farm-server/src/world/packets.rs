@@ -148,12 +148,29 @@ pub fn weather(kind: u32, grade: f32, instant: bool) -> Packet {
 /// `SMSG_GOSSIP_MESSAGE`: `speaker`'s menu, greeting text `text_id`, chat-bubble options in
 /// order, no quests.
 pub fn gossip_menu(speaker: u64, text_id: u32, options: &[String]) -> Packet {
+    gossip_quests(speaker, text_id, options, &[])
+}
+
+/// A gossip quest row: the quest id, its icon (3 in progress, 4 ready to turn in, 5 offered),
+/// its title.
+pub type GossipQuest = (u32, u32, String);
+
+/// `SMSG_GOSSIP_MESSAGE` with `options` (the first a vendor's, icon 1) and `quests` below them.
+pub fn gossip_quests(
+    speaker: u64,
+    text_id: u32,
+    options: &[String],
+    quests: &[GossipQuest],
+) -> Packet {
     let mut b = Body::default();
     b.u64(speaker).u32(text_id).u32(options.len() as u32);
     for (i, text) in options.iter().enumerate() {
         b.u32(i as u32).u8(0).u8(0).cstring(text);
     }
-    b.u32(0);
+    b.u32(quests.len() as u32);
+    for (id, icon, title) in quests {
+        b.u32(*id).u32(*icon).u32(1).cstring(title);
+    }
     Packet::new(opcode::SMSG_GOSSIP_MESSAGE, b.done())
 }
 

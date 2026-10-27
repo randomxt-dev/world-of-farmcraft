@@ -60,12 +60,14 @@ pub const TOOL_SLOTS: [(usize, u32); 5] =
 pub const CAN_SLOT: usize = 1;
 pub const SEED_SLOT0: usize = 5;
 
-/// `SMSG_ACTION_BUTTONS` with the tools in the main bar's first slots and `items` (each crop's
-/// seed entry, 0 for none) after them: the hotbar.
-pub fn item_bar(items: &[u32]) -> Packet {
+/// `SMSG_ACTION_BUTTONS` with the tools the farmer has (`tools`, by [`TOOL_SLOTS`] order) in the
+/// main bar's first slots and `items` (each crop's seed entry, 0 for none) after them: the hotbar.
+pub fn item_bar(items: &[u32], tools: &[bool]) -> Packet {
     let mut b = Body::default();
     for i in 0..120 {
-        let tool = TOOL_SLOTS.iter().find(|(slot, _)| *slot == i);
+        let tool = (TOOL_SLOTS.iter().enumerate())
+            .find(|(k, (slot, _))| *slot == i && tools.get(*k).copied().unwrap_or(false))
+            .map(|(_, t)| t);
         let seed = (i.checked_sub(SEED_SLOT0))
             .filter(|_| i < 12)
             .and_then(|k| items.get(k))

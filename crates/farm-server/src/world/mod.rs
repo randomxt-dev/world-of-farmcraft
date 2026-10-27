@@ -6,6 +6,7 @@ pub mod items;
 pub mod objects;
 pub mod packets;
 pub mod player;
+pub mod quests;
 mod session;
 pub mod socket;
 pub mod spells;

@@ -66,7 +66,11 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
   `=ride` presses the horse button, `=map` opens the world map.
 - `.go xyz` needs a z above the ground (70 is safe around the farm): below it you fall forever.
 - The game design (progression, economy, goals) is `docs/DESIGN.md`.
-- In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`
+- Progression is a quest chain (`farm-rules/src/quests.rs`, shown by `farm-server/src/game/quests.rs`
+  through WoW's own quest windows, log and `!`/`?`): tools, the crate and the animals are locked
+  until a quest or Brog's shop gives them.
+- In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`,
+  `.quest <n>` (skip to quest n with what the earlier ones unlock), `.talk ma|farley|brog` (open their window)
   (the nearest grove tree). `WOW_PROBE_CHAT=".go xyz x y z 0;.chop"` types them from a scripted run,
   `WOW_PROBE_CAM="<yaw>,<pitch>,<dist>@<s>"` parks the camera (negative pitch looks down).
 - `FARMCRAFT_TREE_LINE=1` lines the grove's tree kinds up in order, to look at.

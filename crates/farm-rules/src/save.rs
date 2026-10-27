@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn a_save_round_trips_through_text() {
         let mut farm = Farm::new(16, 3, 9);
-        farm.plant(2, Crop::Peacebloom).unwrap();
+        farm.plant(2, Crop::Silverleaf).unwrap();
         farm.money = 1234;
         let save = Save {
             farmers: vec![Farmer {

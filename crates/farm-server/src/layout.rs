@@ -5,10 +5,10 @@
 
 use std::collections::BTreeMap;
 
-use farm_rules::{Crop, Item};
+use farm_rules::{Crop, Item, Villager};
 
 use crate::ground::Ground;
-use crate::world::creatures::{Kind, Look, Stand, NPC_GOSSIP, NPC_VENDOR};
+use crate::world::creatures::{Kind, Look, Stand, NPC_GOSSIP, NPC_QUESTGIVER, NPC_VENDOR};
 use crate::world::packets::Location;
 
 /// Eastern Kingdoms.
@@ -277,10 +277,8 @@ pub struct Npc {
 pub enum Role {
     /// Scenery: no menu.
     None,
-    /// Sells seeds and buys the harvest.
-    Store,
-    /// Talks about the farm.
-    Advice,
+    /// Gives and takes quests, and for Brog sells and for Farley buys.
+    Quest(Villager),
     /// One of the pet pen's animals: a right-click offers it as the farmer's companion.
     Pet(usize),
     /// A farm animal that gives `Item` once a day, the `usize`th of them.
@@ -563,17 +561,17 @@ impl Layout {
             npcs.push(n);
         }
         let ma = &mut npcs[0];
-        ma.look.npc_flags = NPC_GOSSIP;
-        ma.role = Role::Advice;
+        ma.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER;
+        ma.role = Role::Quest(Villager::Ma);
         let brog = &mut npcs[4];
-        brog.look.subname = "General Supplies".into();
-        brog.look.npc_flags = NPC_VENDOR;
-        brog.role = Role::Store;
+        brog.look.subname = "Seeds & Tools".into();
+        brog.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER | NPC_VENDOR;
+        brog.role = Role::Quest(Villager::Brog);
+        let farley = &mut npcs[5];
+        farley.look.subname = "Buys Produce".into();
+        farley.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER | NPC_VENDOR;
+        farley.role = Role::Quest(Villager::Farley);
         npcs[1].look.stand = Stand::Sit;
-        let bernice = &mut npcs[2];
-        bernice.look.subname = "Seeds".into();
-        bernice.look.npc_flags = NPC_VENDOR;
-        bernice.role = Role::Store;
 
         // Wild critters: rabbits, squirrels, deer and the like, on open grass around the property,
         // off the crop field and clear of everything the farm puts down, each with a few spots
@@ -682,11 +680,13 @@ mod tests {
                 "on a furrow: {phase}"
             );
         }
-        assert_eq!(
-            l.npcs.iter().filter(|n| n.role == Role::Store).count(),
-            2,
-            "Brog and Bernice"
-        );
+        for v in [Villager::Ma, Villager::Farley, Villager::Brog] {
+            assert_eq!(
+                l.npcs.iter().filter(|n| n.role == Role::Quest(v)).count(),
+                1,
+                "{v:?}"
+            );
+        }
         assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
         assert!(!OAKS.is_empty());
     }

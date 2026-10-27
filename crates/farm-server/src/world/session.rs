@@ -276,6 +276,46 @@ impl Session {
                     game.gossip_hello(npc);
                 }
             }
+            opcode::CMSG_QUESTGIVER_STATUS_QUERY => {
+                let npc = read_u64_le(&mut cur)?;
+                if let Some(game) = &self.game {
+                    game.quest_status(npc);
+                }
+            }
+            opcode::CMSG_QUESTGIVER_HELLO => {
+                let npc = read_u64_le(&mut cur)?;
+                if let Some(game) = &mut self.game {
+                    game.gossip_hello(npc);
+                }
+            }
+            opcode::CMSG_QUEST_QUERY => {
+                let id = read_u32_le(&mut cur)?;
+                if let Some(game) = &self.game {
+                    game.quest_query(id);
+                }
+            }
+            opcode::CMSG_QUESTGIVER_QUERY_QUEST
+            | opcode::CMSG_QUESTGIVER_ACCEPT_QUEST
+            | opcode::CMSG_QUESTGIVER_COMPLETE_QUEST
+            | opcode::CMSG_QUESTGIVER_REQUEST_REWARD
+            | opcode::CMSG_QUESTGIVER_CHOOSE_REWARD => {
+                let npc = read_u64_le(&mut cur)?;
+                let id = read_u32_le(&mut cur)?;
+                if let Some(game) = &mut self.game {
+                    match op {
+                        opcode::CMSG_QUESTGIVER_QUERY_QUEST => game.quest_open(npc, id),
+                        opcode::CMSG_QUESTGIVER_ACCEPT_QUEST => game.quest_accept(npc, id),
+                        opcode::CMSG_QUESTGIVER_CHOOSE_REWARD => game.quest_choose(npc, id),
+                        _ => game.quest_complete(npc, id),
+                    }
+                }
+            }
+            opcode::CMSG_QUESTLOG_REMOVE_QUEST => {
+                let slot = read_u8(&mut cur)?;
+                if let Some(game) = &mut self.game {
+                    game.quest_abandon(slot);
+                }
+            }
             opcode::CMSG_GOSSIP_SELECT_OPTION => {
                 let _speaker = read_u64_le(&mut cur)?;
                 let option = read_u32_le(&mut cur)?;

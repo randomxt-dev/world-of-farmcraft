@@ -39,6 +39,8 @@ const SPLINE_RUN: u32 = 0x100;
 
 /// `UNIT_NPC_FLAG_GOSSIP`: a right-click opens the gossip menu.
 pub const NPC_GOSSIP: u32 = 0x01;
+/// `UNIT_NPC_FLAG_QUESTGIVER`: the client asks for the `!`/`?` over its head.
+pub const NPC_QUESTGIVER: u32 = 0x02;
 /// `UNIT_NPC_FLAG_VENDOR`: a right-click opens the merchant window.
 pub const NPC_VENDOR: u32 = 0x04;
 

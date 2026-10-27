@@ -46,6 +46,9 @@ const PLAYER_NEXT_LEVEL_XP: u16 = 717;
 const PLAYER_EXPLORED_ZONES_1: u16 = 1111;
 const EXPLORED_ZONE_WORDS: u16 = 64;
 const PLAYER_FIELD_COINAGE: u16 = 1176;
+/// `PLAYER_QUEST_LOG_1_1`: 20 slots of (quest id, counters and state, timer).
+const PLAYER_QUEST_LOG_1_1: u16 = 198;
+const QUEST_LOG_SLOTS: u16 = 20;
 /// `PLAYER_SKILL_INFO_1_1`: 128 skills of three words, the skill id with its step, then the value
 /// with its maximum, then a bonus.
 const PLAYER_SKILL_INFO_1_1: u16 = 718;
@@ -243,6 +246,18 @@ pub fn slot_change(owner: u64, slot: u8, guid: u64) -> Packet {
 pub fn money_change(owner: u64, money: u32) -> Packet {
     let mut f = Fields::default();
     f.u32(PLAYER_FIELD_COINAGE, money);
+    Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
+}
+
+/// The values update that writes the whole quest log: each slot's quest id and its counter word
+/// (four 6-bit counters, the state in the top byte), the rest empty.
+pub fn quest_log(owner: u64, slots: &[(u32, u32)]) -> Packet {
+    let mut f = Fields::default();
+    for i in 0..QUEST_LOG_SLOTS {
+        let (id, word) = slots.get(usize::from(i)).copied().unwrap_or((0, 0));
+        let at = PLAYER_QUEST_LOG_1_1 + 3 * i;
+        f.u32(at, id).u32(at + 1, word).u32(at + 2, 0);
+    }
     Packet::new(opcode::SMSG_UPDATE_OBJECT, update::values(owner, &f))
 }
 

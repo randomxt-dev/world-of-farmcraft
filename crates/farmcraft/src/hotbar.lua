@@ -1,5 +1,6 @@
 -- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-5 are tools
--- (Till Soil, Watering Can, Axe, Build Fence, Horse), slots 6-12 the seeds carried. One slot is
+-- (Till Soil, Watering Can, Axe, Build Fence, Horse), each there once a quest or Brog's shop
+-- gives it, slots 6-12 the seeds carried. One slot is
 -- lit as the pick: the mouse wheel moves it (Shift and the wheel zoom the camera), a number key
 -- or a click picks a slot, and the server is told with ".sel <slot>". Till Soil, Build Fence and
 -- the Horse act at once when pressed; the can, the axe and the seeds say what a right-click on
@@ -68,7 +69,10 @@ local function farm_light()
 		if button then
 			if TOOLS[i] then
 				badge(button, nil)
-				getglobal("ActionButton"..i.."Icon"):SetTexture(TOOLS[i][1])
+				-- A tool not yet earned leaves its slot empty.
+				if HasAction(i) then
+					getglobal("ActionButton"..i.."Icon"):SetTexture(TOOLS[i][1])
+				end
 			else
 				badge(button, HasAction(i))
 			end

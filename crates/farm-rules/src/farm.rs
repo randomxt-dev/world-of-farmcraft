@@ -1,11 +1,14 @@
 //! One farmer's farm: the plot's tiles, what grows on them, the ore veins in the mine, the bag,
 //! the purse and the clock. Every action either changes the farm or says why not.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::bag::{Bag, Item};
 use crate::clock::{Clock, Weather};
 use crate::crops::Crop;
+use crate::quests::{Deed, Goal, Marker, Quests, Unlock, Villager, QUESTS};
 
 /// Copper a new farmer starts with: 2 silver.
 pub const START_MONEY: u32 = 200;
@@ -63,6 +66,11 @@ pub enum Reject {
     Collected,
     NoWood,
     NoSuchFence,
+    /// The tool or unlock it takes is not the farmer's yet.
+    Locked(Unlock),
+    /// The quest is not in the log, or not done yet.
+    QuestNotDone,
+    AlreadyOwned,
 }
 
 impl Reject {
@@ -87,6 +95,18 @@ impl Reject {
             Reject::NoSuchFence => "There is no fence there.".into(),
             Reject::Felled => "It hasn't grown back yet.".into(),
             Reject::Picked => "Someone picked that already. It grows back tomorrow.".into(),
+            Reject::Locked(u) => match u {
+                Unlock::WateringCan => "You need a watering can. Ma Stonefield has one.".into(),
+                Unlock::Horse => "You don't have a horse yet.".into(),
+                Unlock::Axe => "You need an axe. Brog Hamfist in Goldshire sells them.".into(),
+                Unlock::Fence => "You don't know how to build fences yet.".into(),
+                Unlock::MiningPick => {
+                    "You need a Mining Pick. Brog Hamfist in Goldshire sells them.".into()
+                }
+                _ => "You can't do that yet.".into(),
+            },
+            Reject::QuestNotDone => "That isn't done yet.".into(),
+            Reject::AlreadyOwned => "You already have one.".into(),
         }
     }
 }
@@ -137,6 +157,11 @@ pub struct Farm {
     /// Fences the farmer built.
     #[serde(default)]
     pub fences: Vec<Fence>,
+    #[serde(default)]
+    pub quests: Quests,
+    /// Tools and the like, won from quests or bought; the shovel is always there.
+    #[serde(default)]
+    pub unlocked: BTreeSet<Unlock>,
 }
 
 /// A fence the farmer built: where it stands, which way it runs, and which look it has.
@@ -161,8 +186,7 @@ impl Farm {
     /// A new farm of `tiles` empty tiles and `veins` ore veins: 2 silver and a few seeds.
     pub fn new(tiles: usize, veins: usize, seed: u64) -> Self {
         let mut bag = Bag::default();
-        bag.add(Item::Seeds(Crop::Silverleaf), 6);
-        bag.add(Item::Seeds(Crop::Peacebloom), 4);
+        bag.add(Item::Seeds(Crop::Silverleaf), 8);
         Self {
             clock: Clock::default(),
             weather: Weather::Sunny,
@@ -178,7 +202,80 @@ impl Farm {
             dug: Vec::new(),
             collected: Vec::new(),
             fences: Vec::new(),
+            quests: Quests::default(),
+            unlocked: BTreeSet::new(),
         }
+    }
+
+    pub fn has(&self, u: Unlock) -> bool {
+        self.unlocked.contains(&u)
+    }
+
+    /// Counts `deed` for the quests in the log: the quests it moved on, with their new counts.
+    pub fn note(&mut self, deed: Deed) -> Vec<(usize, u32)> {
+        self.quests.note(deed)
+    }
+
+    /// Whether quest `q`, in the log, can be turned in.
+    pub fn quest_ready(&self, q: usize) -> bool {
+        if !self.quests.is_active(q) {
+            return false;
+        }
+        match QUESTS[q].goal {
+            Goal::Do(_, need, _) => self.quests.count(q) >= need,
+            Goal::Bring(item, n) => self.bag.count(item) >= n,
+            Goal::Visit => true,
+        }
+    }
+
+    /// What `who` shows over their head.
+    pub fn marker(&self, who: Villager) -> Marker {
+        let ending = (self.quests.active.iter()).filter(|&&(q, _)| QUESTS[q].ender == who);
+        let mut waiting = false;
+        for &(q, _) in ending {
+            if self.quest_ready(q) {
+                return Marker::TurnIn;
+            }
+            waiting = true;
+        }
+        if self.quests.offer(who).is_some() {
+            Marker::Offer
+        } else if waiting {
+            Marker::Waiting
+        } else {
+            Marker::None
+        }
+    }
+
+    /// Turn in quest `q`: hand over what it asks for, take the reward.
+    pub fn turn_in(&mut self, q: usize) -> Result<(), Reject> {
+        if !self.quest_ready(q) {
+            return Err(Reject::QuestNotDone);
+        }
+        let quest = &QUESTS[q];
+        if let Goal::Bring(item, n) = quest.goal {
+            self.bag.take(item, n);
+        }
+        self.money += quest.money;
+        if let Some(u) = quest.unlocks {
+            self.unlocked.insert(u);
+        }
+        self.quests.abandon(q);
+        self.quests.done = self.quests.done.max(q + 1);
+        Ok(())
+    }
+
+    /// Buy a tool for `price` copper.
+    pub fn buy_tool(&mut self, u: Unlock, price: u32) -> Result<(), Reject> {
+        if self.has(u) {
+            return Err(Reject::AlreadyOwned);
+        }
+        if price > self.money {
+            return Err(Reject::NotEnoughMoney);
+        }
+        self.money -= price;
+        self.unlocked.insert(u);
+        Ok(())
     }
 
     /// Fit a loaded farm to a layout of `tiles` tiles, `veins` veins and `wild` wild herbs.
@@ -442,8 +539,11 @@ impl Farm {
 mod tests {
     use super::*;
 
+    /// A farm with a few Peacebloom seeds too.
     fn farm() -> Farm {
-        Farm::new(4, 2, 1)
+        let mut f = Farm::new(4, 2, 1);
+        f.bag.add(Item::Seeds(Crop::Peacebloom), 4);
+        f
     }
 
     /// Sleep until a dry morning, so watering is up to the farmer.
@@ -460,7 +560,7 @@ mod tests {
     fn a_watered_crop_ripens_and_is_harvested_into_the_bag() {
         let mut f = farm();
         f.plant(0, Crop::Silverleaf).unwrap();
-        assert_eq!(f.bag.count(Item::Seeds(Crop::Silverleaf)), 5);
+        assert_eq!(f.bag.count(Item::Seeds(Crop::Silverleaf)), 7);
         for _ in 0..Crop::Silverleaf.def().days {
             assert_eq!(f.harvest(0), Err(Reject::NotRipe));
             let _ = f.water(0);
@@ -621,5 +721,53 @@ mod tests {
         assert!(report.passed_out);
         assert_eq!(f.clock.day, 2);
         assert_eq!(f.clock.face(), "06:00");
+    }
+
+    #[test]
+    fn the_first_quest_takes_planting_and_gives_the_watering_can() {
+        let mut f = Farm::new(8, 1, 1);
+        assert!(!f.has(Unlock::WateringCan));
+        assert_eq!(f.marker(Villager::Ma), Marker::Offer);
+        assert!(f.quests.accept(0));
+        assert_eq!(f.marker(Villager::Ma), Marker::Waiting);
+        assert_eq!(f.turn_in(0), Err(Reject::QuestNotDone));
+        for i in 0..8 {
+            f.plant(i, Crop::Silverleaf).unwrap();
+            f.note(Deed::Plant);
+        }
+        assert_eq!(f.bag.count(Item::Seeds(Crop::Silverleaf)), 0);
+        assert_eq!(f.marker(Villager::Ma), Marker::TurnIn);
+        f.turn_in(0).unwrap();
+        assert!(f.has(Unlock::WateringCan));
+        assert_eq!(f.marker(Villager::Ma), Marker::Offer);
+    }
+
+    #[test]
+    fn a_bring_quest_takes_the_goods_at_the_turn_in() {
+        let mut f = Farm::new(1, 1, 1);
+        f.quests.done = 5;
+        assert_eq!(f.marker(Villager::Brog), Marker::Offer);
+        f.quests.accept(5);
+        assert_eq!(f.marker(Villager::Farley), Marker::Waiting);
+        f.bag.add(Item::Produce(Crop::Silverleaf), 12);
+        assert_eq!(f.marker(Villager::Farley), Marker::TurnIn);
+        let money = f.money;
+        f.turn_in(5).unwrap();
+        assert_eq!(f.bag.count(Item::Produce(Crop::Silverleaf)), 2);
+        assert_eq!(f.money, money + 80);
+        assert!(f.has(Unlock::ShippingCrate));
+        assert_eq!(f.marker(Villager::Brog), Marker::Offer);
+    }
+
+    #[test]
+    fn a_tool_is_bought_once() {
+        let mut f = Farm::new(1, 1, 1);
+        f.buy_tool(Unlock::Axe, 100).unwrap();
+        assert_eq!(f.money, START_MONEY - 100);
+        assert_eq!(f.buy_tool(Unlock::Axe, 100), Err(Reject::AlreadyOwned));
+        assert_eq!(
+            f.buy_tool(Unlock::MiningPick, 500),
+            Err(Reject::NotEnoughMoney)
+        );
     }
 }

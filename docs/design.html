@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#3b2a17">
+<title>World of Farmcraft: the road from shovel to harvest festival</title>
+<style>
+:root {
+  --parch: #f3e6c4;
+  --parch-2: #ead8ab;
+  --parch-3: #e0c98f;
+  --ink: #3b2a17;
+  --ink-soft: #6b5434;
+  --gold: #c9a227;
+  --gold-hi: #ffd100;
+  --brown: #7a4f24;
+  --brown-dk: #4a2f14;
+  --leaf: #4f7a2a;
+  --plan: #8a6fa8;
+  --shadow: 0 2px 6px rgba(59, 42, 23, .25);
+  --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+  --body: Georgia, "Iowan Old Style", "Palatino Linotype", Cambria, serif;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; overflow-wrap: break-word;
+  font: 17px/1.5 var(--body);
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse at top, rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(122,79,36,.18), transparent 55%),
+    var(--parch);
+  min-height: 100vh;
+}
+h1, h2, h3, h4 { font-family: var(--serif); color: var(--brown-dk); line-height: 1.2; }
+a { color: var(--brown); }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 0 14px 60px; }
+
+/* header */
+header.top {
+  background: linear-gradient(180deg, #4a2f14, #3b2a17);
+  color: var(--parch);
+  border-bottom: 4px solid var(--gold);
+  padding: 18px 14px 16px;
+  text-align: center;
+}
+header.top h1 {
+  margin: 0;
+  font-size: clamp(26px, 7vw, 42px);
+  color: var(--gold-hi);
+  text-shadow: 0 2px 0 #000, 0 0 12px rgba(255, 209, 0, .25);
+  letter-spacing: .5px;
+}
+header.top p { margin: 6px auto 0; max-width: 640px; color: #e9d9b0; font-size: 15px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: center; margin-top: 10px; font-size: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* badges and markers */
+.badge {
+  display: inline-block; font: bold 11px/1 system-ui, sans-serif; letter-spacing: .6px;
+  padding: 4px 7px; border-radius: 10px; text-transform: uppercase; vertical-align: middle;
+  white-space: nowrap;
+}
+.badge.built { background: var(--leaf); color: #fff; }
+.badge.planned { background: var(--plan); color: #fff; }
+.mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%;
+  font: 900 20px/1 var(--serif); color: var(--gold-hi);
+  text-shadow: 0 0 2px #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+  background: radial-gradient(circle, rgba(0,0,0,.35), rgba(0,0,0,.05) 70%);
+}
+.mark.q { font-size: 19px; }
+
+/* tool belt */
+.belt-wrap {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(59, 42, 23, .96);
+  border-bottom: 2px solid var(--gold);
+  box-shadow: 0 3px 8px rgba(0,0,0,.3);
+}
+.belt-head {
+  max-width: 1100px; margin: 0 auto; padding: 6px 14px 0;
+  display: flex; justify-content: space-between; align-items: baseline;
+  color: #e9d9b0; font: 13px/1.3 system-ui, sans-serif;
+}
+.belt-head b { color: var(--gold-hi); font-family: var(--serif); font-size: 15px; }
+.belt {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; gap: 6px; overflow-x: auto; padding: 6px 14px 8px;
+  scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+}
+.tool {
+  flex: 0 0 auto; width: 58px; min-height: 64px;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  gap: 2px; padding: 4px 2px;
+  border-radius: 6px; border: 2px solid #5a4325; background: #2a1d0f;
+  color: #8f7a5a; font: 10.5px/1.1 system-ui, sans-serif; text-align: center;
+  cursor: pointer; filter: grayscale(1) brightness(.55); transition: filter .25s, border-color .25s, box-shadow .25s;
+}
+.tool .ic { font-size: 26px; line-height: 32px; height: 32px; display: flex; align-items: center; }
+.tool svg { width: 30px; height: 30px; }
+.tool.on { filter: none; color: #f3e6c4; border-color: var(--gold); }
+.tool.new { box-shadow: 0 0 0 2px var(--gold-hi), 0 0 14px 2px rgba(255, 209, 0, .7); animation: pulse 1.6s ease-in-out 2; }
+.tool.planned.on { border-style: dashed; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 2px var(--gold-hi), 0 0 22px 6px rgba(255, 209, 0, .9); } }
+
+/* sections */
+section { margin-top: 26px; }
+section > h2 { font-size: 26px; margin: 0 0 4px; border-bottom: 2px solid var(--gold); padding-bottom: 4px; }
+.lede { color: var(--ink-soft); margin: 6px 0 14px; }
+
+/* progress meter */
+.meter { display: flex; align-items: center; gap: 10px; font: 14px system-ui, sans-serif; color: var(--ink-soft); margin-bottom: 12px; }
+.meter .bar { flex: 1; height: 12px; border-radius: 6px; background: var(--parch-3); overflow: hidden; border: 1px solid var(--brown); }
+.meter .fill { height: 100%; background: linear-gradient(90deg, var(--leaf), #7fae44); }
+
+/* timeline: phone = vertical */
+.track { position: relative; display: flex; flex-direction: column; gap: 0; padding-left: 0; }
+.track::before {
+  content: ""; position: absolute; left: 27px; top: 20px; bottom: 20px; width: 4px;
+  background: repeating-linear-gradient(180deg, var(--brown) 0 10px, transparent 10px 16px);
+  border-radius: 2px;
+}
+.phase-btn {
+  position: relative; display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 64px; margin: 4px 0; padding: 8px 10px 8px 4px;
+  background: transparent; border: 0; text-align: left; cursor: pointer; color: inherit; font: inherit;
+  border-radius: 10px;
+}
+.phase-btn:focus-visible { outline: 3px solid var(--gold-hi); outline-offset: 2px; }
+.node {
+  position: relative; z-index: 1; flex: 0 0 50px; width: 50px; height: 50px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  background: var(--parch-2); border: 3px solid var(--brown); box-shadow: var(--shadow);
+  transition: transform .2s, border-color .2s, background .2s;
+}
+.phase-btn.planned .node { border-style: dashed; border-color: var(--plan); background: #efe3cf; }
+.phase-btn[aria-expanded="true"] .node { transform: scale(1.1); border-color: var(--gold); background: #fff3c9; box-shadow: 0 0 0 3px rgba(255,209,0,.5), var(--shadow); }
+.phase-txt { flex: 1; min-width: 0; }
+.phase-txt .nm { font: bold 19px/1.2 var(--serif); color: var(--brown-dk); display: block; }
+.phase-txt .dy { font: 13px/1.3 system-ui, sans-serif; color: var(--ink-soft); }
+.phase-btn .chev { font-size: 18px; color: var(--brown); transition: transform .2s; }
+.phase-btn[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.phase-btn[aria-expanded="true"] { background: rgba(255, 243, 201, .6); }
+
+/* detail panel */
+.panel {
+  margin: 4px 0 12px 0; padding: 14px;
+  background: linear-gradient(180deg, #fbf3dc, var(--parch-2));
+  border: 2px solid var(--brown); border-radius: 10px; box-shadow: var(--shadow);
+  /* sits above the dashed timeline line, fully opaque; no fade-in */
+  position: relative; z-index: 2; opacity: 1;
+}
+.panel h3 { margin: 0 0 4px; font-size: 22px; }
+.panel .when { font: 14px system-ui, sans-serif; color: var(--ink-soft); margin-bottom: 8px; }
+.facts { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 10px 0 14px; }
+.fact { background: rgba(255,255,255,.45); border: 1px solid var(--parch-3); border-radius: 8px; padding: 8px 10px; }
+.fact h4 { margin: 0 0 4px; font-size: 15px; text-transform: uppercase; letter-spacing: .6px; color: var(--brown); }
+.fact ul { margin: 0; padding-left: 20px; }
+.fact li { margin: 2px 0; }
+.nav { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.nav button {
+  flex: 1; min-height: 46px; border-radius: 8px; border: 2px solid var(--brown);
+  background: linear-gradient(180deg, #8b1a1a, #5e0f0f); color: var(--gold-hi);
+  font: bold 15px var(--serif); cursor: pointer; text-shadow: 0 1px 0 #000;
+}
+.nav button:disabled { opacity: .35; cursor: default; }
+
+/* quest card */
+.quests { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.quest {
+  position: relative; padding: 12px 12px 10px;
+  background: linear-gradient(180deg, #f8edcf, #ecd9a6);
+  border: 2px solid #6e4a1f; border-radius: 6px;
+  box-shadow: inset 0 0 18px rgba(122, 79, 36, .25), var(--shadow);
+}
+.quest::before, .quest::after {
+  content: ""; position: absolute; left: 8px; right: 8px; height: 3px; background: var(--gold); opacity: .55;
+}
+.quest::before { top: 4px; } .quest::after { bottom: 4px; }
+.quest.planned { border-style: dashed; border-color: var(--plan); }
+.quest .qhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-top: 2px; }
+.quest .qn { font: bold 13px system-ui, sans-serif; color: var(--ink-soft); }
+.quest h4 { margin: 0 0 6px; font-size: 19px; color: #5a1a00; }
+.who { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 15px; }
+.who div { display: flex; align-items: center; gap: 8px; }
+.who em { font-style: normal; color: var(--ink-soft); font-size: 13px; }
+.quest .obj { margin: 6px 0; }
+.quest .lbl { font: bold 12px system-ui, sans-serif; text-transform: uppercase; letter-spacing: .6px; color: var(--brown); display: block; }
+.quest .rew { margin-top: 6px; padding: 6px 8px; background: rgba(255, 209, 0, .18); border-left: 4px solid var(--gold); border-radius: 0 4px 4px 0; }
+.flavor { font-style: italic; color: var(--ink-soft); font-size: 15px; margin: 4px 0 6px; }
+
+/* collapsible cards */
+details.card {
+  margin: 10px 0; background: linear-gradient(180deg, #fbf3dc, var(--parch-2));
+  border: 2px solid var(--brown); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden;
+}
+details.card > summary {
+  list-style: none; cursor: pointer; min-height: 56px; padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px;
+  font: bold 19px var(--serif); color: var(--brown-dk);
+}
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .ic { font-size: 24px; width: 32px; text-align: center; }
+details.card > summary .sum-t { flex: 1; }
+details.card > summary::after { content: "\25B8"; color: var(--brown); transition: transform .2s; }
+details.card[open] > summary::after { transform: rotate(90deg); }
+details.card[open] > summary { border-bottom: 1px solid var(--parch-3); }
+details.card .body { padding: 6px 14px 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 8px 0; }
+th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--parch-3); vertical-align: top; }
+th { font-family: var(--serif); color: var(--brown); background: rgba(201, 162, 39, .15); }
+.tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip { font: 14px system-ui, sans-serif; padding: 6px 10px; border-radius: 16px; background: rgba(79,122,42,.15); border: 1px solid var(--leaf); }
+.chip.p { background: rgba(138,111,168,.13); border-color: var(--plan); }
+
+footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top: 30px; }
+
+/* desktop: horizontal timeline */
+@media (min-width: 820px) {
+  body { font-size: 17px; }
+  .track { flex-direction: row; overflow-x: auto; gap: 0; padding: 6px 4px 10px; scroll-snap-type: x proximity; }
+  .track::before { left: 30px; right: 30px; top: 36px; bottom: auto; width: auto; height: 4px;
+    background: repeating-linear-gradient(90deg, var(--brown) 0 10px, transparent 10px 16px); }
+  .phase-btn { flex: 0 0 120px; width: 120px; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 6px 4px; margin: 0; scroll-snap-align: start; }
+  .phase-txt .nm { font-size: 15px; }
+  .phase-txt .dy { font-size: 12px; }
+  .phase-btn .chev { display: none; }
+  .node { width: 58px; height: 58px; flex-basis: 58px; font-size: 27px; }
+  .facts { grid-template-columns: repeat(3, 1fr); }
+  .quests { grid-template-columns: repeat(2, 1fr); }
+  .tool { width: 66px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>World of Farmcraft</h1>
+  <p>The road from one shovel to the Stonefield harvest festival. Every new ability is a quest. Tap a phase to open it.</p>
+  <div class="legend">
+    <span><span class="mark">!</span> has a quest</span>
+    <span><span class="mark q">?</span> turn it in here</span>
+    <span><span class="badge built">Built</span> in the game now</span>
+    <span><span class="badge planned">Planned</span> design only</span>
+  </div>
+</header>
+
+<div class="belt-wrap" aria-label="Tool belt">
+  <div class="belt-head"><span>Tool belt at <b id="beltPhase">Farmer</b></span><span id="beltCount"></span></div>
+  <div class="belt" id="belt"></div>
+</div>
+
+<main class="wrap">
+
+<section id="timeline">
+  <h2>The timeline</h2>
+  <p class="lede">You start as a plain farmer with a shovel, 8 Silverleaf seeds and 2 silver on day 1. Ma Stonefield, Innkeeper Farley and Brog Hamfist hand out the quests that unlock everything else.</p>
+  <div class="meter"><span id="meterTxt"></span><div class="bar"><div class="fill" id="meterFill"></div></div></div>
+  <div class="track" id="track" role="list"></div>
+  <div id="panelHome"></div>
+</section>
+
+<section id="world">
+  <h2>The rest of the design</h2>
+  <p class="lede">Condensed from <a href="DESIGN.md">DESIGN.md</a>. Tap a card to open it.</p>
+
+  <details class="card">
+    <summary><span class="ic">&#x1F333;</span><span class="sum-t">Built outside the quest chain</span></summary>
+    <div class="body">
+      <div class="chips">
+        <span class="chip">Crops with growth stages</span>
+        <span class="chip">Rain waters for you</span>
+        <span class="chip">Day clock 06:00&ndash;02:00 (~17 real min)</span>
+        <span class="chip">Sleeping in bed</span>
+        <span class="chip">Wild Peacebloom &amp; Silverleaf to forage</span>
+        <span class="chip">Westfall oaks that regrow</span>
+        <span class="chip">Fence lines, posts when short on wood</span>
+        <span class="chip">Dig new plots with the shovel</span>
+        <span class="chip">Pet pen, ~58 companions</span>
+        <span class="chip">Wandering critters</span>
+        <span class="chip">Farmhouse icon on the map</span>
+        <span class="chip">Copper veins in Fargodeep, refill each morning</span>
+      </div>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x2600;&#xFE0F;</span><span class="sum-t">The feel and the day</span></summary>
+    <div class="body">
+      <ul>
+        <li><b>No fail state.</b> Nothing dies, nothing is lost. A missed day only slows a crop.</li>
+        <li><b>Every day has a small plan:</b> water, harvest, ship, then one bigger job.</li>
+        <li><b>There is always a next quest</b> with a clear reward, so the next goal is never a mystery.</li>
+        <li><b>The world is the reward:</b> quests send you to Goldshire, Fargodeep, the lake, Eastvale.</li>
+      </ul>
+      <div class="tscroll"><table>
+        <tr><th>Time</th><th>What happens</th></tr>
+        <tr><td>06:00</td><td>Wake in the farmhouse, weather for the day <span class="badge built">Built</span></td></tr>
+        <tr><td>Morning</td><td>Water, harvest, fill the Shipping Crate</td></tr>
+        <tr><td>Afternoon</td><td>One bigger job: chop, mine, build, forage, ride to Goldshire</td></tr>
+        <tr><td>Evening</td><td>Tend animals; later cook, craft, talk</td></tr>
+        <tr><td>02:00</td><td>Pass out and lose a little gold; bed is free <span class="badge built">Built</span></td></tr>
+        <tr><td>Overnight</td><td>Crops grow, crate pays out, trees regrow</td></tr>
+      </table></div>
+      <p>A season is 28 days, a year 4 seasons (planned).</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x1FA99;</span><span class="sum-t">Economy</span></summary>
+    <div class="body">
+      <p>100 copper = 1 silver, 100 silver = 1 gold, as the bag shows it.</p>
+      <div class="tscroll"><table>
+        <tr><th>Selling</th><th>Buying</th></tr>
+        <tr><td>Innkeeper Farley, Lion's Pride Inn: buys produce on the spot (after Market Day)</td><td>Brog Hamfist, General Supplies: seeds, axe, mining pick</td></tr>
+        <tr><td>Shipping Crate at the farm: Farley's cart collects each morning (after The First Harvest)</td><td>Ma's starter pouch: 8 Silverleaf seeds</td></tr>
+        <tr><td>Weekly orders on the Goldshire board <span class="badge planned">Planned</span></td><td>Smith Argus: tool upgrades, bars <span class="badge planned">Planned</span></td></tr>
+        <tr><td>Special orders from townsfolk, earn friendship <span class="badge planned">Planned</span></td><td>Ma Stonefield: land, buildings, animals <span class="badge planned">Planned</span></td></tr>
+      </table></div>
+      <ul>
+        <li>Week 1: about 1s a day from Silverleaf and Peacebloom.</li>
+        <li>End of spring: 10&ndash;20s a day from Mageroyal, pumpkins, animal goods.</li>
+        <li>Year 2: 1g or more a day.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x1F331;</span><span class="sum-t">Plots and crops</span></summary>
+    <div class="body">
+      <div class="tscroll"><table>
+        <tr><th>Stage</th><th>Plots</th><th>How</th></tr>
+        <tr><td>Start</td><td>24 on the leaf rows</td><td>Given <span class="badge built">Built</span></td></tr>
+        <tr><td>Spring</td><td>Up to 48</td><td>Dig with the shovel on the furrows <span class="badge built">Built</span> (no cap yet)</td></tr>
+        <tr><td>Copper shovel</td><td>Till 3 in a row</td><td>Smith upgrade</td></tr>
+        <tr><td>Field deed, 25s</td><td>East field: up to 96</td><td>Quest from Ma</td></tr>
+        <tr><td>Sprinklers</td><td>Water 4 or 8 each morning</td><td>Copper and tin bars</td></tr>
+        <tr><td>Greenhouse, 2g</td><td>Grows all year</td><td>Barn's second floor restored</td></tr>
+      </table></div>
+      <p>Watering, not land, is the early limit, until sprinklers arrive.</p>
+      <div class="tscroll"><table>
+        <tr><th>Season</th><th>Crops</th></tr>
+        <tr><td>Spring</td><td>Silverleaf, Peacebloom, Earthroot (built), Wheat</td></tr>
+        <tr><td>Summer</td><td>Mageroyal, Briarthorn, Watermelon (built), Corn</td></tr>
+        <tr><td>Autumn</td><td>Pumpkin (built), Fadeleaf, Wild Steelbloom</td></tr>
+        <tr><td>Winter</td><td>Greenhouse, mining, crafting, animals</td></tr>
+      </table></div>
+      <p>Today every crop grows all year. Rare herbs (Kingsblood, Liferoot) come only from seeds found foraging and mining.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x1F404;</span><span class="sum-t">Animals</span></summary>
+    <div class="body">
+      <div class="tscroll"><table>
+        <tr><th>Animal</th><th>Price</th><th>Needs</th><th>Gives</th></tr>
+        <tr><td>Hen</td><td>Quest, then 8s</td><td>Fenced pen / coop</td><td>Small Egg daily <span class="badge built">Built</span></td></tr>
+        <tr><td>Sheep</td><td>Quest, then 15s</td><td>Barn</td><td>Wool <span class="badge built">Built</span> (daily for now)</td></tr>
+        <tr><td>Cow</td><td>Quest, then 20s</td><td>Barn</td><td>Ice Cold Milk daily <span class="badge built">Built</span></td></tr>
+        <tr><td>Pig</td><td>25s</td><td>Barn</td><td>Truffles, summer and autumn</td></tr>
+      </table></div>
+      <ul>
+        <li><b>Care:</b> pet daily, feed hay cut from tall grass. Hearts give better goods: Large Egg, Gold Milk, Fine Wool.</li>
+        <li><b>Breeding:</b> two adults with 5 hearts and room in the barn; baby in 7 days, grown in 7 more. You name it.</li>
+        <li><b>Selling:</b> to Ma for half price plus a hearts bonus; fair winners sell well.</li>
+        <li><b>Coop and barn upgrades:</b> 4, 8, then 12 animals.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x26CF;&#xFE0F;</span><span class="sum-t">Mining and the smith</span></summary>
+    <div class="body">
+      <p>Fargodeep Mine, south-west of the farm. Copper veins refill each morning <span class="badge built">Built</span>.</p>
+      <ul>
+        <li>Floors 1&ndash;10: copper and tin. Floors 11&ndash;20: iron and silver; kobolds scared off with a lantern, not fought.</li>
+        <li>Floors 21&ndash;30: gold and gems (Malachite, Tigerseye, Shadowgem). A lift every 5th floor.</li>
+      </ul>
+      <div class="tscroll"><table>
+        <tr><th>Tool</th><th>Copper</th><th>Iron</th><th>Gold</th></tr>
+        <tr><td>Watering Can</td><td>3 in a line</td><td>5 in a line</td><td>3&times;3</td></tr>
+        <tr><td>Shovel</td><td>3 in a row</td><td>5</td><td>3&times;3</td></tr>
+        <tr><td>Axe</td><td>2 swings</td><td>1 swing, clears stumps</td><td>Splits Heartwood</td></tr>
+        <tr><td>Mining Pick</td><td>Copper, tin</td><td>Iron, silver</td><td>Gold, mithril, gems</td></tr>
+      </table></div>
+      <p>Each upgrade costs gold plus bars; the tool is away at Smith Argus for a day. Bars come from a furnace you build by the barn.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x1F3E1;</span><span class="sum-t">The house and getting around</span></summary>
+    <div class="body">
+      <div class="tscroll"><table>
+        <tr><th>House stage</th><th>Cost</th><th>Gives</th></tr>
+        <tr><td>Farmhouse</td><td>Start</td><td>A bed <span class="badge built">Built</span>, fireplace, one room</td></tr>
+        <tr><td>Kitchen</td><td>10s + 50 wood</td><td>Buff foods</td></tr>
+        <tr><td>Second floor</td><td>1g + 150 wood</td><td>Bigger bed, chest, furniture room</td></tr>
+        <tr><td>Cellar</td><td>3g</td><td>Age cheese and mead</td></tr>
+      </table></div>
+      <div class="tscroll"><table>
+        <tr><th>Travel</th><th>How</th><th>Speed</th></tr>
+        <tr><td>On foot</td><td>Start</td><td>7 yd/s</td></tr>
+        <tr><td>Farm Horse</td><td>Quest: Early to Bed <span class="badge built">Built</span></td><td>14 yd/s</td></tr>
+        <tr><td>Saddlebags</td><td>20s, Eastvale</td><td>+4 bag slots</td></tr>
+        <tr><td>Swift Brown Steed</td><td>5g, Eastvale</td><td>Faster, carries a full harvest</td></tr>
+      </table></div>
+      <p>Goldshire is about 600 yd from the farm: 40 s on the horse, 85 s on foot.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary><span class="ic">&#x1F4DC;</span><span class="sum-t">The Stonefield Restoration ledger</span></summary>
+    <div class="body">
+      <p>Ma's ledger has 6 pages. Each page is a bundle; finishing one fixes something on the farm or in Elwynn.</p>
+      <div class="tscroll"><table>
+        <tr><th>Page</th><th>Bundle</th><th>Reward</th></tr>
+        <tr><td>The Field</td><td>5 of each spring crop</td><td>Sprinklers recipe</td></tr>
+        <tr><td>The Pen</td><td>Egg, Milk, Wool</td><td>Free barn upgrade</td></tr>
+        <tr><td>The Mine</td><td>20 copper bars, 5 tin</td><td>The mine lift</td></tr>
+        <tr><td>The Woods</td><td>100 wood, 10 Heartwood</td><td>Bridge to Eastvale reopens</td></tr>
+        <tr><td>The Town</td><td>5 gifts to Goldshire folk</td><td>Goldshire Harvest Fair</td></tr>
+        <tr><td>The Lake</td><td>5 fish from Crystal Lake</td><td>Fishing rod upgrade</td></tr>
+      </table></div>
+      <p>A full ledger (end of year 1) brings back the Stonefields' harvest festival: the "you did it" moment. After that the game is open-ended.</p>
+    </div>
+  </details>
+</section>
+
+<footer>World of Farmcraft is a private, non-commercial fan project, not affiliated with Blizzard. No game art on this page.</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var SVG = {
+    shovel: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="14.5" y="2" width="3" height="16" rx="1" fill="#a0703a"/><rect x="10" y="2" width="12" height="3" rx="1.5" fill="#a0703a"/><path d="M10 17h12v6c0 4-3 7-6 7s-6-3-6-7z" fill="#b8c0c8" stroke="#555" stroke-width="1"/></svg>',
+    can: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="12" width="15" height="14" rx="2" fill="#7f9db8" stroke="#3d5468" stroke-width="1"/><path d="M22 16l7-6 1.5 1.5-7 7z" fill="#7f9db8" stroke="#3d5468" stroke-width="1"/><path d="M10 12c0-6 9-6 9 0" fill="none" stroke="#3d5468" stroke-width="2"/><circle cx="29" cy="7" r="1" fill="#6cc"/><circle cx="31" cy="10" r="1" fill="#6cc"/></svg>',
+    fence: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="6" width="4" height="22" fill="#a0703a"/><rect x="24" y="6" width="4" height="22" fill="#a0703a"/><rect x="2" y="11" width="28" height="3" fill="#c08a4a"/><rect x="2" y="19" width="28" height="3" fill="#c08a4a"/></svg>'
+  };
+
+  // Tools on the belt. `phase` is the index of the phase that unlocks it.
+  var TOOLS = [
+    { id: "shovel", label: "Shovel", svg: "shovel", phase: 0, built: true },
+    { id: "can", label: "Watering Can", svg: "can", phase: 0, built: true },
+    { id: "horse", label: "Farm Horse", ic: "🐎", phase: 0, built: true },
+    { id: "crate", label: "Shipping Crate", ic: "📦", phase: 1, built: true },
+    { id: "axe", label: "Axe", ic: "🪓", phase: 2, built: true },
+    { id: "fence", label: "Build Fence", svg: "fence", phase: 2, built: true },
+    { id: "animals", label: "Animals", ic: "🐔", phase: 3, built: true },
+    { id: "pick", label: "Mining Pick", ic: "⛏️", phase: 4, built: true },
+    { id: "copper", label: "Copper Tools", ic: "🟠", phase: 5, built: false },
+    { id: "iron", label: "Iron Tools", ic: "⚪", phase: 5, built: false },
+    { id: "gold", label: "Gold Tools", ic: "🟡", phase: 5, built: false },
+    { id: "sprink", label: "Sprinklers", ic: "💦", phase: 6, built: false },
+    { id: "green", label: "Greenhouse", ic: "🪴", phase: 6, built: false },
+    { id: "breed", label: "Breeding", ic: "🐣", phase: 7, built: false },
+    { id: "kitchen", label: "Kitchen", ic: "🍲", phase: 8, built: false },
+    { id: "steed", label: "Swift Steed", ic: "🏇", phase: 9, built: false },
+    { id: "season", label: "Seasons", ic: "🍂", phase: 10, built: false },
+    { id: "fest", label: "Festival", ic: "🎉", phase: 11, built: false }
+  ];
+
+  var MA = "Ma Stonefield", FARLEY = "Innkeeper Farley", BROG = "Brog Hamfist", ARGUS = "Smith Argus";
+  var WHERE = {};
+  WHERE[MA] = "Stonefield Farm";
+  WHERE[FARLEY] = "Lion's Pride Inn, Goldshire";
+  WHERE[BROG] = "General Supplies, Lion's Pride Inn";
+  WHERE[ARGUS] = "Goldshire smithy";
+  WHERE["Katie Hunter"] = "Eastvale stables";
+  WHERE["Marshal Dughan"] = "Goldshire";
+
+  function q(n, name, giver, turnin, obj, reward, built, flavor) {
+    return { n: n, name: name, giver: giver, turnin: turnin, obj: obj, reward: reward, built: built, flavor: flavor || "" };
+  }
+
+  var PHASES = [
+    {
+      name: "Farmer", ic: "🌱", days: "Days 1–2", built: true,
+      intro: "You arrive with a Shovel, 8 Silverleaf seeds and 2 silver. Ma Stonefield is waiting at the farm.",
+      unlocks: ["Watering Can", "Farm Horse (hotbar slot 5, twice walking speed)", "10 copper"],
+      cando: ["Plant, water and harvest Silverleaf", "Dig new plots with the shovel", "Sleep to pass the night", "Ride anywhere in Elwynn"],
+      quests: [
+        q(1, "Breaking Ground", MA, MA, "Plant your 8 Silverleaf seeds.", "Watering Can", true, "\"That soil's been resting long enough. Let's see what it remembers.\""),
+        q(2, "Thirsty Work", MA, MA, "Water 8 crops.", "10 copper. Ma explains that rain waters for you.", true),
+        q(3, "Early to Bed", MA, MA, "Sleep in your bed in the farmhouse.", "The Farm Horse, the old family horse: hotbar slot 5, twice walking speed.", true)
+      ]
+    },
+    {
+      name: "Market", ic: "🍺", days: "Days 2–3", built: true,
+      intro: "Ride the old horse to Goldshire and put Stonefield back on the market.",
+      unlocks: ["Farley buys your produce", "Shipping Crate at the farm (Farley's cart collects each morning)", "1s 25c in rewards"],
+      cando: ["Sell at the Lion's Pride Inn", "Buy any seed from Brog", "Ship from home overnight"],
+      quests: [
+        q(4, "Market Day", MA, FARLEY, "Ride to Goldshire and tell Innkeeper Farley the Stonefield farm is growing again.", "25 copper. Farley now buys your produce.", true),
+        q(5, "Seeds for Spring", FARLEY, BROG, "Buy 10 seeds from Brog Hamfist.", "20 copper", true),
+        q(6, "The First Harvest", BROG, FARLEY, "Bring Farley 10 Silverleaf. Water daily; it ripens in 2 days.", "80 copper and the Shipping Crate at the farm. Farley's cart collects it each morning.", true)
+      ]
+    },
+    {
+      name: "Woodcutter & Builder", ic: "🪓", days: "Days 3–5", built: true,
+      intro: "The Westfall oaks around the farm are yours to fell, and the old pen needs walls.",
+      unlocks: ["Woodcutter's Axe (bought, 1s)", "Build Fence", "A pair of hens"],
+      cando: ["Chop oaks for Simple Wood (they regrow)", "Draw fence lines of Elwynn split rail, 2 wood a section", "Plan posts where wood runs short"],
+      quests: [
+        q(7, "Timber!", BROG, MA, "Buy a Woodcutter's Axe from Brog (1s), chop Westfall oaks and bring Ma 4 Simple Wood.", "Build Fence", true),
+        q(8, "Good Fences", MA, MA, "Build 8 fence sections of Elwynn split rail (2 wood each).", "A pair of hens in the pen", true, "\"Good fences make good hens. Or so your grandfather swore.\"")
+      ]
+    },
+    {
+      name: "Rancher", ic: "🐔", days: "Days 5–6", built: true,
+      intro: "The hens settle in, and the rest of the family's animals come home.",
+      unlocks: ["The cow and the sheep", "Milk and wool every day"],
+      cando: ["Gather eggs, milk and wool daily", "Sell animal goods to Farley or ship them"],
+      quests: [
+        q(9, "Eggs for Breakfast", MA, MA, "Gather 3 eggs.", "The cow and the sheep come home: milk and wool daily.", true)
+      ]
+    },
+    {
+      name: "Miner", ic: "⛏️", days: "Days 6–7", built: true,
+      intro: "Fargodeep Mine, south-west of the farm. Mind the kobolds.",
+      unlocks: ["Mining Pick (bought, 2s)", "Copper ore from Fargodeep"],
+      cando: ["Mine copper veins that refill each morning", "Stockpile ore for the smith"],
+      quests: [
+        q(10, "Into Fargodeep", BROG, BROG, "Buy a Mining Pick from Brog (2s) and mine 5 Copper Ore in Fargodeep Mine.", "1 silver", true, "\"You'll want a candle down there. And to not mention my name to the kobolds.\"")
+      ]
+    },
+    {
+      name: "Smith & tool upgrades", ic: "🔨", days: "Weeks 2–4", built: false,
+      intro: "Smith Argus turns ore into bars and tools into better tools. Each upgrade keeps the tool a day.",
+      unlocks: ["Furnace by the barn", "Copper, then iron, then gold tools"],
+      cando: ["Smelt bars", "Water a line, till 3 in a row, fell in fewer swings", "Mine deeper floors"],
+      quests: [
+        q(11, "A Fire by the Barn", MA, MA, "Bring Ma 20 stone and 10 Copper Ore to rebuild the old furnace.", "The furnace: smelt bars", false),
+        q(12, "Argus's Apprentice", BROG, ARGUS, "Take 5 Copper Bars and your Watering Can to Smith Argus.", "Copper Watering Can (3 in a line) and the upgrade menu", false),
+        q(13, "Forged in Fargodeep", ARGUS, ARGUS, "Reach floor 11 and bring 10 Iron Bars.", "Iron upgrades open", false),
+        q(14, "All That Glitters", ARGUS, ARGUS, "Bring 10 Gold Bars from the deep floors.", "Gold upgrades open", false)
+      ]
+    },
+    {
+      name: "Land", ic: "📜", days: "End of spring", built: false,
+      intro: "More field, less watering.",
+      unlocks: ["East field deed (up to 96 plots)", "Sprinklers", "Greenhouse"],
+      cando: ["Farm twice the land", "Let sprinklers water 4 or 8 plots each morning", "Grow all year"],
+      quests: [
+        q(15, "A Deed in Hand", MA, "Marshal Dughan", "Pay 25s and have Marshal Dughan sign the east field deed.", "The east field opens", false),
+        q(16, "Rain on Demand", ARGUS, MA, "Bring copper and tin bars for a sprinkler.", "Sprinkler recipe", false),
+        q(17, "Glass and Green", MA, MA, "Restore the barn's second floor: wood and 2g.", "The greenhouse", false)
+      ]
+    },
+    {
+      name: "Breeding & selling animals", ic: "🐣", days: "Summer", built: false,
+      intro: "Hearts, hay and a growing barn.",
+      unlocks: ["Breeding", "Selling animals to Ma", "Coop and barn upgrades (4, 8, 12)", "The pig"],
+      cando: ["Pet and feed for hearts", "Name the newborns", "Show at the Goldshire fair"],
+      quests: [
+        q(18, "Hay There", MA, MA, "Cut 20 hay from tall grass with the shovel.", "Feeding trough", false),
+        q(19, "Five Hearts Full", MA, MA, "Raise any animal to 5 hearts.", "Breeding unlocked", false),
+        q(20, "Little Lamb Lost", MA, MA, "Welcome a newborn and give it a name.", "Barn upgrade discount", false),
+        q(21, "A Fair Price", FARLEY, MA, "Sell an animal to Ma Stonefield.", "The pig arrives for sale", false)
+      ]
+    },
+    {
+      name: "House upgrades", ic: "🏡", days: "Summer–autumn", built: false,
+      intro: "A bigger farmhouse, one room at a time.",
+      unlocks: ["Kitchen", "Second floor", "Cellar"],
+      cando: ["Cook buff foods", "Place furniture", "Age cheese and mead"],
+      quests: [
+        q(22, "Hearth and Home", MA, MA, "10s and 50 wood for the kitchen.", "Kitchen and the first recipes", false),
+        q(23, "Up the Stairs", MA, MA, "1g and 150 wood for a second floor.", "Bigger bed, a chest, furniture", false),
+        q(24, "Down in the Cellar", FARLEY, MA, "3g to dig the cellar; Farley wants aged cheese.", "The cellar and barrels", false)
+      ]
+    },
+    {
+      name: "Swift Brown Steed", ic: "🏇", days: "Autumn", built: false,
+      intro: "The old horse gets a rest.",
+      unlocks: ["Saddlebags", "Swift Brown Steed"],
+      cando: ["Carry a full harvest to Goldshire in one trip"],
+      quests: [
+        q(25, "Saddle Up", FARLEY, "Katie Hunter", "Ride to the Eastvale stables and buy saddlebags (20s).", "4 more bag slots while riding", false),
+        q(26, "Swift as the Wind", "Katie Hunter", "Katie Hunter", "5g for a Swift Brown Steed.", "Swift Brown Steed", false)
+      ]
+    },
+    {
+      name: "Seasons", ic: "🍂", days: "Once the greenhouse stands", built: false,
+      intro: "28-day seasons switch on; seed lists change with them.",
+      unlocks: ["Seasonal seeds: Wheat, Corn, Fadeleaf, Wild Steelbloom", "Winter: greenhouse, mining, crafting"],
+      cando: ["Plan each season's field", "Find rare seeds (Kingsblood, Liferoot)"],
+      quests: [
+        q(27, "Turn of the Season", MA, MA, "Harvest the last spring crop before summer.", "Summer seeds at Brog", false),
+        q(28, "Winter's Veil Pantry", FARLEY, FARLEY, "Fill Farley's cellar with autumn goods before the frost.", "Farley's winter orders", false)
+      ]
+    },
+    {
+      name: "Stonefield Restoration", ic: "🎉", days: "End of year 1", built: false,
+      intro: "Ma's ledger: six pages, six bundles, one festival.",
+      unlocks: ["Sprinklers recipe, barn upgrade, mine lift, Eastvale bridge, Harvest Fair, rod upgrade", "The Stonefield harvest festival"],
+      cando: ["Open-ended play: the best farm, every recipe, every animal at 10 hearts"],
+      quests: [
+        q(29, "The Field", MA, MA, "5 of each spring crop.", "Sprinklers recipe", false),
+        q(30, "The Pen", MA, MA, "An egg, a milk and a wool.", "Free barn upgrade", false),
+        q(31, "The Mine", MA, MA, "20 copper bars and 5 tin.", "The mine lift", false),
+        q(32, "The Woods", MA, MA, "100 wood and 10 Heartwood.", "The bridge to Eastvale reopens", false),
+        q(33, "The Town", MA, MA, "5 gifts to Goldshire folk.", "Goldshire Harvest Fair each autumn", false),
+        q(34, "The Lake", MA, MA, "5 fish from Crystal Lake.", "Fishing rod upgrade", false),
+        q(35, "A Harvest Long Remembered", MA, FARLEY, "Finish the ledger and invite Goldshire to the farm.", "The Stonefield harvest festival", false)
+      ]
+    }
+  ];
+
+  var track = document.getElementById("track");
+  var panelHome = document.getElementById("panelHome");
+  var belt = document.getElementById("belt");
+  var desktop = window.matchMedia("(min-width: 820px)");
+  var current = 0;
+  var buttons = [];
+  var panel = document.createElement("div");
+  panel.className = "panel";
+  panel.id = "phasePanel";
+  panel.setAttribute("aria-live", "polite");
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c];
+    });
+  }
+  function badge(built) {
+    return built ? '<span class="badge built">Built</span>' : '<span class="badge planned">Planned</span>';
+  }
+  function list(items) {
+    return "<ul>" + items.map(function (i) { return "<li>" + esc(i) + "</li>"; }).join("") + "</ul>";
+  }
+
+  // Progress meter.
+  var all = [], builtN = 0;
+  PHASES.forEach(function (p) { p.quests.forEach(function (x) { all.push(x); if (x.built) builtN++; }); });
+  document.getElementById("meterTxt").textContent = builtN + " of " + all.length + " quests built";
+  document.getElementById("meterFill").style.width = Math.round(100 * builtN / all.length) + "%";
+
+  // Tool belt.
+  TOOLS.forEach(function (t) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "tool" + (t.built ? "" : " planned");
+    b.id = "tool-" + t.id;
+    b.title = t.label + " (" + PHASES[t.phase].name + (t.built ? ", built" : ", planned") + ")";
+    b.innerHTML = '<span class="ic">' + (t.svg ? SVG[t.svg] : t.ic) + "</span><span>" + esc(t.label) + "</span>";
+    b.addEventListener("click", function () { select(t.phase, true); });
+    belt.appendChild(b);
+  });
+
+  // Timeline nodes.
+  PHASES.forEach(function (p, i) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "phase-btn" + (p.built ? "" : " planned");
+    b.setAttribute("role", "listitem");
+    b.setAttribute("aria-expanded", "false");
+    b.setAttribute("aria-controls", "phasePanel");
+    b.innerHTML = '<span class="node" aria-hidden="true">' + p.ic + '</span>' +
+      '<span class="phase-txt"><span class="nm">' + esc(p.name) + '</span>' +
+      '<span class="dy">' + esc(p.days) + " · " + (p.built ? "built" : "planned") + "</span></span>" +
+      '<span class="chev" aria-hidden="true">▸</span>';
+    b.addEventListener("click", function () {
+      if (i === current && !desktop.matches && panel.parentNode) { collapse(); } else { select(i, false); }
+    });
+    b.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); select(Math.min(i + 1, PHASES.length - 1), false, true); }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); select(Math.max(i - 1, 0), false, true); }
+    });
+    track.appendChild(b);
+    buttons.push(b);
+  });
+
+  function questCard(x) {
+    var same = x.giver === x.turnin;
+    return '<article class="quest' + (x.built ? "" : " planned") + '">' +
+      '<div class="qhead"><span class="qn">Quest ' + x.n + "</span>" + badge(x.built) + "</div>" +
+      "<h4>" + esc(x.name) + "</h4>" +
+      (x.flavor ? '<p class="flavor">' + esc(x.flavor) + "</p>" : "") +
+      '<div class="who">' +
+        '<div><span class="mark" title="Quest giver">!</span><span>' + esc(x.giver) + " <em>" + esc(WHERE[x.giver] || "") + "</em></span></div>" +
+        '<div><span class="mark q" title="Turn in">?</span><span>' + esc(x.turnin) + (same ? " <em>back to the giver</em>" : " <em>" + esc(WHERE[x.turnin] || "") + "</em>") + "</span></div>" +
+      "</div>" +
+      '<div class="obj"><span class="lbl">Objective</span>' + esc(x.obj) + "</div>" +
+      '<div class="rew"><span class="lbl">Reward</span>' + esc(x.reward) + "</div>" +
+      "</article>";
+  }
+
+  function render(i) {
+    var p = PHASES[i];
+    panel.innerHTML =
+      "<h3>" + p.ic + " " + esc(p.name) + " " + badge(p.built) + "</h3>" +
+      '<div class="when">' + esc(p.days) + "</div>" +
+      "<p>" + esc(p.intro) + "</p>" +
+      '<div class="facts">' +
+        '<div class="fact"><h4>Unlocks</h4>' + list(p.unlocks) + "</div>" +
+        '<div class="fact"><h4>Now you can</h4>' + list(p.cando) + "</div>" +
+        '<div class="fact"><h4>Quests</h4><p style="margin:0">' + p.quests.length + " quest" + (p.quests.length > 1 ? "s" : "") + ", " +
+          p.quests.filter(function (x) { return x.built; }).length + " built</p></div>" +
+      "</div>" +
+      '<div class="quests">' + p.quests.map(questCard).join("") + "</div>" +
+      '<div class="nav"><button type="button" data-d="-1"' + (i === 0 ? " disabled" : "") + ">◂ Previous</button>" +
+      '<button type="button" data-d="1"' + (i === PHASES.length - 1 ? " disabled" : "") + ">Next ▸</button></div>";
+    Array.prototype.forEach.call(panel.querySelectorAll(".nav button"), function (nb) {
+      nb.addEventListener("click", function () { select(i + Number(nb.getAttribute("data-d")), true, true); });
+    });
+  }
+
+  function place() {
+    if (desktop.matches) { panelHome.appendChild(panel); }
+    else { buttons[current].insertAdjacentElement("afterend", panel); }
+  }
+
+  function updateBelt(i) {
+    var on = 0;
+    TOOLS.forEach(function (t) {
+      var el = document.getElementById("tool-" + t.id);
+      el.classList.toggle("on", t.phase <= i);
+      el.classList.toggle("new", t.phase === i);
+      if (t.phase <= i) on++;
+    });
+    document.getElementById("beltPhase").textContent = PHASES[i].name;
+    document.getElementById("beltCount").textContent = on + " / " + TOOLS.length + " unlocked";
+    var first = TOOLS.filter(function (t) { return t.phase === i; })[0];
+    if (first) {
+      var el = document.getElementById("tool-" + first.id);
+      belt.scrollTo({ left: Math.max(0, el.offsetLeft - belt.clientWidth / 2), behavior: "smooth" });
+    }
+  }
+
+  function collapse() {
+    buttons[current].setAttribute("aria-expanded", "false");
+    if (panel.parentNode) { panel.parentNode.removeChild(panel); }
+  }
+
+  function select(i, scroll, focus) {
+    buttons.forEach(function (b, k) { b.setAttribute("aria-expanded", k === i ? "true" : "false"); });
+    current = i;
+    render(i);
+    place();
+    updateBelt(i);
+    if (focus) { buttons[i].focus({ preventScroll: true }); }
+    if (desktop.matches) {
+      track.scrollTo({ left: Math.max(0, buttons[i].offsetLeft - track.clientWidth / 2 + 60), behavior: "smooth" });
+    }
+    if (scroll) {
+      var top = buttons[i].getBoundingClientRect().top + window.pageYOffset - 100;
+      window.scrollTo({ top: top, behavior: "smooth" });
+    }
+    if (history.replaceState) { history.replaceState(null, "", "#phase-" + (i + 1)); }
+  }
+
+  var onChange = function () { if (panel.parentNode) { place(); } };
+  if (desktop.addEventListener) { desktop.addEventListener("change", onChange); } else { desktop.addListener(onChange); }
+
+  var m = /^#phase-(\d+)$/.exec(location.hash);
+  var start = m ? Math.min(Math.max(Number(m[1]) - 1, 0), PHASES.length - 1) : 0;
+  select(start, false);
+})();
+</script>
+</body>
+</html>

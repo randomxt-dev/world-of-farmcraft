@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::bag::{Bag, Item};
 use crate::clock::{Clock, Weather};
 use crate::crops::Crop;
-use crate::quests::{Deed, Goal, Marker, Quests, Unlock, Villager, QUESTS};
-use crate::skills::{Skill, Skills};
+use crate::quests::{quest, Deed, Goal, Marker, Quests, Unlock, Villager, QUESTS};
+use crate::skills::{Skill, Skills, RANKS};
 
 /// Copper a new farmer starts with: 2 silver.
 pub const START_MONEY: u32 = 200;
@@ -237,7 +237,7 @@ impl Farm {
         if !self.quests.is_active(q) {
             return false;
         }
-        match QUESTS[q].goal {
+        match quest(q).goal {
             Goal::Do(_, need, _) => self.quests.count(q) >= need,
             Goal::Bring(item, n) => self.bag.count(item) >= n,
             Goal::Visit => true,
@@ -246,7 +246,7 @@ impl Farm {
 
     /// What `who` shows over their head.
     pub fn marker(&self, who: Villager) -> Marker {
-        let ending = (self.quests.active.iter()).filter(|&&(q, _)| QUESTS[q].ender == who);
+        let ending = (self.quests.active.iter()).filter(|&&(q, _)| quest(q).ender == who);
         let mut waiting = false;
         for &(q, _) in ending {
             if self.quest_ready(q) {
@@ -254,7 +254,7 @@ impl Farm {
             }
             waiting = true;
         }
-        if self.quests.offer(who).is_some() {
+        if self.offer(who).is_some() {
             Marker::Offer
         } else if waiting {
             Marker::Waiting
@@ -268,17 +268,58 @@ impl Farm {
         if !self.quest_ready(q) {
             return Err(Reject::QuestNotDone);
         }
-        let quest = &QUESTS[q];
-        if let Goal::Bring(item, n) = quest.goal {
+        let done = quest(q);
+        if let Goal::Bring(item, n) = done.goal {
             self.bag.take(item, n);
         }
-        self.money += quest.money;
-        if let Some(u) = quest.unlocks {
+        self.money += done.money;
+        if let Some(u) = done.unlocks {
             self.unlocked.insert(u);
         }
         self.quests.abandon(q);
-        self.quests.done = self.quests.done.max(q + 1);
+        if q < QUESTS.len() {
+            self.quests.done = self.quests.done.max(q + 1);
+        } else {
+            self.quests.studies += 1;
+            self.skills
+                .open_rank(RANKS[self.quests.studies.min(RANKS.len() - 1)]);
+        }
         Ok(())
+    }
+
+    /// The quest `who` can give now: the chain's next, or a study once a skill has reached its
+    /// cap.
+    pub fn offer(&self, who: Villager) -> Option<usize> {
+        if let Some(q) = self.quests.offer(who) {
+            return Some(q);
+        }
+        let q = self.quests.study()?;
+        let capped = self.skills.any_capped(RANKS[self.quests.studies]);
+        (quest(q).giver == who && capped && !self.quests.is_active(q)).then_some(q)
+    }
+
+    /// Takes quest `q` into the log, if it is on offer.
+    pub fn accept(&mut self, q: usize) -> bool {
+        let on_offer = [
+            Villager::Ma,
+            Villager::Farley,
+            Villager::Brog,
+            Villager::Khelden,
+        ]
+        .into_iter()
+        .any(|v| self.offer(v) == Some(q));
+        if !on_offer {
+            return false;
+        }
+        self.quests.active.push((q, 0));
+        true
+    }
+
+    /// Whether a try at `skill` brings something extra, by its level's luck.
+    pub fn lucky(&mut self, skill: Skill) -> bool {
+        self.practiced += 1;
+        let roll = crate::rng::below(self.seed, self.practiced << 8 | 0x80 | skill as u64, 100);
+        (roll as u32) < crate::skills::luck(self.skills.get(skill).0)
     }
 
     /// Buy a tool for `price` copper.
@@ -785,5 +826,26 @@ mod tests {
             f.buy_tool(Unlock::MiningPick, 500),
             Err(Reject::NotEnoughMoney)
         );
+    }
+
+    #[test]
+    fn a_capped_skill_opens_the_library_and_each_study_lifts_every_cap() {
+        let mut f = Farm::new(1, 1, 1);
+        f.quests.done = QUESTS.len();
+        assert_eq!(f.offer(Villager::Ma), None, "nothing capped yet");
+        f.skills.0.insert(Skill::Mining, (75, 75));
+        let library = QUESTS.len();
+        assert_eq!(f.offer(Villager::Ma), Some(library));
+        assert!(f.accept(library));
+        assert_eq!(f.marker(Villager::Khelden), Marker::TurnIn);
+        f.turn_in(library).unwrap();
+        assert_eq!(f.skills.get(Skill::Farming), (1, 150));
+        assert_eq!(
+            f.offer(Villager::Khelden),
+            None,
+            "Expert waits for a skill at 150"
+        );
+        f.skills.0.insert(Skill::Mining, (150, 150));
+        assert_eq!(f.offer(Villager::Khelden), Some(library + 1));
     }
 }

@@ -85,6 +85,8 @@ const WOOD: (u32, u32) = (4470, 21102);
 pub const LUMBERJACK_AXE: u32 = 768;
 /// `item_template` 3334, the Farmer's Shovel the farmer works the soil with.
 pub const SHOVEL: u32 = 3334;
+/// `item_template` 1602's look, the Sickle Axe: the farmer's sickle for ripe crops and herbs.
+pub const SICKLE: u32 = 1602;
 
 /// The 1.12 entry and look of a crop's harvest.
 fn produce(crop: Crop) -> (u32, u32) {
@@ -218,6 +220,24 @@ pub fn template(entry: u32) -> Option<ItemTemplate> {
             sheath: 3,
             delay_ms: 2200,
             damage: [3.0, 6.0],
+            armor: 0,
+        },
+        SICKLE => ItemTemplate {
+            entry,
+            name: "Farmer's Sickle".into(),
+            class: 2,
+            subclass: 0,
+            display_id: 8489,
+            quality: 1,
+            buy_price: 0,
+            sell_price: 0,
+            inventory_type: 21,
+            stackable: 1,
+            description: "Right-click a ripe crop or a wild herb to bring it in.".into(),
+            material: 1,
+            sheath: 3,
+            delay_ms: 2000,
+            damage: [1.0, 3.0],
             armor: 0,
         },
         // Farmer's Shovel, held two-handed.

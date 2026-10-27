@@ -260,7 +260,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
 
 <section id="timeline">
   <h2>The timeline</h2>
-  <p class="lede">You start as a plain farmer with a shovel, 8 Silverleaf seeds and 2 silver on day 1. Ma Stonefield, Innkeeper Farley and Brog Hamfist hand out the quests that unlock everything else.</p>
+  <p class="lede">Day 1: you wake facing Ma Stonefield, her yellow ! straight ahead, with a shovel, 8 Silverleaf seeds and 2 silver. Every tool slot on the bar stays empty until a quest or Brog's shop fills it. Ma Stonefield, Innkeeper Farley, Brog Hamfist and, later, Khelden Bremen at Northshire Abbey hand out the quests. Quests pay coin only for goods you hand over.</p>
   <div class="meter"><span id="meterTxt"></span><div class="bar"><div class="fill" id="meterFill"></div></div></div>
   <div class="track" id="track" role="list"></div>
   <div id="panelHome"></div>
@@ -277,13 +277,19 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
         <span class="chip">Crops with growth stages</span>
         <span class="chip">Rain waters for you</span>
         <span class="chip">Day clock 06:00&ndash;02:00 (~17 real min)</span>
-        <span class="chip">Sleeping in bed</span>
+        <span class="chip">/sleep in the farmhouse ends the day (bed click too)</span>
+        <span class="chip">"Watering" cast bar</span>
+        <span class="chip">Tools pick themselves on right-click</span>
+        <span class="chip">Skills on the XP bar</span>
+        <span class="chip">Quest tracker on the right</span>
+        <span class="chip">! and ? on the minimap and world map</span>
         <span class="chip">Wild Peacebloom &amp; Silverleaf to forage</span>
         <span class="chip">Westfall oaks that regrow</span>
         <span class="chip">Fence lines, posts when short on wood</span>
         <span class="chip">Plant with the shovel</span>
+        <span class="chip">Dig plots with Till Soil</span>
         <span class="chip">Pet pen, ~58 companions</span>
-        <span class="chip">Wandering critters</span>
+        <span class="chip">~20 wandering critters</span>
         <span class="chip">Farmhouse icon on the map</span>
         <span class="chip">Copper veins in Fargodeep, refill each morning</span>
       </div>
@@ -312,13 +318,52 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
     </div>
   </details>
 
+  <details class="card" id="skills">
+    <summary><span class="ic">&#x1F4C8;</span><span class="sum-t">Hotbar and skills</span></summary>
+    <div class="body">
+      <div class="tscroll"><table>
+        <tr><th>Slot</th><th>Button</th></tr>
+        <tr><td>1</td><td>Till Soil</td></tr>
+        <tr><td>2</td><td>Watering Can</td></tr>
+        <tr><td>3</td><td>Sickle</td></tr>
+        <tr><td>4</td><td>Axe</td></tr>
+        <tr><td>5</td><td>Mining Pick</td></tr>
+        <tr><td>6</td><td>Build Fence</td></tr>
+        <tr><td>7</td><td>Horse (7 again dismounts)</td></tr>
+        <tr><td>8&ndash;12</td><td>Seeds you carry, up to 5 kinds</td></tr>
+      </table></div>
+      <p>Each tool slot is empty until earned. <b>Tools pick themselves:</b> right-click a dry crop and the can comes out, a ripe crop or wild herb the sickle, a tree the axe, a vein the pick, empty soil the last-picked seed. The tool appears in hand and its slot lights up. <span class="badge built">Built</span></p>
+      <p>The bar above the hotbar (WoW's XP bar) shows the picked slot's skill, e.g. <b>Lumberjacking 12 / 75</b>. Every skill is also in the Skills tab. <span class="badge built">Built</span></p>
+      <div class="tscroll"><table>
+        <tr><th>Skill</th><th>Rises from</th><th>Slot</th></tr>
+        <tr><td>Farming</td><td>Digging, planting, watering</td><td>1, 2, 8&ndash;12</td></tr>
+        <tr><td>Herbalism</td><td>Harvesting crops and wild herbs with the sickle</td><td>3</td></tr>
+        <tr><td>Lumberjacking</td><td>Felling trees</td><td>4</td></tr>
+        <tr><td>Mining</td><td>Copper veins</td><td>5</td></tr>
+        <tr><td>Woodworking</td><td>Fence sections</td><td>6</td></tr>
+        <tr><td>Riding</td><td>Every 40 yards ridden</td><td>7</td></tr>
+        <tr><td>Shepherding</td><td>Eggs, milk, wool</td><td>none</td></tr>
+      </table></div>
+      <p><b>How they rise:</b> start at 1 / 75 like WoW. Each action rises by WoW's odds: orange always, yellow 60%, green 25%, gray never. Caps only rise through the studies at Northshire Abbey: 150, 225, 300.</p>
+      <div class="tscroll"><table>
+        <tr><th>Every 25 levels</th><th>Bonus (a message announces each)</th></tr>
+        <tr><td>All jobs</td><td>6% quicker per step (up to ~48% at 200+)</td></tr>
+        <tr><td>Gathering</td><td>4% per step chance of an extra herb, ore, log, egg, milk or wool</td></tr>
+        <tr><td>Woodworking</td><td>4% per step chance a fence section costs no wood</td></tr>
+        <tr><td>Riding</td><td>4% faster per step</td></tr>
+        <tr><td>Lumberjacking</td><td>Fells in 2 swings from 50, 1 swing from 150</td></tr>
+      </table></div>
+      <p><b>Known limit</b> <span class="badge planned">Planned fix</span> Every tree, vein and animal today is the easiest difficulty, so skills slow to a stop around 100. Tougher content fixes it: tin and iron deeper in Fargodeep, harder trees, fine wool.</p>
+    </div>
+  </details>
+
   <details class="card">
     <summary><span class="ic">&#x1FA99;</span><span class="sum-t">Economy</span></summary>
     <div class="body">
       <p>100 copper = 1 silver, 100 silver = 1 gold, as the bag shows it.</p>
       <div class="tscroll"><table>
         <tr><th>Selling</th><th>Buying</th></tr>
-        <tr><td>Innkeeper Farley, Lion's Pride Inn: buys produce on the spot (after Market Day)</td><td>Brog Hamfist, General Supplies: seeds, axe, mining pick</td></tr>
+        <tr><td>Innkeeper Farley, Lion's Pride Inn: buys produce on the spot (after Market Day)</td><td>Brog Hamfist, General Supplies (after Market Day): seeds, axe 1s, mining pick 2s</td></tr>
         <tr><td>Shipping Crate at the farm: Farley's cart collects each morning (after The First Harvest)</td><td>Ma's starter pouch: 8 Silverleaf seeds</td></tr>
         <tr><td>Weekly orders on the Goldshire board <span class="badge planned">Planned</span></td><td>Smith Argus: tool upgrades, bars <span class="badge planned">Planned</span></td></tr>
         <tr><td>Special orders from townsfolk, earn friendship <span class="badge planned">Planned</span></td><td>Ma Stonefield: land, buildings, animals <span class="badge planned">Planned</span></td></tr>
@@ -337,8 +382,8 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
       <div class="tscroll"><table>
         <tr><th>Stage</th><th>Plots</th><th>How</th></tr>
         <tr><td>Start</td><td>24 on the leaf rows</td><td>Given <span class="badge built">Built</span></td></tr>
-        <tr><td>Spring</td><td>Up to 48</td><td>Dig with the shovel on the furrows <span class="badge built">Built</span> (no cap yet)</td></tr>
-        <tr><td>Copper shovel</td><td>Till 3 in a row</td><td>Smith upgrade</td></tr>
+        <tr><td>Spring</td><td>Up to 48</td><td>Dig with Till Soil on the furrows <span class="badge built">Built</span> (no cap yet)</td></tr>
+        <tr><td>Copper hoe</td><td>Till 3 in a row</td><td>Smith upgrade</td></tr>
         <tr><td>Field deed, 25s</td><td>East field: up to 96</td><td>Quest from Ma</td></tr>
         <tr><td>Sprinklers</td><td>Water 4 or 8 each morning</td><td>Copper and tin bars</td></tr>
         <tr><td>Greenhouse, 2g</td><td>Grows all year</td><td>Barn's second floor restored</td></tr>
@@ -366,7 +411,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
         <tr><td>Pig</td><td>25s</td><td>Barn</td><td>Truffles, summer and autumn</td></tr>
       </table></div>
       <ul>
-        <li><b>Care:</b> pet daily, feed hay cut from tall grass. Hearts give better goods: Large Egg, Gold Milk, Fine Wool.</li>
+        <li><b>Care:</b> pet daily, feed hay cut from tall grass with the sickle. Hearts give better goods: Large Egg, Gold Milk, Fine Wool.</li>
         <li><b>Breeding:</b> two adults with 5 hearts and room in the barn; baby in 7 days, grown in 7 more. You name it.</li>
         <li><b>Selling:</b> to Ma for half price plus a hearts bonus; fair winners sell well.</li>
         <li><b>Coop and barn upgrades:</b> 4, 8, then 12 animals.</li>
@@ -385,7 +430,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
       <div class="tscroll"><table>
         <tr><th>Tool</th><th>Copper</th><th>Iron</th><th>Gold</th></tr>
         <tr><td>Watering Can</td><td>3 in a line</td><td>5 in a line</td><td>3&times;3</td></tr>
-        <tr><td>Shovel</td><td>3 in a row</td><td>5</td><td>3&times;3</td></tr>
+        <tr><td>Till Soil</td><td>3 in a row</td><td>5</td><td>3&times;3</td></tr>
         <tr><td>Axe</td><td>2 swings</td><td>1 swing, clears stumps</td><td>Splits Heartwood</td></tr>
         <tr><td>Mining Pick</td><td>Copper, tin</td><td>Iron, silver</td><td>Gold, mithril, gems</td></tr>
       </table></div>
@@ -406,7 +451,7 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
       <div class="tscroll"><table>
         <tr><th>Travel</th><th>How</th><th>Speed</th></tr>
         <tr><td>On foot</td><td>Start</td><td>7 yd/s</td></tr>
-        <tr><td>Farm Horse</td><td>Quest: Early to Bed <span class="badge built">Built</span></td><td>14 yd/s</td></tr>
+        <tr><td>Farm Horse</td><td>Biscuit, from Early to Bed, slot 7 <span class="badge built">Built</span></td><td>14 yd/s, plus Riding bonuses</td></tr>
         <tr><td>Saddlebags</td><td>20s, Eastvale</td><td>+4 bag slots</td></tr>
         <tr><td>Swift Brown Steed</td><td>5g, Eastvale</td><td>Faster, carries a full harvest</td></tr>
       </table></div>
@@ -442,37 +487,47 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
   var SVG = {
     shovel: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="14.5" y="2" width="3" height="16" rx="1" fill="#a0703a"/><rect x="10" y="2" width="12" height="3" rx="1.5" fill="#a0703a"/><path d="M10 17h12v6c0 4-3 7-6 7s-6-3-6-7z" fill="#b8c0c8" stroke="#555" stroke-width="1"/></svg>',
     can: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="7" y="12" width="15" height="14" rx="2" fill="#7f9db8" stroke="#3d5468" stroke-width="1"/><path d="M22 16l7-6 1.5 1.5-7 7z" fill="#7f9db8" stroke="#3d5468" stroke-width="1"/><path d="M10 12c0-6 9-6 9 0" fill="none" stroke="#3d5468" stroke-width="2"/><circle cx="29" cy="7" r="1" fill="#6cc"/><circle cx="31" cy="10" r="1" fill="#6cc"/></svg>',
+    sickle: '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 8c6-6 18-5 22 4-6-4-13-4-17 1z" fill="#b8c0c8" stroke="#555" stroke-width="1"/><rect x="9" y="12" width="3" height="17" rx="1" transform="rotate(-20 10 20)" fill="#a0703a"/></svg>',
+    hoe: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="14.5" y="4" width="3" height="26" rx="1" transform="rotate(25 16 16)" fill="#a0703a"/><path d="M5 5h11v4H9v5H5z" fill="#b8c0c8" stroke="#555" stroke-width="1"/></svg>',
     fence: '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="6" width="4" height="22" fill="#a0703a"/><rect x="24" y="6" width="4" height="22" fill="#a0703a"/><rect x="2" y="11" width="28" height="3" fill="#c08a4a"/><rect x="2" y="19" width="28" height="3" fill="#c08a4a"/></svg>'
   };
 
-  // Tools on the belt. `phase` is the index of the phase that unlocks it.
+  // Tools on the belt. `phase` is the id of the phase that unlocks it.
   var TOOLS = [
-    { id: "shovel", label: "Shovel", svg: "shovel", phase: 0, built: true },
-    { id: "can", label: "Watering Can", svg: "can", phase: 0, built: true },
-    { id: "horse", label: "Farm Horse", ic: "🐎", phase: 0, built: true },
-    { id: "crate", label: "Shipping Crate", ic: "📦", phase: 1, built: true },
-    { id: "axe", label: "Axe", ic: "🪓", phase: 2, built: true },
-    { id: "fence", label: "Build Fence", svg: "fence", phase: 2, built: true },
-    { id: "animals", label: "Animals", ic: "🐔", phase: 3, built: true },
-    { id: "pick", label: "Mining Pick", ic: "⛏️", phase: 4, built: true },
-    { id: "copper", label: "Copper Tools", ic: "🟠", phase: 5, built: false },
-    { id: "iron", label: "Iron Tools", ic: "⚪", phase: 5, built: false },
-    { id: "gold", label: "Gold Tools", ic: "🟡", phase: 5, built: false },
-    { id: "sprink", label: "Sprinklers", ic: "💦", phase: 6, built: false },
-    { id: "green", label: "Greenhouse", ic: "🪴", phase: 6, built: false },
-    { id: "breed", label: "Breeding", ic: "🐣", phase: 7, built: false },
-    { id: "kitchen", label: "Kitchen", ic: "🍲", phase: 8, built: false },
-    { id: "steed", label: "Swift Steed", ic: "🏇", phase: 9, built: false },
-    { id: "season", label: "Seasons", ic: "🍂", phase: 10, built: false },
-    { id: "fest", label: "Festival", ic: "🎉", phase: 11, built: false }
+    { id: "shovel", label: "Shovel", svg: "shovel", phase: "farmer", built: true },
+    { id: "can", label: "Watering Can", svg: "can", phase: "farmer", built: true },
+    { id: "sickle", label: "Sickle", svg: "sickle", phase: "farmer", built: true },
+    { id: "horse", label: "Farm Horse", ic: "🐎", phase: "farmer", built: true },
+    { id: "till", label: "Till Soil", svg: "hoe", phase: "market", built: true },
+    { id: "crate", label: "Shipping Crate", ic: "📦", phase: "market", built: true },
+    { id: "axe", label: "Axe", ic: "🪓", phase: "wood", built: true },
+    { id: "fence", label: "Build Fence", svg: "fence", phase: "wood", built: true },
+    { id: "animals", label: "Animals", ic: "🐔", phase: "ranch", built: true },
+    { id: "pick", label: "Mining Pick", ic: "⛏️", phase: "miner", built: true },
+    { id: "jman", label: "Journeyman 150", ic: "📗", phase: "scholar", built: true },
+    { id: "expert", label: "Expert 225", ic: "📘", phase: "scholar", built: true },
+    { id: "artisan", label: "Artisan 300", ic: "📕", phase: "scholar", built: true },
+    { id: "energy", label: "Energy", ic: "⚡", phase: "stamina", built: false },
+    { id: "pouch", label: "Seed Pouch", ic: "👝", phase: "stamina", built: false },
+    { id: "copper", label: "Copper Tools", ic: "🟠", phase: "smith", built: false },
+    { id: "iron", label: "Iron Tools", ic: "⚪", phase: "smith", built: false },
+    { id: "gold", label: "Gold Tools", ic: "🟡", phase: "smith", built: false },
+    { id: "sprink", label: "Sprinklers", ic: "💦", phase: "land", built: false },
+    { id: "green", label: "Greenhouse", ic: "🪴", phase: "land", built: false },
+    { id: "breed", label: "Breeding", ic: "🐣", phase: "breed", built: false },
+    { id: "kitchen", label: "Kitchen", ic: "🍲", phase: "house", built: false },
+    { id: "steed", label: "Swift Steed", ic: "🏇", phase: "steed", built: false },
+    { id: "season", label: "Seasons", ic: "🍂", phase: "seasons", built: false },
+    { id: "fest", label: "Festival", ic: "🎉", phase: "ledger", built: false }
   ];
 
-  var MA = "Ma Stonefield", FARLEY = "Innkeeper Farley", BROG = "Brog Hamfist", ARGUS = "Smith Argus";
+  var MA = "Ma Stonefield", FARLEY = "Innkeeper Farley", BROG = "Brog Hamfist", ARGUS = "Smith Argus", KHELDEN = "Khelden Bremen";
   var WHERE = {};
   WHERE[MA] = "Stonefield Farm";
   WHERE[FARLEY] = "Lion's Pride Inn, Goldshire";
   WHERE[BROG] = "General Supplies, Lion's Pride Inn";
   WHERE[ARGUS] = "Goldshire smithy";
+  WHERE[KHELDEN] = "Scholar, Northshire Abbey library";
   WHERE["Katie Hunter"] = "Eastvale stables";
   WHERE["Marshal Dughan"] = "Goldshire";
 
@@ -482,31 +537,31 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
 
   var PHASES = [
     {
-      name: "Farmer", ic: "🌱", days: "Days 1–2", built: true,
-      intro: "You arrive with a Shovel, 8 Silverleaf seeds and 2 silver. Ma Stonefield is waiting at the farm.",
-      unlocks: ["Watering Can", "Biscuit the farm horse, by the house (hotbar slot 5, twice walking speed)"],
-      cando: ["Plant, water and harvest Silverleaf", "/sleep in the farmhouse to pass the night", "Ride anywhere in Elwynn"],
+      id: "farmer", name: "Farmer", ic: "🌱", days: "Days 1–2", built: true,
+      intro: "You wake facing Ma Stonefield, her yellow ! straight ahead. In your bag: a Shovel (it plants seeds), 8 Silverleaf seeds and 2 silver.",
+      unlocks: ["Watering Can (slot 2)", "Sickle (slot 3)", "Biscuit the farm horse, waiting by the house (slot 7)"],
+      cando: ["Plant, water and harvest Silverleaf", "Right-click and the right tool picks itself", "/sleep in the farmhouse to end the day", "Ride anywhere in Elwynn"],
       quests: [
         q(1, "Breaking Ground", MA, MA, "Plant your 8 Silverleaf seeds.", "Watering Can", true, "\"That soil's been resting long enough. Let's see what it remembers.\""),
-        q(2, "Thirsty Work", MA, MA, "Water 8 crops.", "Ma explains that rain waters for you.", true),
-        q(3, "Early to Bed", MA, MA, "Type /sleep inside the farmhouse.", "Biscuit, the old farm horse, waiting by the house: right-click him or press 5, twice walking speed.", true)
+        q(2, "Thirsty Work", MA, MA, "Water 8 crops.", "Sickle, for ripe crops and wild herbs. Ma explains that rain waters for you.", true),
+        q(3, "Early to Bed", MA, MA, "Type /sleep inside the farmhouse.", "Biscuit, the old farm horse, waiting by the house: right-click him or press 7 (7 again dismounts). Twice walking speed.", true)
       ]
     },
     {
-      name: "Market", ic: "🍺", days: "Days 2–3", built: true,
-      intro: "Ride the old horse to Goldshire and put Stonefield back on the market.",
-      unlocks: ["Farley buys your produce", "Till Soil: Brog's old hoe, to dig plots beyond the first patch", "Shipping Crate at the farm (Farley's cart collects each morning)"],
-      cando: ["Sell at the Lion's Pride Inn", "Buy any seed from Brog", "Ship from home overnight"],
+      id: "market", name: "Market", ic: "🍺", days: "Days 2–3", built: true,
+      intro: "Ride Biscuit to Goldshire and put Stonefield back on the market.",
+      unlocks: ["Farley buys your produce", "Brog's shop opens", "Till Soil: Brog's old hoe (slot 1)", "Shipping Crate at the farm"],
+      cando: ["Sell at the Lion's Pride Inn", "Buy seeds from Brog", "Dig plots beyond the first patch", "Ship from home; Farley's cart collects each morning"],
       quests: [
-        q(4, "Market Day", MA, FARLEY, "Ride to Goldshire and tell Innkeeper Farley the Stonefield farm is growing again.", "Farley now buys your produce.", true),
-        q(5, "Seeds for Spring", FARLEY, BROG, "Buy 10 seeds from Brog Hamfist (his shelf only shows seeds you can still afford 10 of).", "Till Soil: Brog's old hoe, to dig new plots", true),
-        q(6, "The First Harvest", BROG, FARLEY, "Bring Farley 10 Silverleaf. Water daily; it ripens in 2 days.", "90 copper for the Silverleaf, and the Shipping Crate at the farm. Farley's cart collects it each morning.", true)
+        q(4, "Market Day", MA, FARLEY, "Ride to Goldshire and tell Innkeeper Farley the Stonefield farm is growing again.", "Farley buys your produce, and Brog's shop opens.", true),
+        q(5, "Seeds for Spring", FARLEY, BROG, "Buy 10 seeds from Brog Hamfist. His shelf only shows seeds you can still afford 10 of, so it can't fail.", "Till Soil: Brog's old hoe, to dig plots beyond the first patch", true),
+        q(6, "The First Harvest", BROG, FARLEY, "Bring Farley 10 Silverleaf. Water daily; it ripens in 2 days.", "90 copper for the Silverleaf, and the Shipping Crate at the farm.", true)
       ]
     },
     {
-      name: "Woodcutter & Builder", ic: "🪓", days: "Days 3–5", built: true,
+      id: "wood", name: "Woodcutter & Builder", ic: "🪓", days: "Days 3–5", built: true,
       intro: "The Westfall oaks around the farm are yours to fell, and the old pen needs walls.",
-      unlocks: ["Woodcutter's Axe (bought, 1s)", "Build Fence", "A pair of hens"],
+      unlocks: ["Woodcutter's Axe (bought, 1s; slot 4)", "Build Fence (slot 6)", "A pair of hens"],
       cando: ["Chop oaks for Simple Wood (they regrow)", "Draw fence lines of Elwynn split rail, 2 wood a section", "Plan posts where wood runs short"],
       quests: [
         q(7, "Timber!", BROG, MA, "Buy a Woodcutter's Axe from Brog (1s), chop Westfall oaks and bring Ma 4 Simple Wood.", "Build Fence", true),
@@ -514,105 +569,134 @@ footer { text-align: center; font-size: 13px; color: var(--ink-soft); margin-top
       ]
     },
     {
-      name: "Rancher", ic: "🐔", days: "Days 5–6", built: true,
+      id: "ranch", name: "Rancher", ic: "🐔", days: "Days 5–6", built: true,
       intro: "The hens settle in, and the rest of the family's animals come home.",
-      unlocks: ["The cow and the sheep", "Milk and wool every day"],
+      unlocks: ["The cow and the sheep", "Milk and wool every day", "Shepherding skill"],
       cando: ["Gather eggs, milk and wool daily", "Sell animal goods to Farley or ship them"],
       quests: [
         q(9, "Eggs for Breakfast", MA, MA, "Gather 3 eggs.", "The cow and the sheep come home: milk and wool daily.", true)
       ]
     },
     {
-      name: "Miner", ic: "⛏️", days: "Days 6–7", built: true,
+      id: "miner", name: "Miner", ic: "⛏️", days: "Days 6–7", built: true,
       intro: "Fargodeep Mine, south-west of the farm. Mind the kobolds.",
-      unlocks: ["Mining Pick (bought, 2s)", "Copper ore from Fargodeep"],
-      cando: ["Mine copper veins that refill each morning", "Stockpile ore for the smith"],
+      unlocks: ["Mining Pick (bought, 2s; slot 5)", "Copper ore from Fargodeep"],
+      cando: ["Mine copper veins that refill each morning", "Sell copper to Farley"],
       quests: [
-        q(10, "Into Fargodeep", BROG, BROG, "Buy a Mining Pick from Brog (2s) and mine 5 Copper Ore in Fargodeep Mine.", "You're a miner: Farley buys copper too", true, "\"You'll want a candle down there. And to not mention my name to the kobolds.\"")
+        q(10, "Into Fargodeep", BROG, BROG, "Buy a Mining Pick from Brog (2s) and mine 5 Copper Ore in Fargodeep Mine.", "No coin: you're a miner now.", true, "\"You'll want a candle down there. And to not mention my name to the kobolds.\"")
       ]
     },
     {
-      name: "Smith & tool upgrades", ic: "🔨", days: "Weeks 2–4", built: false,
+      id: "scholar", name: "Scholar", ic: "📚", days: "When any skill hits its cap", built: true,
+      intro: "Skills start at 1 / 75 like WoW's. Once any skill reaches its cap, Ma sends you up to the library of Northshire Abbey, north of Goldshire, and every cap rises together.",
+      unlocks: ["Journeyman: every skill cap 75 → 150", "Expert: caps 225", "Artisan: caps 300"],
+      cando: ["Keep raising every skill", "Earn the 25-level bonuses (see Skills below)"],
+      quests: [
+        q(11, "The Abbey Library", MA, KHELDEN, "Visit Khelden Bremen in the library of Northshire Abbey.", "Journeyman: every skill cap 75 → 150", true),
+        q(12, "Expert Studies", KHELDEN, KHELDEN, "Bring 10 Copper Ore for the reading-room lamps.", "Expert: every skill cap 225", true),
+        q(13, "Artisan Studies", KHELDEN, KHELDEN, "Bring 10 Wool Cloth to rebind the old tomes.", "Artisan: every skill cap 300", true, "\"Mind the shelves. Some of these books are older than Goldshire.\"")
+      ]
+    },
+    {
+      id: "stamina", name: "Stamina & mastery", ic: "⚡", days: "Weeks 1–2", built: false,
+      intro: "Days get a shape, and skills get content to grow on.",
+      unlocks: ["Energy: the unused mana bar", "Tougher trees, veins and animals per skill tier", "Seed pouch: more than 5 seed kinds", "Farmer level from your total skills"],
+      cando: ["Plan a day around energy; sleep and food refill it", "Keep skills rising past 100"],
+      quests: [
+        q(14, "A Hearty Breakfast", MA, MA, "Eat a cooked breakfast before work.", "The energy bar: tools use energy, sleep and food refill it", false),
+        q(15, "Tin and Tough Timber", BROG, BROG, "Mine 5 tin deeper in Fargodeep and fell an old Elwynn oak.", "Harder trees, tin and iron veins, fine wool", false),
+        q(16, "A Pouch for Every Seed", FARLEY, BROG, "Bring Brog 4 Wool Cloth.", "Seed pouch: carry more than 5 seed kinds", false),
+        q(17, "Farmer of Elwynn", MA, MA, "Reach a total of 300 skill points.", "Your Farmer level shows on your portrait", false)
+      ]
+    },
+    {
+      id: "smith", name: "Smith & tool upgrades", ic: "🔨", days: "Weeks 2–4", built: false,
       intro: "Smith Argus turns ore into bars and tools into better tools. Each upgrade keeps the tool a day.",
       unlocks: ["Furnace by the barn", "Copper, then iron, then gold tools"],
       cando: ["Smelt bars", "Water a line, till 3 in a row, fell in fewer swings", "Mine deeper floors"],
       quests: [
-        q(11, "A Fire by the Barn", MA, MA, "Bring Ma 20 stone and 10 Copper Ore to rebuild the old furnace.", "The furnace: smelt bars", false),
-        q(12, "Argus's Apprentice", BROG, ARGUS, "Take 5 Copper Bars and your Watering Can to Smith Argus.", "Copper Watering Can (3 in a line) and the upgrade menu", false),
-        q(13, "Forged in Fargodeep", ARGUS, ARGUS, "Reach floor 11 and bring 10 Iron Bars.", "Iron upgrades open", false),
-        q(14, "All That Glitters", ARGUS, ARGUS, "Bring 10 Gold Bars from the deep floors.", "Gold upgrades open", false)
+        q(18, "A Fire by the Barn", MA, MA, "Bring Ma 20 stone and 10 Copper Ore to rebuild the old furnace.", "The furnace: smelt bars", false),
+        q(19, "Argus's Apprentice", BROG, ARGUS, "Take 5 Copper Bars and your Watering Can to Smith Argus.", "Copper Watering Can (3 in a line) and the upgrade menu", false),
+        q(20, "Forged in Fargodeep", ARGUS, ARGUS, "Reach floor 11 and bring 10 Iron Bars.", "Iron upgrades open", false),
+        q(21, "All That Glitters", ARGUS, ARGUS, "Bring 10 Gold Bars from the deep floors.", "Gold upgrades open", false)
       ]
     },
     {
-      name: "Land", ic: "📜", days: "End of spring", built: false,
+      id: "land", name: "Land", ic: "📜", days: "End of spring", built: false,
       intro: "More field, less watering.",
       unlocks: ["East field deed (up to 96 plots)", "Sprinklers", "Greenhouse"],
       cando: ["Farm twice the land", "Let sprinklers water 4 or 8 plots each morning", "Grow all year"],
       quests: [
-        q(15, "A Deed in Hand", MA, "Marshal Dughan", "Pay 25s and have Marshal Dughan sign the east field deed.", "The east field opens", false),
-        q(16, "Rain on Demand", ARGUS, MA, "Bring copper and tin bars for a sprinkler.", "Sprinkler recipe", false),
-        q(17, "Glass and Green", MA, MA, "Restore the barn's second floor: wood and 2g.", "The greenhouse", false)
+        q(22, "A Deed in Hand", MA, "Marshal Dughan", "Pay 25s and have Marshal Dughan sign the east field deed.", "The east field opens", false),
+        q(23, "Rain on Demand", ARGUS, MA, "Bring copper and tin bars for a sprinkler.", "Sprinkler recipe", false),
+        q(24, "Glass and Green", MA, MA, "Restore the barn's second floor: wood and 2g.", "The greenhouse", false)
       ]
     },
     {
-      name: "Breeding & selling animals", ic: "🐣", days: "Summer", built: false,
+      id: "breed", name: "Breeding & selling animals", ic: "🐣", days: "Summer", built: false,
       intro: "Hearts, hay and a growing barn.",
       unlocks: ["Breeding", "Selling animals to Ma", "Coop and barn upgrades (4, 8, 12)", "The pig"],
       cando: ["Pet and feed for hearts", "Name the newborns", "Show at the Goldshire fair"],
       quests: [
-        q(18, "Hay There", MA, MA, "Cut 20 hay from tall grass with the shovel.", "Feeding trough", false),
-        q(19, "Five Hearts Full", MA, MA, "Raise any animal to 5 hearts.", "Breeding unlocked", false),
-        q(20, "Little Lamb Lost", MA, MA, "Welcome a newborn and give it a name.", "Barn upgrade discount", false),
-        q(21, "A Fair Price", FARLEY, MA, "Sell an animal to Ma Stonefield.", "The pig arrives for sale", false)
+        q(25, "Hay There", MA, MA, "Cut 20 hay from tall grass with the sickle.", "Feeding trough", false),
+        q(26, "Five Hearts Full", MA, MA, "Raise any animal to 5 hearts.", "Breeding unlocked", false),
+        q(27, "Little Lamb Lost", MA, MA, "Welcome a newborn and give it a name.", "Barn upgrade discount", false),
+        q(28, "A Fair Price", FARLEY, MA, "Sell an animal to Ma Stonefield.", "The pig arrives for sale", false)
       ]
     },
     {
-      name: "House upgrades", ic: "🏡", days: "Summer–autumn", built: false,
+      id: "house", name: "House upgrades", ic: "🏡", days: "Summer–autumn", built: false,
       intro: "A bigger farmhouse, one room at a time.",
       unlocks: ["Kitchen", "Second floor", "Cellar"],
       cando: ["Cook buff foods", "Place furniture", "Age cheese and mead"],
       quests: [
-        q(22, "Hearth and Home", MA, MA, "10s and 50 wood for the kitchen.", "Kitchen and the first recipes", false),
-        q(23, "Up the Stairs", MA, MA, "1g and 150 wood for a second floor.", "Bigger bed, a chest, furniture", false),
-        q(24, "Down in the Cellar", FARLEY, MA, "3g to dig the cellar; Farley wants aged cheese.", "The cellar and barrels", false)
+        q(29, "Hearth and Home", MA, MA, "10s and 50 wood for the kitchen.", "Kitchen and the first recipes", false),
+        q(30, "Up the Stairs", MA, MA, "1g and 150 wood for a second floor.", "Bigger bed, a chest, furniture", false),
+        q(31, "Down in the Cellar", FARLEY, MA, "3g to dig the cellar; Farley wants aged cheese.", "The cellar and barrels", false)
       ]
     },
     {
-      name: "Swift Brown Steed", ic: "🏇", days: "Autumn", built: false,
-      intro: "The old horse gets a rest.",
+      id: "steed", name: "Swift Brown Steed", ic: "🏇", days: "Autumn", built: false,
+      intro: "Biscuit gets a rest.",
       unlocks: ["Saddlebags", "Swift Brown Steed"],
       cando: ["Carry a full harvest to Goldshire in one trip"],
       quests: [
-        q(25, "Saddle Up", FARLEY, "Katie Hunter", "Ride to the Eastvale stables and buy saddlebags (20s).", "4 more bag slots while riding", false),
-        q(26, "Swift as the Wind", "Katie Hunter", "Katie Hunter", "5g for a Swift Brown Steed.", "Swift Brown Steed", false)
+        q(32, "Saddle Up", FARLEY, "Katie Hunter", "Ride to the Eastvale stables and buy saddlebags (20s).", "4 more bag slots while riding", false),
+        q(33, "Swift as the Wind", "Katie Hunter", "Katie Hunter", "5g for a Swift Brown Steed.", "Swift Brown Steed", false)
       ]
     },
     {
-      name: "Seasons", ic: "🍂", days: "Once the greenhouse stands", built: false,
+      id: "seasons", name: "Seasons", ic: "🍂", days: "Once the greenhouse stands", built: false,
       intro: "28-day seasons switch on; seed lists change with them.",
       unlocks: ["Seasonal seeds: Wheat, Corn, Fadeleaf, Wild Steelbloom", "Winter: greenhouse, mining, crafting"],
       cando: ["Plan each season's field", "Find rare seeds (Kingsblood, Liferoot)"],
       quests: [
-        q(27, "Turn of the Season", MA, MA, "Harvest the last spring crop before summer.", "Summer seeds at Brog", false),
-        q(28, "Winter's Veil Pantry", FARLEY, FARLEY, "Fill Farley's cellar with autumn goods before the frost.", "Farley's winter orders", false)
+        q(34, "Turn of the Season", MA, MA, "Harvest the last spring crop before summer.", "Summer seeds at Brog", false),
+        q(35, "Winter's Veil Pantry", FARLEY, FARLEY, "Fill Farley's cellar with autumn goods before the frost.", "Farley's winter orders", false)
       ]
     },
     {
-      name: "Stonefield Restoration", ic: "🎉", days: "End of year 1", built: false,
+      id: "ledger", name: "Stonefield Restoration", ic: "🎉", days: "End of year 1", built: false,
       intro: "Ma's ledger: six pages, six bundles, one festival.",
       unlocks: ["Sprinklers recipe, barn upgrade, mine lift, Eastvale bridge, Harvest Fair, rod upgrade", "The Stonefield harvest festival"],
       cando: ["Open-ended play: the best farm, every recipe, every animal at 10 hearts"],
       quests: [
-        q(29, "The Field", MA, MA, "5 of each spring crop.", "Sprinklers recipe", false),
-        q(30, "The Pen", MA, MA, "An egg, a milk and a wool.", "Free barn upgrade", false),
-        q(31, "The Mine", MA, MA, "20 copper bars and 5 tin.", "The mine lift", false),
-        q(32, "The Woods", MA, MA, "100 wood and 10 Heartwood.", "The bridge to Eastvale reopens", false),
-        q(33, "The Town", MA, MA, "5 gifts to Goldshire folk.", "Goldshire Harvest Fair each autumn", false),
-        q(34, "The Lake", MA, MA, "5 fish from Crystal Lake.", "Fishing rod upgrade", false),
-        q(35, "A Harvest Long Remembered", MA, FARLEY, "Finish the ledger and invite Goldshire to the farm.", "The Stonefield harvest festival", false)
+        q(36, "The Field", MA, MA, "5 of each spring crop.", "Sprinklers recipe", false),
+        q(37, "The Pen", MA, MA, "An egg, a milk and a wool.", "Free barn upgrade", false),
+        q(38, "The Mine", MA, MA, "20 copper bars and 5 tin.", "The mine lift", false),
+        q(39, "The Woods", MA, MA, "100 wood and 10 Heartwood.", "The bridge to Eastvale reopens", false),
+        q(40, "The Town", MA, MA, "5 gifts to Goldshire folk.", "Goldshire Harvest Fair each autumn", false),
+        q(41, "The Lake", MA, MA, "5 fish from Crystal Lake.", "Fishing rod upgrade", false),
+        q(42, "A Harvest Long Remembered", MA, FARLEY, "Finish the ledger and invite Goldshire to the farm.", "The Stonefield harvest festival", false)
       ]
     }
   ];
+
+  // Resolve each tool's phase id to its index on the timeline.
+  TOOLS.forEach(function (t) {
+    for (var k = 0; k < PHASES.length; k++) { if (PHASES[k].id === t.phase) { t.phase = k; return; } }
+    throw new Error("tool " + t.id + " has no phase " + t.phase);
+  });
 
   var track = document.getElementById("track");
   var panelHome = document.getElementById("panelHome");

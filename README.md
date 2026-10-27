@@ -41,16 +41,16 @@ Lion's Pride Inn in Goldshire.
 
 | Do | How |
 |---|---|
-| Hotbar | 1 Till Soil, 2 Watering Can, 3 Axe, 4 Build Fence, 5 Horse (each once you have it), 6-12 your seeds. Scroll the mouse wheel or press a number to pick (Shift+wheel zooms) |
-| Plant | Pick a seed, then right-click a dirt mound |
-| Water | Pick the watering can, then right-click a planted crop once a day; rain does it for you |
+| Hotbar | 1 Till Soil, 2 Watering Can, 3 Sickle, 4 Axe, 5 Mining Pick, 6 Build Fence, 7 Horse (each once you have it), 8-12 your seeds. Tools come out by themselves when you right-click a crop, tree or vein; scroll the wheel or press a number to pick a seed (Shift+wheel zooms) |
+| Plant | Right-click a dirt mound: the seed you last picked goes in |
+| Water | Right-click a planted crop once a day; rain does it for you |
 | Harvest | Right-click a ripe crop |
 | Sleep | Type /sleep inside the farmhouse (or right-click the bed); past 2:00 you pass out |
 | Sell | To Innkeeper Farley in the Goldshire inn, or drop goods in the Shipping Crate once you have it |
 | Buy | Seeds, the axe and the pick from Brog Hamfist in the Goldshire inn |
 | Dig more plots | Press 1 (Till Soil), then click a furrow in the field |
 | Fences | Press 4, click where the fence starts, then where it goes: Elwynn split rail goes up along the line, 2 Simple Wood a section, and carries on from the end. Click the end again to stop. Short of wood, the rest is marked with posts: right-click one to build it later. Right-click a fence to take it down |
-| Horse | Right-click Biscuit by the house, or press 5; 5 again (or clicking off a buff) steps down. Twice as fast, for trips to Goldshire |
+| Horse | Right-click Biscuit by the house, or press 7; 7 again steps down. Twice as fast, for trips to Goldshire |
 | Animals | Right-click the cows, sheep and chickens once a day for milk, wool and eggs |
 | Mine | Copper veins in Fargodeep Mine, south-west of the farm |
 | Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
@@ -60,5 +60,5 @@ Lion's Pride Inn in Goldshire.
 | Wildlife | Rabbits, squirrels, deer, hares, prairie dogs and toads wander the property |
 | Map | The farm is a house on the world map and minimap whenever you are away |
 | Quests | Tracked on the right of the screen; ! and ? also show on the minimap and the world map |
-| Skills | Farming, Herbalism, Mining, Lumberjacking, Woodworking, Shepherding and Riding start at 1/75 and rise as in WoW (orange, yellow, green, gray). The bar above the hotbar shows the picked slot's skill; all of them are in the Skills tab |
+| Skills | Farming, Herbalism, Mining, Lumberjacking, Woodworking, Shepherding and Riding start at 1/75 and rise as in WoW (orange, yellow, green, gray). Every 25 levels: quicker work, a chance of extra goods, a faster horse, fewer axe swings. Past 75, study with Khelden Bremen in Northshire Abbey. The bar above the hotbar shows the lit slot's skill |
 | Help | Talk to Ma Stonefield; type `.time`, `.home` or `.gps` in chat. `.quest <n>` skips to quest n, for testing |

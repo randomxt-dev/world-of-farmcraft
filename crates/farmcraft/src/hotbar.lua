@@ -1,13 +1,16 @@
--- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-5 are tools
--- (Till Soil, Watering Can, Axe, Build Fence, Horse), each there once a quest or Brog's shop
--- gives it, slots 6-12 the seeds carried. One slot is lit as the pick: the mouse wheel moves it
--- (Shift and the wheel zoom the camera), a number key or a click picks a slot, and the server is
--- told with ".sel <slot>". Till Soil and Build Fence cast at once when pressed, the Horse sends
--- ".ride" (the client won't cast while mounted, so a cast could never step down); the can, the
--- axe and the seeds say what a right-click on the farm does. Also here: the farm's own names on
+-- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-7 are tools
+-- (Till Soil, Watering Can, Sickle, Axe, Mining Pick, Build Fence, Horse), each there once a quest
+-- or Brog's shop gives it; slots 8-12 hold the seeds carried. One slot is lit as the pick: the
+-- mouse wheel moves it (Shift and the wheel zoom the camera), a number key or a click picks a
+-- slot, and the server is told with ".sel <slot>". The farm picks the tool by itself as well: a
+-- right-click on a dry crop takes the can, on a ripe one the sickle, on a tree the axe, and the
+-- server lights that slot ("FarmcraftTool"). Till Soil and Build Fence cast at once when pressed,
+-- the Horse sends ".ride" (the client won't cast while mounted, so a cast could never step down).
+-- Also here: the bar above the hotbar shows the lit slot's skill, the farm's own names on
 -- borrowed skill lines and cast bars, and every quest tracked on screen.
 
-FARMCRAFT_SLOT = 6
+FARMCRAFT_SLOT = 8
+local RIDE_SLOT = 7
 
 -- The tools: icon, name, tooltip, and whether pressing the button acts (casts) or only picks.
 -- The server puts borrowed spells on these buttons; these are the faces and words they wear.
@@ -21,25 +24,37 @@ local TOOLS = {
 	[2] = {
 		"Interface\\Icons\\INV_Drink_Waterskin_01",
 		"Watering Can",
-		"Pick this, then right-click a planted crop to water it. Rain waters for you.",
+		"Comes out by itself when you right-click a crop that needs water. Rain waters for you.",
 		false,
 	},
 	[3] = {
-		"Interface\\Icons\\INV_Axe_01",
-		"Axe",
-		"Right-click a Westfall oak to chop it down for Simple Wood.",
+		"Interface\\Icons\\INV_Misc_Herb_07",
+		"Sickle",
+		"Comes out by itself when you right-click a ripe crop or a wild herb.",
 		false,
 	},
 	[4] = {
+		"Interface\\Icons\\INV_Axe_01",
+		"Axe",
+		"Comes out by itself when you right-click a Westfall oak: chop it down for Simple Wood.",
+		false,
+	},
+	[5] = {
+		"Interface\\Icons\\INV_Pick_02",
+		"Mining Pick",
+		"Comes out by itself when you right-click a copper vein in Fargodeep Mine.",
+		false,
+	},
+	[6] = {
 		"Interface\\Icons\\INV_TradeskillItem_01",
 		"Build Fence",
 		"Click where a fence starts, then where it runs to: sections go up along the line for 2 Simple Wood each, and keep going from the end. Click the end again to stop. Short of wood, the rest is marked out with posts: right-click a post to build it later.",
 		true,
 	},
-	[5] = {
+	[7] = {
 		"Interface\\Icons\\Ability_Mount_RidingHorse",
 		"Farm Horse",
-		"Mount up, or press again to step down. Riding is twice as fast as walking. Biscuit waits by the house when you're on foot.",
+		"Mount up, or press again to step down. Biscuit waits by the house when you're on foot.",
 		true,
 	},
 }
@@ -140,8 +155,8 @@ SetBinding("SHIFT-MOUSEWHEELDOWN", "CAMERAZOOMOUT")
 -- bring up the ground circle), everything else becomes the pick.
 local use_action = UseAction
 UseAction = function(slot, check_cursor, on_self)
-	if slot == 5 then
-		if HasAction(5) then
+	if slot == RIDE_SLOT then
+		if HasAction(RIDE_SLOT) then
 			SendChatMessage(".ride", "SAY")
 		end
 		return
@@ -227,12 +242,14 @@ end
 local SLOT_SKILLS = {
 	[1] = "Farming",
 	[2] = "Farming",
-	[3] = "Lumberjacking",
-	[4] = "Woodworking",
-	[5] = "Riding",
+	[3] = "Herbalism",
+	[4] = "Lumberjacking",
+	[5] = "Mining",
+	[6] = "Woodworking",
+	[7] = "Riding",
 }
 local function slot_skill(slot)
-	return SLOT_SKILLS[slot] or (slot >= 6 and "Farming") or nil
+	return SLOT_SKILLS[slot] or (slot > RIDE_SLOT and "Farming") or nil
 end
 local function skill_level(name)
 	for i = 1, GetNumSkillLines() do
@@ -267,7 +284,18 @@ MainMenuExpBar_Update = Farmcraft_SkillBar
 local skill_watch = CreateFrame("Frame")
 skill_watch:RegisterEvent("SKILL_LINES_CHANGED")
 skill_watch:RegisterEvent("PLAYER_XP_UPDATE")
-skill_watch:SetScript("OnEvent", Farmcraft_SkillBar)
+skill_watch:RegisterEvent("CHAT_MSG_ADDON")
+skill_watch:SetScript("OnEvent", function()
+	-- The server lights the tool it took for a job; this is not a pick to tell it about.
+	if event == "CHAT_MSG_ADDON" then
+		if arg1 ~= "FarmcraftTool" then
+			return
+		end
+		FARMCRAFT_SLOT = tonumber(arg2) or FARMCRAFT_SLOT
+		farm_light()
+	end
+	Farmcraft_SkillBar()
+end)
 
 -- Cast bars of borrowed spells, named for what the farmer is doing.
 local CAST_NAMES = {

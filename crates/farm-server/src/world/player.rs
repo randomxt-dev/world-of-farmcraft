@@ -118,8 +118,9 @@ pub fn outfit(owner: u64) -> Vec<Held> {
 
 /// `EQUIPMENT_SLOT_MAINHAND`.
 const MAINHAND: u8 = 15;
-/// The tool not in hand: carried, in no slot, so the hand can swap to it.
+/// The tools not in hand: carried, in no slot, so the hand can swap to them.
 const SPARE: u8 = 0xFE;
+const SPARE_SICKLE: u8 = 0xFD;
 
 /// The spare tool: the axe, while the shovel starts in hand.
 pub fn spare_tool(owner: u64) -> Held {
@@ -131,12 +132,23 @@ pub fn spare_tool(owner: u64) -> Held {
     }
 }
 
-/// The item guid of the tool `entry` (the shovel or the axe).
+/// The sickle, carried for when a crop is ripe.
+pub fn spare_sickle(owner: u64) -> Held {
+    Held {
+        slot: SPARE_SICKLE,
+        guid: items::item_guid(owner, u32::from(SPARE_SICKLE)),
+        entry: items::SICKLE,
+        count: 1,
+    }
+}
+
+/// The item guid of the tool `entry`: the shovel, the axe, the sickle or the pick.
 pub fn tool_guid(owner: u64, entry: u32) -> u64 {
-    let slot = if entry == items::LUMBERJACK_AXE {
-        SPARE
-    } else {
-        MAINHAND
+    let slot = match entry {
+        items::LUMBERJACK_AXE => SPARE,
+        items::SICKLE => SPARE_SICKLE,
+        items::MINING_PICK => items::BACKPACK,
+        _ => MAINHAND,
     };
     items::item_guid(owner, u32::from(slot))
 }

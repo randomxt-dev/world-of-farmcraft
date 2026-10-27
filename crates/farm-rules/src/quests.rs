@@ -25,6 +25,8 @@ pub enum Unlock {
     MiningPick,
     /// Till Soil, to dig plots beyond the first patch.
     Tilling,
+    /// The sickle, to bring in a ripe crop or a wild herb.
+    Sickle,
 }
 
 /// The villagers who give and take quests.
@@ -36,6 +38,8 @@ pub enum Villager {
     Farley,
     /// Brog Hamfist at the Lion's Pride Inn, who sells seeds and tools.
     Brog,
+    /// Khelden Bremen, scholar of the Northshire Abbey library, who teaches the ranks.
+    Khelden,
 }
 
 /// Things the farmer does that quests count.
@@ -104,13 +108,14 @@ pub const QUESTS: [Quest; 10] = [
         ender: Villager::Ma,
         goal: Goal::Do(Deed::Water, 8, "Crops watered"),
         money: 0,
-        unlocks: None,
+        unlocks: Some(Unlock::Sickle),
         details: "A sprout that isn't watered doesn't grow, and that's the whole of farming in a \
                   sentence.$B$BPick the watering can on your bar and right-click each planted \
                   mound. Once a day is enough, and on a rainy day the sky does it for you.",
         objectives: "Water 8 of your crops.",
         progress: "The ones you missed look mighty thirsty.",
-        reward: "Good, good. They'll be stretching by morning.",
+        reward: "Good, good. They'll be stretching by morning. Take my sickle too: when they're \
+                 ripe, right-click them and it comes out by itself.",
     },
     Quest {
         title: "Early to Bed",
@@ -125,7 +130,7 @@ pub const QUESTS: [Quest; 10] = [
         objectives: "Type /sleep inside the Stonefield farmhouse, then see Ma Stonefield.",
         progress: "Bed's inside, dear. Through the door.",
         reward: "Rested? Good. Now, the old farm horse has been eating his head off by the \
-                 house. He's yours: right-click him to ride, or press 5 anywhere, and again to \
+                 house. He's yours: right-click him to ride, or press 7 anywhere, and again to \
                  get down. He'll get you to Goldshire and back twice as quick as your feet.",
     },
     Quest {
@@ -237,6 +242,59 @@ pub const QUESTS: [Quest; 10] = [
     },
 ];
 
+/// The study quests that open each skill rank past Apprentice: each is offered once any skill
+/// reaches the cap it lifts.
+pub const STUDIES: [Quest; 3] = [
+    Quest {
+        title: "The Abbey Library",
+        giver: Villager::Ma,
+        ender: Villager::Khelden,
+        goal: Goal::Visit,
+        money: 0,
+        unlocks: None,
+        details: "You've learned all an old farm wife can teach, dear. Past this, it's books.                  $B$BKhelden Bremen keeps the library up in Northshire Abbey, north of                   Goldshire. The brothers have a book on every trade there is. Go and see him.",
+        objectives: "Visit Khelden Bremen in the library of Northshire Abbey.",
+        progress: "",
+        reward: "A farmer, among the tomes? Splendid. Sit, read: the Journeyman's treatises on                  every trade you practise. Your skills can climb to 150 now.",
+    },
+    Quest {
+        title: "Expert Studies",
+        giver: Villager::Khelden,
+        ender: Villager::Khelden,
+        goal: Goal::Bring(Item::CopperOre, 10),
+        money: 0,
+        unlocks: None,
+        details: "Back already, and at the edge of what you know? The Expert volumes are in the                   reading room, and its lamps want new copper fittings before anyone reads by                   them.$B$BBring me ten Copper Ore and the books are yours.",
+        objectives: "Bring 10 Copper Ore to Khelden Bremen in Northshire Abbey.",
+        progress: "The reading room is still dark, I'm afraid.",
+        reward: "Fine ore. Here: the Expert volumes. Your skills can climb to 225.",
+    },
+    Quest {
+        title: "Artisan Studies",
+        giver: Villager::Khelden,
+        ender: Villager::Khelden,
+        goal: Goal::Bring(Item::Wool, 10),
+        money: 0,
+        unlocks: None,
+        details: "The Artisan tomes are falling apart. Brother Danil binds books when he isn't                   minding the stores, and he wants good wool cloth for it.$B$BBring me ten Wool                   Cloth from your sheep.",
+        objectives: "Bring 10 Wool Cloth to Khelden Bremen in Northshire Abbey.",
+        progress: "The tomes won't bind themselves.",
+        reward: "Bound and readable at last. You're an Artisan now: every skill can reach 300.",
+    },
+];
+
+/// Quest `q`: the chain first, then the studies.
+pub fn quest(q: usize) -> &'static Quest {
+    if q < QUESTS.len() {
+        &QUESTS[q]
+    } else {
+        &STUDIES[q - QUESTS.len()]
+    }
+}
+
+/// How many quests there are, chain and studies.
+pub const ALL_QUESTS: usize = QUESTS.len() + STUDIES.len();
+
 /// What a villager shows over their head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Marker {
@@ -254,8 +312,11 @@ pub enum Marker {
 pub struct Quests {
     /// How many of the chain are turned in; the chain is done in order.
     pub done: usize,
-    /// Quests in the log, by index into [`QUESTS`], with the count of their deed.
+    /// Quests in the log, by index (see [`quest`]), with the count of their deed.
     pub active: Vec<(usize, u32)>,
+    /// Ranks studied: 1 is Journeyman.
+    #[serde(default)]
+    pub studies: usize,
 }
 
 impl Quests {
@@ -273,7 +334,7 @@ impl Quests {
         (next < QUESTS.len() && QUESTS[next].giver == who && !self.is_active(next)).then_some(next)
     }
 
-    /// Takes quest `q` into the log.
+    /// Takes chain quest `q` into the log.
     pub fn accept(&mut self, q: usize) -> bool {
         if q != self.done || self.is_active(q) || q >= QUESTS.len() {
             return false;
@@ -282,11 +343,16 @@ impl Quests {
         true
     }
 
+    /// The next study quest, while there is one.
+    pub fn study(&self) -> Option<usize> {
+        (self.studies < STUDIES.len()).then_some(QUESTS.len() + self.studies)
+    }
+
     /// Counts `deed` for the quests in the log; the quests it moved on, with their new counts.
     pub fn note(&mut self, deed: Deed) -> Vec<(usize, u32)> {
         let mut moved = Vec::new();
         for (q, n) in &mut self.active {
-            if let Goal::Do(d, need, _) = QUESTS[*q].goal {
+            if let Goal::Do(d, need, _) = quest(*q).goal {
                 if d == deed && *n < need {
                     *n += 1;
                     moved.push((*q, *n));

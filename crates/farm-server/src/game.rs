@@ -25,7 +25,7 @@ use crate::world::spells::{self, CastRequest, Target};
 
 mod quests;
 
-use quests::{AXE_PRICE, PICK_PRICE, TEXT_BROG, TEXT_FARLEY};
+use quests::{AXE_PRICE, PICK_PRICE, TEXT_BROG, TEXT_FARLEY, TEXT_KHELDEN};
 
 // Gameobject entries: soil, each crop's growing stages and its ripe plant, and the fixtures.
 const SOIL_DRY: u32 = 50_000;
@@ -44,8 +44,7 @@ const STUMP_DISPLAY: u32 = 6158;
 const SAPLING_DISPLAY: u32 = 4951;
 /// `Emotes.dbc` 36, `ONESHOT_ATTACK1H`: one swing of the one-hand weapon in hand.
 const SWING: u32 = 36;
-/// Swings to fell a tree, the time between them, and the pause before it falls.
-const SWINGS: u32 = 3;
+/// The time between axe swings, and the pause before the tree falls; the swings are the skill's.
 const SWING_EVERY: Duration = Duration::from_millis(900);
 /// How close the farmer must stand to a tree's trunk.
 const TREE_REACH: f32 = 7.0;
@@ -305,6 +304,7 @@ sells seeds and tools.$B$BAnd mind you get to bed before two in the morning!";
 const FARLEY: &str = "Welcome to the Lion's Pride, friend! Fresh from the farm? I'll take \
 whatever you grow for the kitchen, and pay fair coin for it.";
 const BROG: &str = "Seeds, tools, a good stout axe: if a farmer needs it, Brog has it.";
+const KHELDEN: &str = "Welcome to the abbey library. Every trade under the Light has a book here, and most of them are overdue.";
 
 /// One farmer's world.
 pub struct Game {
@@ -345,10 +345,13 @@ pub struct Game {
     tool: u32,
     /// The quest log as last sent: (quest id, counter word) per slot.
     quest_log: Vec<(u32, u32)>,
-    /// Ma's, Farley's and Brog's markers as last sent.
-    markers: [u32; 3],
-    /// The tool slots on the bar as last sent: the shovel, can, axe, fence and horse.
-    bar_tools: [bool; 5],
+    /// Ma's, Farley's, Brog's and Khelden's markers as last sent.
+    markers: [u32; 4],
+    /// The tool slots on the bar as last sent: till, can, sickle, axe, pick, fence and horse.
+    bar_tools: [bool; 7],
+    /// The bar slot lit as the tool in use, and the seed slot last picked (from the first).
+    lit: usize,
+    seed_pick: usize,
     /// The item entries on the action bar, slot by slot, and the slot the farmer has picked.
     bar: Vec<u32>,
     selected: usize,
@@ -410,8 +413,10 @@ impl Game {
             ridden: 0.0,
             tool: items::SHOVEL,
             quest_log: Vec::new(),
-            markers: [u32::MAX; 3],
-            bar_tools: [false; 5],
+            markers: [u32::MAX; 4],
+            bar_tools: [false; 7],
+            lit: spells::SEED_SLOT0,
+            seed_pick: 0,
             bar: Vec::new(),
             selected: spells::SEED_SLOT0,
             fixtures: [0; 2],
@@ -463,7 +468,10 @@ impl Game {
 
     /// Seat the farmer at home and show them the farm.
     pub fn enter(&mut self) {
-        let mut carried = vec![player::spare_tool(self.guid())];
+        let mut carried = vec![
+            player::spare_tool(self.guid()),
+            player::spare_sickle(self.guid()),
+        ];
         if self.farm.has(Unlock::MiningPick) {
             carried.push(player::pick(self.guid()));
         }
@@ -660,7 +668,7 @@ impl Game {
         self.start(
             spells::PLANT_SEEDS,
             Target::Caster,
-            PLANT_TIME,
+            self.quick(Skill::Farming, PLANT_TIME),
             Job::Till(cell),
         );
     }
@@ -673,6 +681,7 @@ impl Game {
         if !self.farm.has(Unlock::Fence) {
             return self.refuse(&Reject::Locked(Unlock::Fence));
         }
+        self.take_tool(spells::FENCE_SLOT, None);
         if distance(self.at, p) > 30.0 {
             return self.notify("You need to be closer.");
         }
@@ -734,6 +743,11 @@ impl Game {
             for _ in 0..built {
                 self.noted(Deed::BuildFence);
                 self.practice(Skill::Woodworking, 1);
+                if self.farm.lucky(Skill::Woodworking) {
+                    self.farm.bag.add(Item::Wood, farm_rules::FENCE_WOOD);
+                    self.say("Your Woodworking saved the wood on that section.");
+                    self.sync_bag(None, false);
+                }
             }
         }
         let mut line = format!("{built} fence sections built");
@@ -767,7 +781,8 @@ impl Game {
         let display = if mount { HORSE_DISPLAY } else { 0 };
         self.send(player::mount_change(self.guid(), display));
         self.move_counter += 1;
-        let speed = if mount { RIDE_SPEED } else { WALK_SPEED };
+        let pace = farm_rules::skills::pace(self.farm.skills.get(Skill::Riding).0);
+        let speed = if mount { RIDE_SPEED * pace } else { WALK_SPEED };
         self.send(packets::force_run_speed(
             self.guid(),
             self.move_counter,
@@ -794,8 +809,37 @@ impl Game {
 
     /// One try at `skill` on something of `difficulty`; a point shows in the skills.
     fn practice(&mut self, skill: Skill, difficulty: u32) {
-        if self.farm.practice(skill, difficulty).is_some() {
-            self.send(player::skill_change(self.guid(), &self.skill_lines()));
+        let Some(level) = self.farm.practice(skill, difficulty) else {
+            return;
+        };
+        self.send(player::skill_change(self.guid(), &self.skill_lines()));
+        if level % farm_rules::skills::TIER != 0 {
+            return;
+        }
+        let perk = match skill {
+            Skill::Farming => "you dig, plant and water quicker",
+            Skill::Herbalism => "you gather quicker, and now and then find an extra herb",
+            Skill::Mining => "you mine quicker, and now and then find extra ore",
+            Skill::Lumberjacking if level == 50 => "two swings fell a tree now",
+            Skill::Lumberjacking if level == 150 => "one swing fells a tree now",
+            Skill::Lumberjacking => "you chop quicker, and now and then split an extra log",
+            Skill::Woodworking => "now and then a fence section costs no wood",
+            Skill::Shepherding => "now and then an animal gives twice",
+            Skill::Riding => "Biscuit runs a little faster",
+        };
+        self.say(&format!("{} {level}: {perk}.", skill.name()));
+        if skill == Skill::Riding && self.mounted {
+            self.mounted = false;
+            self.ride(true);
+        }
+    }
+
+    /// A lucky extra of `item`, by `skill`'s level: 1 if it came, into the bag already.
+    fn bonus(&mut self, skill: Skill, item: Item) -> u32 {
+        if self.farm.lucky(skill) && self.farm.bag.add(item, 1) {
+            1
+        } else {
+            0
         }
     }
 
@@ -853,11 +897,11 @@ impl Game {
         if self.farm.tree(t) != TreeStage::Tree {
             return self.notify(&Reject::Felled.text());
         }
-        self.wield(items::LUMBERJACK_AXE);
+        self.take_tool(spells::AXE_SLOT, Some(items::LUMBERJACK_AXE));
         self.send(player::sheath_change(self.guid(), true));
         self.chop = Some(Chop {
             tree: t,
-            swings: SWINGS,
+            swings: farm_rules::skills::swings(self.farm.skills.get(Skill::Lumberjacking).0),
             next: Duration::ZERO,
         });
     }
@@ -881,13 +925,14 @@ impl Game {
             };
             self.send(packets::play_sound(sound));
             chop.swings -= 1;
-            chop.next = SWING_EVERY;
+            chop.next = self.quick(Skill::Lumberjacking, SWING_EVERY);
             self.chop = Some(chop);
             return;
         }
         self.send(player::sheath_change(self.guid(), false));
         match self.farm.chop(chop.tree) {
             Ok(n) => {
+                let n = n + self.bonus(Skill::Lumberjacking, Item::Wood);
                 self.sync_bag(Some((Item::Wood, n)), false);
                 self.practice(Skill::Lumberjacking, 1);
                 self.show_tree(chop.tree);
@@ -1039,19 +1084,17 @@ impl Game {
         let tools = [
             self.farm.has(Unlock::Tilling),
             self.farm.has(Unlock::WateringCan),
+            self.farm.has(Unlock::Sickle),
             self.farm.has(Unlock::Axe),
+            self.farm.has(Unlock::MiningPick),
             self.farm.has(Unlock::Fence),
             self.farm.has(Unlock::Horse),
         ];
+        // The seeds carried, in crop order, as many as the bar has slots after the tools.
         let bar: Vec<u32> = (Crop::ALL.iter())
-            .map(|&c| {
-                let carried = self.farm.bag.count(Item::Seeds(c)) > 0;
-                if carried {
-                    items::entry(Item::Seeds(c))
-                } else {
-                    0
-                }
-            })
+            .filter(|&&c| self.farm.bag.count(Item::Seeds(c)) > 0)
+            .map(|&c| items::entry(Item::Seeds(c)))
+            .take(12 - spells::SEED_SLOT0)
             .collect();
         if bar != self.bar || tools != self.bar_tools {
             self.send(spells::item_bar(&bar, &tools));
@@ -1065,16 +1108,43 @@ impl Game {
     /// `.sel <n>`: the farmer picked bar slot `n` (from 1) with the wheel or a number key.
     fn select(&mut self, slot: usize) {
         self.selected = slot.saturating_sub(1);
+        self.lit = self.selected;
+        if let Some(k) = self.selected.checked_sub(spells::SEED_SLOT0) {
+            self.seed_pick = k;
+        }
         tracing::debug!("farm: {} picks bar slot {slot}", self.me.name);
     }
 
-    /// The seed in the picked bar slot, if it holds one the farmer still has.
+    /// The seed to sow: the one last picked on the bar, or the first carried.
     fn selected_seed(&self) -> Option<Crop> {
-        let seed = self.selected.checked_sub(spells::SEED_SLOT0)?;
-        match items::item_of(*self.bar.get(seed)?) {
+        let entry = self.bar.get(self.seed_pick).or(self.bar.first())?;
+        match items::item_of(*entry) {
             Some(Item::Seeds(c)) if self.farm.bag.count(Item::Seeds(c)) > 0 => Some(c),
             _ => None,
         }
+    }
+
+    /// The bar slot that holds `crop`'s seeds.
+    fn seed_slot(&self, crop: Crop) -> usize {
+        let entry = items::entry(Item::Seeds(crop));
+        spells::SEED_SLOT0 + self.bar.iter().position(|&e| e == entry).unwrap_or(0)
+    }
+
+    /// The right tool for the job, in hand and lit on the bar.
+    fn take_tool(&mut self, slot: usize, hold: Option<u32>) {
+        if let Some(entry) = hold {
+            self.wield(entry);
+        }
+        if self.lit != slot {
+            self.lit = slot;
+            let line = (slot + 1).to_string();
+            self.send(packets::addon(self.guid(), "FarmcraftTool", &line));
+        }
+    }
+
+    /// How long a job of `skill` takes the farmer, `base` for the unskilled.
+    fn quick(&self, skill: Skill, base: Duration) -> Duration {
+        base.mul_f32(farm_rules::skills::quickness(self.farm.skills.get(skill).0))
     }
 
     fn sync_money(&self) {
@@ -1104,9 +1174,14 @@ impl Game {
     fn start(&mut self, spell: u32, target: Target, time: Duration, job: Job) {
         self.menu = None;
         self.ride(false);
-        if matches!(job, Job::Plant(..) | Job::Harvest(_) | Job::Till(_)) {
-            self.wield(items::SHOVEL);
-        }
+        let (slot, hold) = match job {
+            Job::Plant(_, crop) => (self.seed_slot(crop), items::SHOVEL),
+            Job::Till(_) => (0, items::SHOVEL),
+            Job::Water(_) => (spells::CAN_SLOT, items::SHOVEL),
+            Job::Harvest(_) | Job::Forage(_) => (spells::SICKLE_SLOT, items::SICKLE),
+            Job::Mine(_) => (spells::PICK_SLOT, items::MINING_PICK),
+        };
+        self.take_tool(slot, Some(hold));
         let ms = time.as_millis() as u32;
         self.send(spells::spell_start(self.guid(), spell, ms, target));
         self.cast = Some(Cast {
@@ -1140,7 +1215,7 @@ impl Game {
             self.start(
                 spells::MINING,
                 Target::GameObject(object),
-                MINE_TIME,
+                self.quick(Skill::Mining, MINE_TIME),
                 Job::Mine(v),
             );
         } else if self.fence_start.is_some_and(|(_, g)| g == object) {
@@ -1194,20 +1269,20 @@ impl Game {
                 Some(crop) => self.start(
                     spells::PLANT_SEEDS,
                     Target::GameObject(object),
-                    PLANT_TIME,
+                    self.quick(Skill::Farming, PLANT_TIME),
                     Job::Plant(i, crop),
                 ),
-                None if self.bar.iter().all(|&e| e == 0) => {
-                    self.notify("You have no seeds. Brog Hamfist in Goldshire sells them.")
-                }
-                None => self.notify("Pick seeds on your bar (slots 6 to 12) to plant them."),
+                None => self.notify("You have no seeds. Brog Hamfist in Goldshire sells them."),
             },
             Some((crop, age)) => {
                 if tile.ripe().is_some() {
+                    if !self.farm.has(Unlock::Sickle) {
+                        return self.refuse(&Reject::Locked(Unlock::Sickle));
+                    }
                     return self.start(
                         spells::HERB_GATHERING,
                         Target::GameObject(object),
-                        HARVEST_TIME,
+                        self.quick(Skill::Herbalism, HARVEST_TIME),
                         Job::Harvest(i),
                     );
                 }
@@ -1222,13 +1297,10 @@ impl Game {
                 if !self.farm.has(Unlock::WateringCan) {
                     return self.refuse(&Reject::Locked(Unlock::WateringCan));
                 }
-                if self.selected != spells::CAN_SLOT {
-                    return self.notify("Pick the watering can (slot 2) to water.");
-                }
                 self.start(
                     spells::WATERING,
                     Target::GameObject(object),
-                    WATER_TIME,
+                    self.quick(Skill::Farming, WATER_TIME),
                     Job::Water(i),
                 );
             }
@@ -1279,12 +1351,17 @@ impl Game {
             refuse(self);
             return self.refuse(&Reject::Locked(Unlock::MiningPick));
         }
+        let gathers = job.is_some_and(|j| matches!(j, Job::Harvest(_) | Job::Forage(_)));
+        if gathers && !self.farm.has(Unlock::Sickle) {
+            refuse(self);
+            return self.refuse(&Reject::Locked(Unlock::Sickle));
+        }
         let (Some(job), time) = (
             job,
             if cast.spell == spells::MINING {
-                MINE_TIME
+                self.quick(Skill::Mining, MINE_TIME)
             } else {
-                HARVEST_TIME
+                self.quick(Skill::Herbalism, HARVEST_TIME)
             },
         ) else {
             return refuse(self);
@@ -1373,6 +1450,7 @@ impl Game {
                 let crop = self.layout.wild[w].0;
                 match self.farm.forage(w, crop) {
                     Ok((n, seed)) => {
+                        let n = n + self.bonus(Skill::Herbalism, Item::Produce(crop));
                         self.sync_bag(Some((Item::Produce(crop), n)), false);
                         self.practice(Skill::Herbalism, herb_difficulty(crop));
                         if seed {
@@ -1393,14 +1471,16 @@ impl Game {
                         self.me.name,
                         crop.name()
                     );
+                    let n = n + self.bonus(Skill::Herbalism, Item::Produce(crop));
                     self.sync_bag(Some((Item::Produce(crop), n)), false);
                     self.show_tile(i);
-                    self.practice(Skill::Farming, herb_difficulty(crop));
+                    self.practice(Skill::Herbalism, herb_difficulty(crop));
                 }
                 Err(r) => self.refuse(&r),
             },
             Job::Mine(v) => match self.farm.mine(v) {
                 Ok(n) => {
+                    let n = n + self.bonus(Skill::Mining, Item::CopperOre);
                     self.sync_bag(Some((Item::CopperOre, n)), false);
                     self.show_vein(v);
                     self.practice(Skill::Mining, 1);
@@ -1417,10 +1497,13 @@ impl Game {
         if !self.near(self.layout.wild[w].1) {
             return self.notify("You need to be closer.");
         }
+        if !self.farm.has(Unlock::Sickle) {
+            return self.refuse(&Reject::Locked(Unlock::Sickle));
+        }
         self.start(
             spells::HERB_GATHERING,
             Target::GameObject(object),
-            HARVEST_TIME,
+            self.quick(Skill::Herbalism, HARVEST_TIME),
             Job::Forage(w),
         );
     }
@@ -1669,7 +1752,8 @@ impl Game {
                 }
                 match self.farm.collect(a, item) {
                     Ok(()) => {
-                        self.sync_bag(Some((item, 1)), false);
+                        let n = 1 + self.bonus(Skill::Shepherding, item);
+                        self.sync_bag(Some((item, n)), false);
                         if item == Item::Egg {
                             self.noted(Deed::GatherEgg);
                         }
@@ -1730,6 +1814,7 @@ impl Game {
             TEXT_MA => self.send(packets::npc_text(id, MA_STONEFIELD)),
             TEXT_FARLEY => self.send(packets::npc_text(id, FARLEY)),
             TEXT_BROG => self.send(packets::npc_text(id, BROG)),
+            TEXT_KHELDEN => self.send(packets::npc_text(id, KHELDEN)),
             _ => {}
         }
     }
@@ -2078,6 +2163,7 @@ mod tests {
                 Unlock::Herd,
                 Unlock::MiningPick,
                 Unlock::Tilling,
+                Unlock::Sickle,
             ]
             .into_iter()
             .collect();
@@ -2209,23 +2295,22 @@ mod tests {
                 .any(|p| matches!(p, ServerPacket::ActionButtons { .. })),
             "the seeds go on the bar"
         );
-        g.command(".sel 7");
+        // Slot 8 holds the Silverleaf, slot 9 the Peacebloom.
+        g.command(".sel 9");
         g.use_object(g.soil[1].0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[1].crop.map(|c| c.0), Some(Crop::Peacebloom));
-        // An empty slot plants nothing.
-        g.command(".sel 9");
-        // Slot 9 is Earthroot's, and there are no Earthroot seeds.
+        // A tool slot picked keeps the seed: the next empty mound gets Peacebloom too.
+        g.command(".sel 4");
         let tile = g.layout.tiles[2];
         stand_at(&mut g, tile);
         g.use_object(g.soil[2].0);
         run(&mut g, 2.0);
-        assert_eq!(g.farm.tiles[2].crop, None);
-        // When the last Peacebloom seed goes, its slot empties and the others stay put.
-        g.command(".sel 6");
-        g.farm.bag.take(Item::Seeds(Crop::Peacebloom), 3);
+        assert_eq!(g.farm.tiles[2].crop.map(|c| c.0), Some(Crop::Peacebloom));
+        // When the last Peacebloom seed goes, the bar closes up and the first seed is sown.
+        g.farm.bag.take(Item::Seeds(Crop::Peacebloom), 2);
         g.sync_bag(None, false);
-        assert_eq!(g.bar[1], 0);
+        assert_eq!(g.bar.len(), 1);
         assert_eq!(g.selected_seed(), Some(Crop::Silverleaf));
         drain(&mut rx);
     }
@@ -2289,7 +2374,7 @@ mod tests {
         let swings = (seen.iter())
             .filter(|p| matches!(p, ServerPacket::Emote { .. }))
             .count();
-        assert_eq!(swings, SWINGS as usize);
+        assert_eq!(swings, farm_rules::skills::swings(1) as usize);
         assert!(g.farm.bag.count(Item::Wood) >= 2);
         assert_eq!(g.trees[0], (0, 0), "a felled tree leaves nothing");
         assert_eq!(g.tool, items::LUMBERJACK_AXE);
@@ -2525,7 +2610,7 @@ mod tests {
         };
         assert!(statuses(&mut rx).contains(&(ma, 5)), "Ma has a yellow !");
         // Only the shovel and the seeds are on the bar; there is no can to water with.
-        assert_eq!(g.bar_tools, [false; 5], "only seeds: the shovel plants");
+        assert_eq!(g.bar_tools, [false; 7], "only seeds: the shovel plants");
 
         // Breaking Ground: plant all eight seeds.
         g.gossip_hello(ma);

@@ -56,11 +56,23 @@ const ACTION_ITEM: u32 = 0x80;
 
 /// The hotbar's tools, slot by slot (from 0): Till Soil, the watering can, the axe, Build
 /// Fence, the horse. The seeds follow.
-pub const TOOL_SLOTS: [(usize, u32); 5] =
-    [(0, TILL), (1, PICK), (2, PICK), (3, BUILD_FENCE), (4, RIDE)];
-/// The watering can's slot, and the first seed slot (from 0).
+pub const TOOL_SLOTS: [(usize, u32); 7] = [
+    (0, TILL),
+    (1, PICK),
+    (2, PICK),
+    (3, PICK),
+    (4, PICK),
+    (5, BUILD_FENCE),
+    (6, RIDE),
+];
+/// The tools' slots: the watering can, the sickle, the axe, the pick, the fence.
 pub const CAN_SLOT: usize = 1;
-pub const SEED_SLOT0: usize = 5;
+pub const SICKLE_SLOT: usize = 2;
+pub const AXE_SLOT: usize = 3;
+pub const PICK_SLOT: usize = 4;
+pub const FENCE_SLOT: usize = 5;
+/// The first seed slot: the seeds carried fill 8 to 12, in crop order.
+pub const SEED_SLOT0: usize = 7;
 
 /// `SMSG_ACTION_BUTTONS` with the tools the farmer has (`tools`, by [`TOOL_SLOTS`] order) in the
 /// main bar's first slots and `items` (each crop's seed entry, 0 for none) after them: the hotbar.

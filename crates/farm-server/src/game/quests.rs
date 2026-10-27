@@ -2,7 +2,8 @@
 //! Innkeeper Farley and Brog Hamfist, the accept and turn-in panels, the quest log, and what each
 //! quest unlocks appearing in the world.
 
-use farm_rules::{Deed, Goal, Marker, Unlock, Villager, QUESTS};
+use farm_rules::quests::ALL_QUESTS;
+use farm_rules::{quest, Deed, Goal, Marker, Unlock, Villager, QUESTS};
 
 use super::*;
 use crate::world::quests::{self, Objective, QuestItem, QuestText, OBJECT_OBJECTIVE};
@@ -14,13 +15,19 @@ pub(super) const QUEST_BASE: u32 = 900;
 pub(super) const AXE_PRICE: u32 = 100;
 pub(super) const PICK_PRICE: u32 = 200;
 
-const VILLAGERS: [Villager; 3] = [Villager::Ma, Villager::Farley, Villager::Brog];
+const VILLAGERS: [Villager; 4] = [
+    Villager::Ma,
+    Villager::Farley,
+    Villager::Brog,
+    Villager::Khelden,
+];
 /// The addon prefix the map markers travel under.
 const MARKERS_PREFIX: &str = "FarmcraftMarks";
 
 /// The greeting texts of the villagers' gossip windows.
 pub(super) const TEXT_FARLEY: u32 = 4;
 pub(super) const TEXT_BROG: u32 = 5;
+pub(super) const TEXT_KHELDEN: u32 = 6;
 
 /// `dialog_status` values: nothing, a gray `?`, a yellow `!`, a yellow `?`.
 fn status(m: Marker) -> u32 {
@@ -43,7 +50,7 @@ fn item_of(item: Item, count: u32) -> QuestItem {
 
 /// Quest `q` as the client's quest windows and log read it.
 pub(super) fn text(q: usize) -> QuestText {
-    let quest = &QUESTS[q];
+    let quest = quest(q);
     let goals = match quest.goal {
         Goal::Do(_, need, text) => vec![Objective {
             counted: Some((OBJECT_OBJECTIVE | (q as u32 + 1), need)),
@@ -89,7 +96,7 @@ impl Game {
 
     fn quest_of(id: u32) -> Option<usize> {
         let q = id.checked_sub(QUEST_BASE)? as usize;
-        (q < QUESTS.len()).then_some(q)
+        (q < ALL_QUESTS).then_some(q)
     }
 
     /// The quest log as the player's fields carry it.
@@ -163,13 +170,13 @@ impl Game {
         }
         let mut rows = Vec::new();
         for &(q, _) in &self.farm.quests.active {
-            if QUESTS[q].ender == v {
+            if quest(q).ender == v {
                 let icon = if self.farm.quest_ready(q) { 4 } else { 3 };
-                rows.push((QUEST_BASE + q as u32, icon, QUESTS[q].title.to_owned()));
+                rows.push((QUEST_BASE + q as u32, icon, quest(q).title.to_owned()));
             }
         }
-        if let Some(q) = self.farm.quests.offer(v) {
-            rows.push((QUEST_BASE + q as u32, 5, QUESTS[q].title.to_owned()));
+        if let Some(q) = self.farm.offer(v) {
+            rows.push((QUEST_BASE + q as u32, 5, quest(q).title.to_owned()));
         }
         if options.is_empty() && rows.len() == 1 {
             return self.quest_open(npc, rows[0].0);
@@ -179,6 +186,7 @@ impl Game {
             Villager::Ma => TEXT_MA,
             Villager::Farley => TEXT_FARLEY,
             Villager::Brog => TEXT_BROG,
+            Villager::Khelden => TEXT_KHELDEN,
         };
         self.send(packets::gossip_quests(npc, greeting, &options, &rows));
     }
@@ -189,17 +197,17 @@ impl Game {
         let (Some(v), Some(q)) = (self.villager(npc), Self::quest_of(id)) else {
             return;
         };
-        if self.farm.quests.offer(v) == Some(q) {
+        if self.farm.offer(v) == Some(q) {
             return self.send(quests::details(npc, &text(q)));
         }
-        if self.farm.quests.is_active(q) && QUESTS[q].ender == v {
+        if self.farm.quests.is_active(q) && quest(q).ender == v {
             self.quest_progress(npc, q);
         }
     }
 
     /// The progress panel of quest `q`, or straight to the reward when it hands nothing over.
     fn quest_progress(&mut self, npc: u64, q: usize) {
-        let quest = &QUESTS[q];
+        let quest = &quest(q);
         let ready = self.farm.quest_ready(q);
         let id = QUEST_BASE + q as u32;
         match quest.goal {
@@ -234,7 +242,7 @@ impl Game {
         let (Some(v), Some(q)) = (self.villager(npc), Self::quest_of(id)) else {
             return;
         };
-        if QUESTS[q].giver != v || !self.farm.quests.accept(q) {
+        if quest(q).giver != v || !self.farm.accept(q) {
             return;
         }
         if self.farm.quest_ready(q) {
@@ -251,10 +259,10 @@ impl Game {
         let (Some(v), Some(q)) = (self.villager(npc), Self::quest_of(id)) else {
             return;
         };
-        if !self.farm.quests.is_active(q) || QUESTS[q].ender != v {
+        if !self.farm.quests.is_active(q) || quest(q).ender != v {
             return;
         }
-        let quest = &QUESTS[q];
+        let quest = &quest(q);
         if self.farm.quest_ready(q) {
             self.send(quests::offer_reward(
                 npc,
@@ -273,13 +281,13 @@ impl Game {
         let (Some(v), Some(q)) = (self.villager(npc), Self::quest_of(id)) else {
             return;
         };
-        if QUESTS[q].ender != v {
+        if quest(q).ender != v {
             return;
         }
         if let Err(r) = self.farm.turn_in(q) {
             return self.refuse(&r);
         }
-        let quest = &QUESTS[q];
+        let quest = &quest(q);
         self.send(quests::complete(id, quest.money));
         self.sync_money();
         self.sync_bag(None, false);
@@ -287,9 +295,14 @@ impl Game {
         if let Some(u) = quest.unlocks {
             self.unlocked(u);
         }
+        if q >= QUESTS.len() {
+            self.send(player::skill_change(self.guid(), &self.skill_lines()));
+            let cap = self.farm.skills.get(farm_rules::Skill::Farming).1;
+            self.say(&format!("Your skills can now climb to {cap}."));
+        }
         self.refresh_markers();
         self.save();
-        if let Some(next) = self.farm.quests.offer(v) {
+        if let Some(next) = self.farm.offer(v) {
             self.send(quests::details(npc, &text(next)));
         }
     }
@@ -307,7 +320,7 @@ impl Game {
     pub(super) fn noted(&mut self, deed: Deed) {
         for (q, n) in self.farm.note(deed) {
             let id = QUEST_BASE + q as u32;
-            if let Goal::Do(_, need, _) = QUESTS[q].goal {
+            if let Goal::Do(_, need, _) = quest(q).goal {
                 self.send(quests::progress(
                     id,
                     OBJECT_OBJECTIVE | (q as u32 + 1),
@@ -351,10 +364,11 @@ impl Game {
     pub(super) fn unlocked(&mut self, u: Unlock) {
         match u {
             Unlock::WateringCan => self.say("New on your bar: the Watering Can (2)."),
-            Unlock::Axe => self.say("New on your bar: the Woodcutter's Axe (3)."),
-            Unlock::Fence => self.say("New on your bar: Build Fence (4)."),
+            Unlock::Sickle => self.say("New on your bar: the Sickle (3)."),
+            Unlock::Axe => self.say("New on your bar: the Woodcutter's Axe (4)."),
+            Unlock::Fence => self.say("New on your bar: Build Fence (6)."),
             Unlock::Horse => {
-                self.say("Biscuit the farm horse waits by the house: right-click him, or press 5.");
+                self.say("Biscuit the farm horse waits by the house: right-click him, or press 7.");
                 if let Some(h) = self.horse() {
                     self.show_npc(h);
                 }
@@ -378,7 +392,9 @@ impl Game {
                     items::create_block(&pick, self.guid()),
                 ));
                 self.send(player::slot_change(self.guid(), pick.slot, pick.guid));
-                self.say("The Mining Pick is in your bag. Right-click a copper vein to mine it.");
+                self.say(
+                    "New on your bar: the Mining Pick (5). Right-click a copper vein to mine it.",
+                );
             }
             Unlock::Market => {}
         }

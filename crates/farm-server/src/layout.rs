@@ -577,6 +577,16 @@ impl Layout {
         farley.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER | NPC_VENDOR;
         farley.role = Role::Quest(Villager::Farley);
         npcs[1].look.stand = Stand::Sit;
+        let mut khelden = npc(
+            "Khelden Bremen",
+            5001,
+            Kind::Humanoid,
+            [-8851.57, -188.234, 89.4958, 2.9147],
+        );
+        khelden.look.subname = "Scholar".into();
+        khelden.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER;
+        khelden.role = Role::Quest(Villager::Khelden);
+        npcs.push(khelden);
         let mut horse = npc(
             "Biscuit",
             HORSE_DISPLAY,

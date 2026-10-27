@@ -94,6 +94,9 @@ function Farmcraft_Select(slot)
 	end
 	FARMCRAFT_SLOT = slot
 	farm_light()
+	if Farmcraft_SkillBar then
+		Farmcraft_SkillBar()
+	end
 	SendChatMessage(".sel "..slot, "SAY")
 end
 
@@ -197,6 +200,7 @@ end
 
 -- The skills the farm adds wear borrowed skill lines; these are their own names.
 local SKILL_NAMES = {
+	["Tailoring"] = "Farming",
 	["Skinning"] = "Lumberjacking",
 	["Engineering"] = "Woodworking",
 	["Leatherworking"] = "Shepherding",
@@ -217,6 +221,53 @@ ChatFrame_OnEvent = function(e)
 	end
 	return chat_event(e)
 end
+
+-- The experience bar above the hotbar shows the skill of the picked slot: Farming for the soil,
+-- the can and the seeds, Lumberjacking for the axe, Woodworking for fences, Riding for the horse.
+local SLOT_SKILLS = {
+	[1] = "Farming",
+	[2] = "Farming",
+	[3] = "Lumberjacking",
+	[4] = "Woodworking",
+	[5] = "Riding",
+}
+local function slot_skill(slot)
+	return SLOT_SKILLS[slot] or (slot >= 6 and "Farming") or nil
+end
+local function skill_level(name)
+	for i = 1, GetNumSkillLines() do
+		local n, header, _, rank, _, _, max = GetSkillLineInfo(i)
+		if not header and n == name then
+			return rank, max
+		end
+	end
+end
+local exp_update = MainMenuExpBar_Update
+function Farmcraft_SkillBar()
+	local name = slot_skill(FARMCRAFT_SLOT)
+	local rank, max = nil, nil
+	if name then
+		rank, max = skill_level(name)
+	end
+	if not rank then
+		return exp_update()
+	end
+	MainMenuExpBar:SetMinMaxValues(0, max)
+	MainMenuExpBar:SetValue(rank)
+	MainMenuExpBar:SetStatusBarColor(0.85, 0.65, 0.1)
+	if ExhaustionTick then
+		ExhaustionTick:Hide()
+	end
+	if MainMenuBarExpText then
+		MainMenuBarExpText:SetText(name.." "..rank.." / "..max)
+		MainMenuBarExpText:Show()
+	end
+end
+MainMenuExpBar_Update = Farmcraft_SkillBar
+local skill_watch = CreateFrame("Frame")
+skill_watch:RegisterEvent("SKILL_LINES_CHANGED")
+skill_watch:RegisterEvent("PLAYER_XP_UPDATE")
+skill_watch:SetScript("OnEvent", Farmcraft_SkillBar)
 
 -- Cast bars of borrowed spells, named for what the farmer is doing.
 local CAST_NAMES = {
@@ -249,3 +300,5 @@ watcher:SetScript("OnEvent", watch_all)
 watch_all()
 
 farm_light()
+
+Farmcraft_SkillBar()

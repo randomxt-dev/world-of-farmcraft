@@ -14,15 +14,20 @@ pub enum Skill {
     Lumberjacking,
     Woodworking,
     Shepherding,
+    /// Planting, watering and harvesting the farmer's own crops.
+    Farming,
+    Riding,
 }
 
 impl Skill {
-    pub const ALL: [Skill; 5] = [
+    pub const ALL: [Skill; 7] = [
+        Skill::Farming,
         Skill::Herbalism,
         Skill::Mining,
         Skill::Lumberjacking,
         Skill::Woodworking,
         Skill::Shepherding,
+        Skill::Riding,
     ];
 
     pub fn name(self) -> &'static str {
@@ -32,6 +37,8 @@ impl Skill {
             Skill::Lumberjacking => "Lumberjacking",
             Skill::Woodworking => "Woodworking",
             Skill::Shepherding => "Shepherding",
+            Skill::Farming => "Farming",
+            Skill::Riding => "Riding",
         }
     }
 }

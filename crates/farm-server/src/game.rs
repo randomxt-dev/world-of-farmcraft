@@ -113,16 +113,20 @@ const WATER_TIME: Duration = Duration::from_millis(1200);
 const HOUSE_REACH: f32 = 10.0;
 /// `EmotesText.dbc`'s SLEEP.
 const TEXT_EMOTE_SLEEP: u32 = 87;
-/// The `SkillLine.dbc` lines the farmer's skills wear: Herbalism and Mining as themselves,
-/// Lumberjacking, Woodworking and Shepherding on Skinning, Engineering and Leatherworking, which
-/// the hotbar's Lua renames.
-const SKILL_LINES: [(Skill, u32); 5] = [
+/// The `SkillLine.dbc` lines the farmer's skills wear: Herbalism, Mining and Riding as
+/// themselves; Farming, Lumberjacking, Woodworking and Shepherding on Tailoring, Skinning,
+/// Engineering and Leatherworking, which the hotbar's Lua renames.
+const SKILL_LINES: [(Skill, u32); 7] = [
+    (Skill::Farming, 197),
     (Skill::Herbalism, 182),
     (Skill::Mining, 186),
     (Skill::Lumberjacking, 393),
     (Skill::Woodworking, 202),
     (Skill::Shepherding, 165),
+    (Skill::Riding, 762),
 ];
+/// Yards ridden for each try at Riding.
+const RIDE_PRACTICE: f32 = 40.0;
 
 /// How hard a crop is to gather, as Herbalism reckons it: the herb's own skill in the game.
 fn herb_difficulty(crop: Crop) -> u32 {
@@ -335,6 +339,8 @@ pub struct Game {
     since_wander: Duration,
     /// How long the farm's map marker has been up, while the client still shows it.
     marker_age: Option<Duration>,
+    /// Yards ridden since the last try at Riding.
+    ridden: f32,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The quest log as last sent: (quest id, counter word) per slot.
@@ -401,6 +407,7 @@ impl Game {
             critter_at,
             since_wander: Duration::ZERO,
             marker_age: None,
+            ridden: 0.0,
             tool: items::SHOVEL,
             quest_log: Vec::new(),
             markers: [u32::MAX; 3],
@@ -1297,7 +1304,15 @@ impl Game {
 
     /// The farmer moved: a cast breaks when they walk away from it.
     pub fn moved(&mut self, at: [f32; 3], facing: f32) {
-        let walked = distance(at, self.at) > 0.3;
+        let step = distance(at, self.at);
+        let walked = step > 0.3;
+        if self.mounted && step < 30.0 {
+            self.ridden += step;
+            if self.ridden >= RIDE_PRACTICE {
+                self.ridden = 0.0;
+                self.practice(Skill::Riding, 1);
+            }
+        }
         self.at = at;
         self.facing = facing;
         self.mark_home();
@@ -1325,6 +1340,7 @@ impl Game {
                     self.sync_bag(None, false);
                     self.show_tile(i);
                     self.noted(Deed::Plant);
+                    self.practice(Skill::Farming, herb_difficulty(crop));
                     if !self.farm.tiles[i].watered {
                         self.say(&format!(
                             "You planted {}. Right-click it to water it.",
@@ -1336,6 +1352,7 @@ impl Game {
             },
             Job::Till(cell) => {
                 if self.farm.till(cell) {
+                    self.practice(Skill::Farming, 1);
                     self.soil.push((0, 0));
                     self.crops.push(None);
                     let i = self.farm.tiles.len() - 1;
@@ -1346,6 +1363,9 @@ impl Game {
                 Ok(()) => {
                     self.show_tile(i);
                     self.noted(Deed::Water);
+                    if let Some((crop, _)) = self.farm.tiles[i].crop {
+                        self.practice(Skill::Farming, herb_difficulty(crop));
+                    }
                 }
                 Err(r) => self.refuse(&r),
             },
@@ -1375,7 +1395,7 @@ impl Game {
                     );
                     self.sync_bag(Some((Item::Produce(crop), n)), false);
                     self.show_tile(i);
-                    self.practice(Skill::Herbalism, herb_difficulty(crop));
+                    self.practice(Skill::Farming, herb_difficulty(crop));
                 }
                 Err(r) => self.refuse(&r),
             },

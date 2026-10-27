@@ -69,8 +69,9 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
 - Progression is a quest chain (`farm-rules/src/quests.rs`, shown by `farm-server/src/game/quests.rs`
   through WoW's own quest windows, log and `!`/`?`): tools, the crate and the animals are locked
   until a quest or Brog's shop gives them. Quests pay money only for goods handed over.
-- Skills (`farm-rules/src/skills.rs`) wear borrowed `SkillLine.dbc` lines: Lumberjacking on
-  Skinning, Woodworking on Engineering, Shepherding on Leatherworking; `hotbar.lua` renames them
+- Skills (`farm-rules/src/skills.rs`) wear borrowed `SkillLine.dbc` lines: Farming on Tailoring,
+  Lumberjacking on Skinning, Woodworking on Engineering, Shepherding on Leatherworking (Riding is
+  itself); the experience bar shows the picked bar slot's skill; `hotbar.lua` renames them
   in the Skills tab and the skill-up line. Watering's cast bar is a borrowed spell renamed the same way.
 - `markers.lua` draws the villagers' !/? on the minimap and world map from an addon line the
   server sends (`FarmcraftMarks`), placing them with Elwynn's `WorldMapArea.dbc` bounds.

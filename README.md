@@ -60,5 +60,5 @@ Lion's Pride Inn in Goldshire.
 | Wildlife | Rabbits, squirrels, deer, hares, prairie dogs and toads wander the property |
 | Map | The farm is a house on the world map and minimap whenever you are away |
 | Quests | Tracked on the right of the screen; ! and ? also show on the minimap and the world map |
-| Skills | Herbalism, Mining, Lumberjacking, Woodworking and Shepherding start at 1/75 and rise as in WoW (orange, yellow, green, gray); see the Skills tab |
+| Skills | Farming, Herbalism, Mining, Lumberjacking, Woodworking, Shepherding and Riding start at 1/75 and rise as in WoW (orange, yellow, green, gray). The bar above the hotbar shows the picked slot's skill; all of them are in the Skills tab |
 | Help | Talk to Ma Stonefield; type `.time`, `.home` or `.gps` in chat. `.quest <n>` skips to quest n, for testing |

@@ -2,6 +2,7 @@
 //! client pointed at it and logged in, so a double-click goes straight to the character screen.
 
 mod hotbar;
+mod icon;
 mod install;
 mod lua_hooks;
 
@@ -86,6 +87,6 @@ fn main() -> benilla_app::AppExit {
         ..Default::default()
     };
     benilla_app::run_with(build, |app| {
-        app.add_plugins(hotbar::HotbarPlugin);
+        app.add_plugins((hotbar::HotbarPlugin, icon::IconPlugin));
     })
 }

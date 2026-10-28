@@ -24,6 +24,9 @@ farm-server = { path = "../farm-server" }
 # The client's Lua VM (`UiScript`), which the hotbar extends the way an addon would.
 benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
+# The window icon: decode the crest, and hand it to the window.
+image = { version = "0.25", default-features = false, features = ["png"] }
+winit = { version = "0.30", default-features = false }
 anyhow.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "net"] }
 tracing = "0.1"

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World of Farmcraft: logo choices</title>
+<style>
+  body { margin: 0; background: #2b1d10; color: #f3e6c4; font-family: Georgia, "Palatino Linotype", serif; }
+  header { text-align: center; padding: 22px 14px 8px; }
+  h1 { color: #ffd34d; margin: 0 0 6px; font-size: 26px; }
+  header p { margin: 0; color: #d9c79e; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .card { background: #f4e9cf; color: #3b2a14; border: 3px solid #c99a2e; border-radius: 10px; overflow: hidden; }
+  .card img { display: block; width: 100%; height: 230px; object-fit: contain; background: #1b120a; cursor: zoom-in; }
+  .card .t { padding: 10px 12px 12px; }
+  .card h2 { margin: 0 0 4px; font-size: 18px; }
+  .card h2 span { display: inline-block; background: #7a1f12; color: #ffd34d; border-radius: 50%; width: 26px; height: 26px; line-height: 26px; text-align: center; font-size: 14px; margin-right: 6px; }
+  .card p { margin: 0; font-size: 14px; line-height: 1.35; }
+  .tag { display: inline-block; font-size: 12px; background: #e3cf9c; border-radius: 4px; padding: 1px 6px; margin-top: 6px; }
+  #big { position: fixed; inset: 0; background: rgba(0,0,0,.9); display: none; align-items: center; justify-content: center; z-index: 9; }
+  #big img { max-width: 96vw; max-height: 92vh; }
+</style>
+</head>
+<body>
+<header>
+  <h1>World of Farmcraft: 10 logo choices</h1>
+  <p>Tap a picture to see it full size. Wide ones are title logos; square ones are app icons.</p>
+</header>
+<div class="grid">
+  <div class="card"><img src="logos/logo1.png" alt=""><div class="t"><h2><span>1</span>Golden Crest</h2><p>Classic fantasy-MMO gold letters on a dark shield, wheat sheaf and crossed pitchfork.</p><div class="tag">title logo</div></div></div>
+  <div class="card"><img src="logos/logo2.png" alt=""><div class="t"><h2><span>2</span>Farmhouse Shield</h2><p>Round wooden shield with a wheat sheaf and the blue-roofed farmhouse.</p><div class="tag">app icon</div></div></div>
+  <div class="card"><img src="logos/logo3.png" alt=""><div class="t"><h2><span>3</span>Carved Wood Sign</h2><p>Storybook wooden letters, vines, pumpkins and a watering can. The coziest one.</p><div class="tag">title logo</div></div></div>
+  <div class="card"><img src="logos/logo4.png" alt=""><div class="t"><h2><span>4</span>Four Trades Crest</h2><p>Heraldic shield split four ways: wheat, pumpkin, pickaxe, sheep. Farming, mining and animals in one.</p><div class="tag">app icon</div></div></div>
+  <div class="card"><img src="logos/logo5.png" alt=""><div class="t"><h2><span>5</span>Stonefield Farm</h2><p>Gold title on a stone plinth with the wolf pup, the farmhouse and a castle on the hill.</p><div class="tag">title / splash screen</div></div></div>
+  <div class="card"><img src="logos/logo6.png" alt=""><div class="t"><h2><span>6</span>Wheat F</h2><p>Minimal: a golden wheat stalk shaped like an F on forest green. Works tiny.</p><div class="tag">app icon</div></div></div>
+  <div class="card"><img src="logos/logo7.png" alt=""><div class="t"><h2><span>7</span>Biscuit</h2><p>The farm horse in a straw hat, chewing wheat. A mascot icon.</p><div class="tag">app icon / mascot</div></div></div>
+  <div class="card"><img src="logos/logo8.png" alt=""><div class="t"><h2><span>8</span>Est. Elwynn Badge</h2><p>Round red and gold badge: shovel and axe over a pumpkin, "Est. Elwynn" ribbon. Note: the AI misspells the curved name ("Farmccraft"); the lettering would be redone by hand if picked.</p><div class="tag">badge logo</div></div></div>
+  <div class="card"><img src="logos/logo9.png" alt=""><div class="t"><h2><span>9</span>Quest Garden</h2><p>A glowing yellow quest "!" over a garden plot at dusk. Says "WoW quests, but farming".</p><div class="tag">app icon</div></div></div>
+  <div class="card"><img src="logos/logo10.png" alt=""><div class="t"><h2><span>10</span>Pumpkin Pals</h2><p>Bright, bubbly cozy-game letters with a smiling pumpkin and a pitchfork "t". Note: the pumpkin adds an "o" (reads "Farmocraft").</p><div class="tag">title logo</div></div></div>
+</div>
+<div id="big"><img alt=""></div>
+<script>
+  var big = document.getElementById('big');
+  document.querySelectorAll('.card img').forEach(function (img) {
+    img.onclick = function () { big.firstElementChild.src = img.src; big.style.display = 'flex'; };
+  });
+  big.onclick = function () { big.style.display = 'none'; };
+</script>
+</body>
+</html>

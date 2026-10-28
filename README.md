@@ -56,10 +56,9 @@ Lion's Pride Inn in Goldshire.
 | Wild herbs | Peacebloom and Silverleaf grow around the farm; pick them for herbs and sometimes seeds |
 | Chop trees | Right-click one of the Westfall oaks around the property: three axe swings and it falls for Simple Wood. A sapling comes up the next day and is a tree again in 3 |
 | Tools | The shovel comes out for the soil and the axe for the trees, by themselves |
-| Pets | Visit the pet pen south of the field and right-click an animal to make it your companion |
 | Wildlife | Rabbits, squirrels, deer, hares, prairie dogs and toads wander the property |
 | Map | The farm is a house on the world map and minimap whenever you are away |
 | Quests | Tracked on the right of the screen; ! and ? also show on the minimap and the world map |
 | Skills | Farming, Herbalism, Mining, Lumberjacking, Woodworking, Shepherding and Riding start at 1/75 and rise as in WoW (orange, yellow, green, gray). Every 25 levels: quicker work, a chance of extra goods, a faster horse, fewer axe swings. Past 75, study with Khelden Bremen in Northshire Abbey. The bar above the hotbar shows the lit slot's skill |
-| Preview | Press F8 to see the farm as it could look on day 10, 25, 50 and 100 (pens for cows, sheep, pigs and chickens with the herd pacing inside, 25 times the herd by day 50, the whole field planted by day 100). Nothing is saved: log out to return to your farm |
+| Preview | Press F8 to see the farm as it could look on day 10, 25, 50 and 100 (pens for cows (the biggest), sheep and pigs in all their colours, and chickens, with the herd pacing inside, 25 times the herd by day 50, the whole field planted by day 100). Nothing is saved: log out to return to your farm |
 | Help | Talk to Ma Stonefield; type `.time`, `.home` or `.gps` in chat. `.quest <n>` skips to quest n, for testing |

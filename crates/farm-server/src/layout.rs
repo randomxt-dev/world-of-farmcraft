@@ -133,69 +133,6 @@ pub const PETS: [(&str, u32, f32); 59] = [
     ("Pony", 229, 0.6),
 ];
 
-/// The pet pen's spots, on open grass south of the field: a 3 yd grid kept 4.5 yd clear of every
-/// tree, bush, fence and building the ADT places there.
-const PEN: [[f32; 2]; 58] = [
-    [-9938.0, 292.0],
-    [-9935.0, 292.0],
-    [-9932.0, 292.0],
-    [-9941.0, 295.5],
-    [-9938.0, 295.5],
-    [-9935.0, 295.5],
-    [-9932.0, 295.5],
-    [-9920.0, 295.5],
-    [-9944.0, 299.0],
-    [-9941.0, 299.0],
-    [-9938.0, 299.0],
-    [-9923.0, 299.0],
-    [-9920.0, 299.0],
-    [-9917.0, 299.0],
-    [-9944.0, 302.5],
-    [-9941.0, 302.5],
-    [-9938.0, 302.5],
-    [-9920.0, 302.5],
-    [-9917.0, 302.5],
-    [-9944.0, 306.0],
-    [-9941.0, 306.0],
-    [-9938.0, 306.0],
-    [-9935.0, 306.0],
-    [-9932.0, 306.0],
-    [-9920.0, 306.0],
-    [-9917.0, 306.0],
-    [-9914.0, 306.0],
-    [-9944.0, 309.5],
-    [-9941.0, 309.5],
-    [-9938.0, 309.5],
-    [-9935.0, 309.5],
-    [-9932.0, 309.5],
-    [-9929.0, 309.5],
-    [-9926.0, 309.5],
-    [-9923.0, 309.5],
-    [-9920.0, 309.5],
-    [-9917.0, 309.5],
-    [-9941.0, 313.0],
-    [-9938.0, 313.0],
-    [-9935.0, 313.0],
-    [-9932.0, 313.0],
-    [-9929.0, 313.0],
-    [-9926.0, 313.0],
-    [-9923.0, 313.0],
-    [-9920.0, 313.0],
-    [-9917.0, 313.0],
-    [-9941.0, 316.5],
-    [-9938.0, 316.5],
-    [-9935.0, 316.5],
-    [-9932.0, 316.5],
-    [-9929.0, 316.5],
-    [-9926.0, 316.5],
-    [-9923.0, 316.5],
-    [-9920.0, 316.5],
-    [-9935.0, 320.0],
-    [-9932.0, 320.0],
-    [-9929.0, 320.0],
-    [-9926.0, 320.0],
-];
-
 /// Westfall oaks around the property, from `examples/place_oaks.rs`: open, gentle grass off the
 /// crop field, 6 yd clear of the map's own doodads, 20 of its buildings and 6 of the farm's things,
 /// 9 apart.
@@ -297,6 +234,11 @@ pub struct Pen {
     /// Spots for animals inside, in rows.
     pub spots: Vec<[f32; 3]>,
 }
+
+/// The farm pig's skins (`creature/pig/pig.mdx`): white, pink and black; and the sheep's,
+/// white and black.
+pub const PIG_DISPLAYS: [u32; 3] = [16257, 16358, 16357];
+pub const SHEEP_DISPLAYS: [u32; 2] = [856, 857];
 
 /// The farm horse's look, standing or ridden: a brown horse.
 pub const HORSE_DISPLAY: u32 = 2405;
@@ -547,7 +489,7 @@ impl Layout {
             ("Sheep", 856, -9870.0, 395.0, 1.0),
             ("Chicken", 304, -9893.0, 322.0, 0.5),
             ("Chicken", 304, -9896.0, 324.0, 2.5),
-            ("Pig", 10015, -9872.0, 380.0, 5.0),
+            ("Pig", PIG_DISPLAYS[1], -9872.0, 380.0, 5.0),
             ("Chicken", 304, -9890.0, 319.0, 4.0),
             ("Sheep", 856, -9866.0, 400.0, 3.0),
         ] {
@@ -573,7 +515,7 @@ impl Layout {
         // rises less than 2 yd across (found with `examples/pens.rs`).
         // Cows, sheep and pigs each have a pen; the chickens a run.
         let pens: Vec<Pen> = [
-            ([-9848.0, 424.0], 6, 5),
+            ([-9848.0, 424.0], 9, 7),
             ([-9964.0, 332.0], 6, 5),
             ([-9914.0, 272.0], 6, 5),
             ([-9878.0, 284.0], 5, 4),
@@ -616,17 +558,6 @@ impl Layout {
             }
         })
         .collect();
-        // The pet pen: every companion in rows on the grass south of the field, facing the house.
-        for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
-            let [x, y] = PEN[(i - 1) % PEN.len()];
-            let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), 0.0]);
-            n.look.level = 1;
-            n.look.scale = scale;
-            n.look.subname = "Pet Pen".into();
-            n.look.npc_flags = NPC_GOSSIP;
-            n.role = Role::Pet(i);
-            npcs.push(n);
-        }
         let ma = &mut npcs[0];
         ma.look.npc_flags = NPC_GOSSIP | NPC_QUESTGIVER;
         ma.role = Role::Quest(Villager::Ma);
@@ -777,7 +708,6 @@ mod tests {
                 "{v:?}"
             );
         }
-        assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
         assert!(!OAKS.is_empty());
     }
 

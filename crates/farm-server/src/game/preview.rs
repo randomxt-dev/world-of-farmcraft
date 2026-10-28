@@ -193,7 +193,7 @@ impl Game {
     /// The trees that stood where the pens went up are gone.
     fn preview_clearing(&mut self, day: u32) {
         let inside = |p: [f32; 3], a: [f32; 4]| {
-            (a[0] - 2.0..=a[2] + 2.0).contains(&p[0]) && (a[1] - 2.0..=a[3] + 2.0).contains(&p[1])
+            (a[0] - 5.0..=a[2] + 5.0).contains(&p[0]) && (a[1] - 5.0..=a[3] + 5.0).contains(&p[1])
         };
         for (t, &(_, at)) in self.layout.trees.iter().enumerate() {
             let cleared = self.layout.pens.iter().any(|pen| inside(at, pen.area));
@@ -261,7 +261,14 @@ impl Game {
                     orientation: facing,
                     owner: None,
                 };
-                self.send(creatures::create(&shown, &self.layout.npcs[i].look));
+                // The pigs and sheep come in all their colours.
+                let mut look = self.layout.npcs[i].look.clone();
+                look.display = match look.name.as_str() {
+                    "Pig" => crate::layout::PIG_DISPLAYS[k % 3],
+                    "Sheep" if k % 4 == 3 => crate::layout::SHEEP_DISPLAYS[1],
+                    _ => look.display,
+                };
+                self.send(creatures::create(&shown, &look));
                 self.herd.push((guid, p, at));
             }
         }

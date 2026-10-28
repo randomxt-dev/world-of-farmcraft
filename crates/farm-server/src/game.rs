@@ -2363,34 +2363,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pet_pen_animal_becomes_the_companion() {
-        let (mut g, mut rx) = game();
-        let (i, pet) = (g.layout.npcs.iter().enumerate())
-            .find_map(|(i, n)| match n.role {
-                Role::Pet(p) if PETS[p].0 == "Panda Cub" => Some((i, p)),
-                _ => None,
-            })
-            .expect("the panda is in the pen");
-        let entry = NPC_BASE + i as u32;
-        let guid = HIGH_UNIT << 48 | u64::from(entry) << 24 | i as u64;
-        drain(&mut rx);
-        g.gossip_hello(guid);
-        assert_eq!(g.menu, Some(Menu::Adopt(pet)));
-        g.gossip_select(0);
-        assert_eq!(g.companion(), pet);
-        assert_eq!(g.farm.companion.as_deref(), Some("Panda Cub"));
-        let seen = drain(&mut rx);
-        assert!(seen
-            .iter()
-            .any(|p| matches!(p, ServerPacket::UpdateObject { .. })));
-        // Option 1 sends it back for the farm dog.
-        g.gossip_hello(guid);
-        g.gossip_select(1);
-        assert_eq!(g.companion(), 0);
-        drain(&mut rx);
-    }
-
-    #[test]
     fn three_swings_fell_a_tree_into_wood_and_a_stump_that_regrows() {
         let (mut g, mut rx) = game();
         let at = g.layout.trees[0].1;

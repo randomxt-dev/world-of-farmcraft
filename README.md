@@ -41,7 +41,7 @@ Lion's Pride Inn in Goldshire.
 
 | Do | How |
 |---|---|
-| Hotbar | 1 Till Soil, 2 Watering Can, 3 Sickle, 4 Axe, 5 Mining Pick, 6 Build Fence, 7 Horse (each once you have it), 8-12 your seeds. Tools come out by themselves when you right-click a crop, tree or vein; scroll the wheel or press a number to pick a seed (Shift+wheel zooms) |
+| Hotbar | 1 Shovel (press it to dig new plots once Brog gives you his hoe), 2 Watering Can, 3 Sickle, 4 Axe, 5 Mining Pick, 6 Build Fence, 7 Horse (each once you have it), 8-12 your seeds. Tools come out by themselves when you right-click a crop, tree or vein; scroll the wheel or press a number to pick a seed (Shift+wheel zooms) |
 | Plant | Right-click a dirt mound: the seed you last picked goes in |
 | Water | Right-click a planted crop once a day; rain does it for you |
 | Harvest | Right-click a ripe crop |

@@ -591,7 +591,7 @@ impl Layout {
             "Biscuit",
             HORSE_DISPLAY,
             Kind::Beast,
-            [-9905.5, 351.5, height(-9905.5, 351.5), 5.1],
+            [-9910.0, 356.0, height(-9910.0, 356.0), 5.1],
         );
         horse.look.subname = "Farm Horse".into();
         horse.look.npc_flags = NPC_GOSSIP;

@@ -349,6 +349,8 @@ pub struct Game {
     markers: [u32; 4],
     /// The tool slots on the bar as last sent: till, can, sickle, axe, pick, fence and horse.
     bar_tools: [bool; 7],
+    /// Whether the shovel's slot casts Till Soil, as last sent.
+    bar_till: bool,
     /// The bar slot lit as the tool in use, and the seed slot last picked (from the first).
     lit: usize,
     seed_pick: usize,
@@ -415,6 +417,7 @@ impl Game {
             quest_log: Vec::new(),
             markers: [u32::MAX; 4],
             bar_tools: [false; 7],
+            bar_till: false,
             lit: spells::SEED_SLOT0,
             seed_pick: 0,
             bar: Vec::new(),
@@ -771,6 +774,9 @@ impl Game {
             return;
         }
         self.mounted = mount;
+        if mount {
+            self.take_tool(spells::RIDE_SLOT, None);
+        }
         if let Some(h) = self.horse() {
             if mount {
                 self.send(crate::world::destroy(npc_guid(h)));
@@ -1081,8 +1087,9 @@ impl Game {
     /// none are carried, so a slot never changes under the farmer's pick. Sent again only when it
     /// changes; the counts are the client's own, read from the bags.
     fn sync_bar(&mut self) {
+        let till = self.farm.has(Unlock::Tilling);
         let tools = [
-            self.farm.has(Unlock::Tilling),
+            true,
             self.farm.has(Unlock::WateringCan),
             self.farm.has(Unlock::Sickle),
             self.farm.has(Unlock::Axe),
@@ -1096,10 +1103,12 @@ impl Game {
             .map(|&c| items::entry(Item::Seeds(c)))
             .take(12 - spells::SEED_SLOT0)
             .collect();
-        if bar != self.bar || tools != self.bar_tools {
-            self.send(spells::item_bar(&bar, &tools));
+        if bar != self.bar || tools != self.bar_tools || till != self.bar_till {
+            self.send(spells::item_bar(&bar, &tools, till));
             self.bar = bar;
             self.bar_tools = tools;
+            self.bar_till = till;
+            self.send_ui();
         }
         self.sync_quest_log();
         self.refresh_markers();
@@ -1124,10 +1133,16 @@ impl Game {
         }
     }
 
-    /// The bar slot that holds `crop`'s seeds.
-    fn seed_slot(&self, crop: Crop) -> usize {
-        let entry = items::entry(Item::Seeds(crop));
-        spells::SEED_SLOT0 + self.bar.iter().position(|&e| e == entry).unwrap_or(0)
+    /// What the hotbar's Lua keeps: whether the shovel digs, and the lit slot.
+    fn send_ui(&self) {
+        let till = if self.farm.has(Unlock::Tilling) {
+            "1"
+        } else {
+            "0"
+        };
+        self.send(packets::addon(self.guid(), "FarmcraftTill", till));
+        let lit = (self.lit + 1).to_string();
+        self.send(packets::addon(self.guid(), "FarmcraftTool", &lit));
     }
 
     /// The right tool for the job, in hand and lit on the bar.
@@ -1175,7 +1190,7 @@ impl Game {
         self.menu = None;
         self.ride(false);
         let (slot, hold) = match job {
-            Job::Plant(_, crop) => (self.seed_slot(crop), items::SHOVEL),
+            Job::Plant(..) => (0, items::SHOVEL),
             Job::Till(_) => (0, items::SHOVEL),
             Job::Water(_) => (spells::CAN_SLOT, items::SHOVEL),
             Job::Harvest(_) | Job::Forage(_) => (spells::SICKLE_SLOT, items::SICKLE),
@@ -2091,6 +2106,7 @@ impl Game {
             }
             ".ride" => self.toggle_ride(),
             ".markers" => self.send_markers(),
+            ".ui" => self.send_ui(),
             ".quest" => {
                 if let Some(n) = words.next().and_then(|w| w.parse::<usize>().ok()) {
                     self.skip_to_quest(n.saturating_sub(1));
@@ -2300,6 +2316,7 @@ mod tests {
         g.use_object(g.soil[1].0);
         run(&mut g, 2.0);
         assert_eq!(g.farm.tiles[1].crop.map(|c| c.0), Some(Crop::Peacebloom));
+        assert_eq!(g.lit, 0, "planting lights the shovel");
         // A tool slot picked keeps the seed: the next empty mound gets Peacebloom too.
         g.command(".sel 4");
         let tile = g.layout.tiles[2];
@@ -2610,7 +2627,14 @@ mod tests {
         };
         assert!(statuses(&mut rx).contains(&(ma, 5)), "Ma has a yellow !");
         // Only the shovel and the seeds are on the bar; there is no can to water with.
-        assert_eq!(g.bar_tools, [false; 7], "only seeds: the shovel plants");
+        assert_eq!(
+            g.bar_tools,
+            [true, false, false, false, false, false, false]
+        );
+        assert!(
+            !g.bar_till,
+            "the shovel plants; it digs once Brog gives the hoe"
+        );
 
         // Breaking Ground: plant all eight seeds.
         g.gossip_hello(ma);
@@ -2669,7 +2693,7 @@ mod tests {
         assert_eq!(g.farm.quests.count(4), 10);
         g.quest_choose(brog, 904);
         assert_eq!(g.farm.quests.done, 5);
-        assert!(g.bar_tools[0], "Brog's hoe: Till Soil");
+        assert!(g.bar_till, "Brog's hoe: the shovel digs");
         drain(&mut rx);
     }
 

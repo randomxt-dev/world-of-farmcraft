@@ -71,23 +71,26 @@ pub const SICKLE_SLOT: usize = 2;
 pub const AXE_SLOT: usize = 3;
 pub const PICK_SLOT: usize = 4;
 pub const FENCE_SLOT: usize = 5;
+pub const RIDE_SLOT: usize = 6;
 /// The first seed slot: the seeds carried fill 8 to 12, in crop order.
 pub const SEED_SLOT0: usize = 7;
 
 /// `SMSG_ACTION_BUTTONS` with the tools the farmer has (`tools`, by [`TOOL_SLOTS`] order) in the
 /// main bar's first slots and `items` (each crop's seed entry, 0 for none) after them: the hotbar.
-pub fn item_bar(items: &[u32], tools: &[bool]) -> Packet {
+/// Slot 1 is the shovel: it only picks until the farmer can dig, then it casts Till Soil.
+pub fn item_bar(items: &[u32], tools: &[bool], till: bool) -> Packet {
     let mut b = Body::default();
     for i in 0..120 {
         let tool = (TOOL_SLOTS.iter().enumerate())
             .find(|(k, (slot, _))| *slot == i && tools.get(*k).copied().unwrap_or(false))
-            .map(|(_, t)| t);
+            .map(|(_, t)| t)
+            .map(|&(slot, spell)| (slot, if slot == 0 && !till { PICK } else { spell }));
         let seed = (i.checked_sub(SEED_SLOT0))
             .filter(|_| i < 12)
             .and_then(|k| items.get(k))
             .filter(|&&e| e != 0);
         match (tool, seed) {
-            (Some(&(_, spell)), _) => b.u32(spell),
+            (Some((_, spell)), _) => b.u32(spell),
             (None, Some(&entry)) => b.u32(entry | ACTION_ITEM << 24),
             (None, None) => b.u32(0),
         };

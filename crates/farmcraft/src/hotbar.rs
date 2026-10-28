@@ -43,7 +43,7 @@ fn self_test(
     }
     *done = true;
     let lua = match std::env::var("FARMCRAFT_SELFTEST").as_deref() {
-        Ok("ride") => Some("UseAction(5) return 'ok'"),
+        Ok("ride") => Some("UseAction(7) return 'ok'"),
         Ok("map") => Some("ToggleWorldMap() return 'ok'"),
         _ => None,
     };

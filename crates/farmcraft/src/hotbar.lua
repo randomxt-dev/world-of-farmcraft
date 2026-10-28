@@ -1,5 +1,5 @@
 -- World of Farmcraft's hotbar: one button for every thing the farmer can do. Slots 1-7 are tools
--- (Till Soil, Watering Can, Sickle, Axe, Mining Pick, Build Fence, Horse), each there once a quest
+-- (Shovel, Watering Can, Sickle, Axe, Mining Pick, Build Fence, Horse), each there once a quest
 -- or Brog's shop gives it; slots 8-12 hold the seeds carried. One slot is lit as the pick: the
 -- mouse wheel moves it (Shift and the wheel zoom the camera), a number key or a click picks a
 -- slot, and the server is told with ".sel <slot>". The farm picks the tool by itself as well: a
@@ -11,15 +11,17 @@
 
 FARMCRAFT_SLOT = 8
 local RIDE_SLOT = 7
+-- Whether the shovel can dig yet: then pressing 1 casts Till Soil.
+local can_till = false
 
 -- The tools: icon, name, tooltip, and whether pressing the button acts (casts) or only picks.
 -- The server puts borrowed spells on these buttons; these are the faces and words they wear.
 local TOOLS = {
 	[1] = {
 		"Interface\\Icons\\INV_Misc_Shovel_01",
-		"Till Soil",
-		"Click a furrow in the field to dig a new plot mound.",
-		true,
+		"Shovel",
+		"Comes out by itself when you right-click a mound: in goes the seed you last picked. Once Brog gives you his hoe, press 1 and click a furrow in the field to dig a new plot.",
+		false,
 	},
 	[2] = {
 		"Interface\\Icons\\INV_Drink_Waterskin_01",
@@ -161,7 +163,7 @@ UseAction = function(slot, check_cursor, on_self)
 		end
 		return
 	end
-	if TOOLS[slot] and TOOLS[slot][4] then
+	if (TOOLS[slot] and TOOLS[slot][4]) or (slot == 1 and can_till) then
 		return use_action(slot, check_cursor, on_self)
 	end
 	Farmcraft_Select(slot)
@@ -281,6 +283,37 @@ function Farmcraft_SkillBar()
 	end
 end
 MainMenuExpBar_Update = Farmcraft_SkillBar
+-- Hovering the bar names the skill, not experience.
+MainMenuExpBar:SetScript("OnEnter", function()
+	Farmcraft_SkillBar()
+	local name = slot_skill(FARMCRAFT_SLOT)
+	local rank, max = nil, nil
+	if name then
+		rank, max = skill_level(name)
+	end
+	if rank then
+		GameTooltip_SetDefaultAnchor(GameTooltip, this)
+		GameTooltip:SetText(name.." "..rank.." / "..max)
+		GameTooltip:AddLine("Every 25 levels: quicker work and a chance of extra goods.", 1, 1, 1, 1)
+		GameTooltip:Show()
+	end
+end)
+MainMenuExpBar:SetScript("OnLeave", function()
+	GameTooltip:Hide()
+	Farmcraft_SkillBar()
+end)
+-- The farm has no reputations to watch: the bar for them stays hidden.
+if ReputationWatchBar then
+	ReputationWatchBar:Hide()
+	ReputationWatchBar.Show = function() end
+end
+if ReputationWatchBar_Update then
+	ReputationWatchBar_Update = function()
+		if ReputationWatchBar then
+			ReputationWatchBar:Hide()
+		end
+	end
+end
 local skill_watch = CreateFrame("Frame")
 skill_watch:RegisterEvent("SKILL_LINES_CHANGED")
 skill_watch:RegisterEvent("PLAYER_XP_UPDATE")
@@ -288,7 +321,10 @@ skill_watch:RegisterEvent("CHAT_MSG_ADDON")
 skill_watch:SetScript("OnEvent", function()
 	-- The server lights the tool it took for a job; this is not a pick to tell it about.
 	if event == "CHAT_MSG_ADDON" then
-		if arg1 ~= "FarmcraftTool" then
+		if arg1 == "FarmcraftTill" then
+			can_till = arg2 == "1"
+			return
+		elseif arg1 ~= "FarmcraftTool" then
 			return
 		end
 		FARMCRAFT_SLOT = tonumber(arg2) or FARMCRAFT_SLOT
@@ -330,3 +366,4 @@ watch_all()
 farm_light()
 
 Farmcraft_SkillBar()
+SendChatMessage(".ui", "SAY")

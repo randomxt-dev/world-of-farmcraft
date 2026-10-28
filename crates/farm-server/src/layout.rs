@@ -239,6 +239,8 @@ pub struct Pen {
 /// white and black.
 pub const PIG_DISPLAYS: [u32; 3] = [16257, 16358, 16357];
 pub const SHEEP_DISPLAYS: [u32; 2] = [856, 857];
+/// The farm pig's size: `pig.mdx` is a piglet at 1.
+pub const PIG_SCALE: f32 = 1.1;
 
 /// The farm horse's look, standing or ridden: a brown horse.
 pub const HORSE_DISPLAY: u32 = 2405;
@@ -495,7 +497,11 @@ impl Layout {
         ] {
             let mut n = npc(name, display, Kind::Critter, [x, y, height(x, y), facing]);
             n.look.level = 1;
-            n.look.scale = PETS.iter().find(|p| p.0 == name).map_or(1.0, |p| p.2);
+            n.look.scale = match name {
+                // The farm pig model is small beside a cow: it stands at its full size.
+                "Pig" => PIG_SCALE,
+                _ => PETS.iter().find(|p| p.0 == name).map_or(1.0, |p| p.2),
+            };
             let product = match name {
                 "Cow" => Some(Item::Milk),
                 "Sheep" => Some(Item::Wool),

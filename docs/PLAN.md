@@ -55,7 +55,7 @@ Built and verified: everything in weeks 1-4 below except chicken coop, on native
 | 4 | Wolf pup that follows you, doghouse, chicken coop, polish |
 
 ## Setup
-- Game data: `your 1.12.1 client's Data folder`. Link it as `WoW` at the repo root (a junction;
+- Game data: your 1.12.1 client's `Data` folder. Link it as `WoW` at the repo root (a junction;
   this path is gitignored).
 - Toolchain: Rust (the version is pinned by the fork), wasm-bindgen-cli 0.2.122 and wasi-sdk 27
   for the browser build later.

@@ -1,12 +1,15 @@
 #!/bin/bash
 # Cuts the World of Farmcraft trailer from the gameplay recording.
 set -e
-T=/path/to/file
-V="/path/to/file"
-LOGO=/path/to/file
+# Usage: tools/trailer.sh <recording.mp4> [work dir]
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+T=${2:-$REPO/target/trailer}
+V="$1"
+LOGO=$REPO/docs/logos/logo1.png
 FONT=georgiab.ttf
-mkdir -p $T/seg
-cd $T
+mkdir -p "$T/seg"
+cp /c/Windows/Fonts/georgiab.ttf "$T/" 2>/dev/null || true
+cd "$T"
 
 # Shared look: 1920x1080, 30 fps, stereo 48k.
 enc="-c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -r 30 -c:a aac -b:a 192k -ar 48000 -ac 2"

@@ -33,7 +33,7 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
 
 - **Never commit anything from a WoW install**: art, models, sounds, maps, DBC, MPQ contents.
   Game data is read at runtime from `WOW_DATA` or the gitignored `WoW` junction at the repo root
-  (here it points at `your own 1.12.1 install`).
+  (pointing at your own 1.12.1 install).
 - **The install is read-only.** Nothing we run writes into it.
 - **Our features live in our crates.** A change inside an upstream file only when unavoidable,
   the smallest possible, with a one-line comment saying why.

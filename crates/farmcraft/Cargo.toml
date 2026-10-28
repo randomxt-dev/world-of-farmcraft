@@ -18,6 +18,8 @@ dev = ["benilla-app/dev"]
 # `default-features = false`, or `--no-default-features` here still builds benilla-app with `dev`.
 benilla-app = { path = "../benilla-app", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
+# Its map streamer, told which of the map's own doodads the farm replaces.
+benilla-world = { path = "../benilla-world", default-features = false }
 farm-server = { path = "../farm-server" }
 # The client's Lua VM (`UiScript`), which the hotbar extends the way an addon would.
 benilla-ui = { path = "../benilla-ui" }

@@ -747,7 +747,7 @@ fn stream_terrain(
 
         // Placements register by uniqueId; their ground shade resolves at spawn by a global lookup,
         // since a doodad's origin may lie on another tile.
-        for d in &adt.doodads {
+        for d in adt.doodads.iter().filter(|d| !is_hidden_doodad(&d.model)) {
             register_doodad(placements, &asset_server, d, (tx, ty));
             tile.placements.push(d.unique_id);
         }
@@ -898,6 +898,17 @@ fn tile_drop_disabled() -> bool {
 }
 
 /// Register one M2 doodad placement, or bump its refcount if already known.
+/// Map doodads a game on benilla leaves out, by lowercase model-path fragment. (Farmcraft: its own
+/// crops replace the map's static field produce.)
+pub static HIDDEN_DOODADS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+fn is_hidden_doodad(model: &str) -> bool {
+    HIDDEN_DOODADS.get().is_some_and(|hidden| {
+        let model = model.to_ascii_lowercase();
+        hidden.iter().any(|h| model.contains(h.as_str()))
+    })
+}
+
 fn register_doodad(
     placements: &mut Placements,
     asset_server: &AssetServer,

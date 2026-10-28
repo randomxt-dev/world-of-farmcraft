@@ -74,7 +74,9 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
   itself); the experience bar shows the picked bar slot's skill; `hotbar.lua` renames them
   in the Skills tab and the skill-up line. Watering's cast bar is a borrowed spell renamed the same way.
 - `.preview [day]` (F8 in game, `game/preview.rs` + `Farm::preview`) rebuilds the world as day 10,
-  25 or 50 might look; it never saves.
+  25, 50 or 100 might look; it never saves.
+- `HIDDEN_DOODADS` (set in `farmcraft/src/main.rs`, read by benilla-world's streamer) leaves the
+  map's own melon props out of the field.
 - `markers.lua` draws the villagers' !/? on the minimap and world map from an addon line the
   server sends (`FarmcraftMarks`), placing them with Elwynn's `WorldMapArea.dbc` bounds.
 - In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`,

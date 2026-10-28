@@ -9,7 +9,7 @@ use farm_rules::Tile;
 use super::*;
 
 /// The days a preview shows.
-const STAGES: [u32; 3] = [10, 25, 50];
+const STAGES: [u32; 4] = [10, 25, 50, 100];
 /// The preview herd's guids start here, clear of every villager's.
 const HERD_GUIDS: u64 = 0x80_0000;
 
@@ -59,6 +59,8 @@ impl Game {
         self.send(player::skill_change(self.guid(), &self.skill_lines()));
         self.sync_quest_log();
         self.refresh_markers();
+        // The bar above the hotbar redraws its skill on this line.
+        self.send_ui();
         self.send(packets::headline(&format!("Preview: day {day}")));
         let next = (STAGES.iter())
             .find(|&&d| d > day)
@@ -84,7 +86,7 @@ impl Game {
         }
         gone.extend((0..self.layout.npcs.len()).map(npc_guid));
         gone.push(self.dog_guid());
-        gone.append(&mut self.herd);
+        gone.extend(self.herd.drain(..).map(|(guid, _, _)| guid));
         for guid in gone.into_iter().filter(|&g| g != 0) {
             self.send(crate::world::destroy(guid));
         }
@@ -105,6 +107,16 @@ impl Game {
                     Crop::Pumpkin,
                 ],
             ),
+            26..=50 => (
+                360,
+                &[
+                    Crop::Mageroyal,
+                    Crop::Briarthorn,
+                    Crop::Pumpkin,
+                    Crop::Watermelon,
+                    Crop::Earthroot,
+                ],
+            ),
             _ => (
                 usize::MAX,
                 &[
@@ -113,6 +125,7 @@ impl Game {
                     Crop::Pumpkin,
                     Crop::Watermelon,
                     Crop::Earthroot,
+                    Crop::Peacebloom,
                 ],
             ),
         };
@@ -220,21 +233,20 @@ impl Game {
                 .filter(|&&i| self.layout.npcs[i].look.name == name)
                 .count()
         };
-        let livestock: Vec<usize> = ["Cow", "Sheep", "Pig"]
+        let herds: Vec<Vec<usize>> = ["Cow", "Sheep", "Pig", "Chicken"]
             .into_iter()
-            .flat_map(|name| std::iter::repeat_n(kind(name), count(name) * times))
-            .flatten()
-            .collect();
-        let chickens: Vec<usize> = std::iter::repeat_n(kind("Chicken"), count("Chicken") * times)
-            .flatten()
+            .map(|name| {
+                std::iter::repeat_n(kind(name), count(name) * times)
+                    .flatten()
+                    .collect()
+            })
             .collect();
         let mut low = HERD_GUIDS;
-        for (pen, herd) in self.layout.pens.iter().zip([livestock, chickens]) {
-            // Spread the herd over the pen's spots, every other one first, so a small herd
-            // still fills the pen.
+        for (p, (pen, herd)) in self.layout.pens.iter().zip(herds).enumerate() {
+            // Spread the herd evenly over the pen's spots.
             let n = pen.spots.len().max(1);
             for (k, &i) in herd.iter().enumerate() {
-                let spot = pen.spots[(k * 7) % n];
+                let spot = pen.spots[(k * n / herd.len().max(1)) % n];
                 let jitter =
                     |salt: u64| (farm_rules::rng::below(low, salt, 100) as f32 / 100.0 - 0.5) * 1.2;
                 let at = [spot[0] + jitter(1), spot[1] + jitter(2), spot[2]];
@@ -250,7 +262,31 @@ impl Game {
                     owner: None,
                 };
                 self.send(creatures::create(&shown, &self.layout.npcs[i].look));
-                self.herd.push(guid);
+                self.herd.push((guid, p, at));
+            }
+        }
+    }
+
+    /// A few of the herd amble to another spot in their own pen.
+    pub(super) fn pace_herd(&mut self) {
+        use rand::Rng;
+        if self.herd.is_empty() {
+            return;
+        }
+        let mut rng = rand::thread_rng();
+        for _ in 0..6 {
+            let k = rng.gen_range(0..self.herd.len());
+            let (guid, p, from) = self.herd[k];
+            let [x0, y0, x1, y1] = self.layout.pens[p].area;
+            let (x, y) = (
+                (from[0] + rng.gen_range(-4.0..4.0)).clamp(x0 + 1.0, x1 - 1.0),
+                (from[1] + rng.gen_range(-4.0..4.0)).clamp(y0 + 1.0, y1 - 1.0),
+            );
+            let to = [x, y, from[2]];
+            let ms = (distance(from, to) / 1.2 * 1000.0) as u32;
+            if ms > 0 {
+                self.send(creatures::move_to(guid, from, to, ms, false));
+                self.herd[k].2 = to;
             }
         }
     }

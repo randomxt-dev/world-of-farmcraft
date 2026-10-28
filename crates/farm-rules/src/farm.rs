@@ -357,7 +357,7 @@ impl Farm {
                     [75, 60, 40, 50, 45, 35, 60],
                     1_200,
                 ),
-                _ => (
+                26..=50 => (
                     QUESTS.len(),
                     1,
                     &[
@@ -375,6 +375,25 @@ impl Farm {
                     ],
                     [120, 100, 90, 95, 80, 85, 110],
                     30_000,
+                ),
+                _ => (
+                    QUESTS.len(),
+                    2,
+                    &[
+                        WateringCan,
+                        Sickle,
+                        Horse,
+                        Market,
+                        Tilling,
+                        ShippingCrate,
+                        Axe,
+                        Fence,
+                        Hens,
+                        Herd,
+                        MiningPick,
+                    ],
+                    [205, 170, 150, 160, 140, 155, 190],
+                    120_000,
                 ),
             };
         self.clock.day = day;

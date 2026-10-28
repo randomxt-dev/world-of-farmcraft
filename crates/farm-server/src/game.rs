@@ -344,8 +344,8 @@ pub struct Game {
     ridden: f32,
     /// Showing a look-ahead preview: nothing is saved.
     previewing: bool,
-    /// The preview's herd as shown.
-    herd: Vec<u64>,
+    /// The preview's herd as shown: guid, pen, where it stands.
+    herd: Vec<(u64, usize, [f32; 3])>,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The quest log as last sent: (quest id, counter word) per slot.
@@ -1671,6 +1671,7 @@ impl Game {
         if self.since_wander >= WANDER_EVERY && !self.critter_at.is_empty() {
             self.since_wander = Duration::ZERO;
             self.wander();
+            self.pace_herd();
         }
         if let Some(mut c) = self.cast.take() {
             if c.left <= dt {
@@ -2786,8 +2787,30 @@ mod tests {
         drain(&mut rx);
         g.command(".preview");
         assert_eq!(g.farm.clock.day, 50);
-        assert_eq!(g.farm.tiles.len(), g.layout.field.len(), "the whole field");
+        let start = g.layout.tiles.len();
+        let half = start + 360.min(g.layout.field.len() - start);
+        assert_eq!(g.farm.tiles.len(), half, "day 50 plants 360 more");
         assert_eq!(g.herd.len(), 8 * 25, "twenty-five times the herd");
+        let pens: std::collections::BTreeSet<usize> = g.herd.iter().map(|h| h.1).collect();
+        assert_eq!(
+            pens.len(),
+            4,
+            "cows, sheep, pigs and chickens each in their own"
+        );
+        let before = g.herd.clone();
+        run(&mut g, 2.0);
+        assert_ne!(g.herd, before, "the herd paces");
+        for &(_, p, at) in &g.herd {
+            let [x0, y0, x1, y1] = g.layout.pens[p].area;
+            assert!(
+                at[0] > x0 && at[0] < x1 && at[1] > y0 && at[1] < y1,
+                "inside its pen"
+            );
+        }
+        drain(&mut rx);
+        g.command(".preview");
+        assert_eq!(g.farm.clock.day, 100);
+        assert_eq!(g.farm.tiles.len(), g.layout.field.len(), "the whole field");
         drain(&mut rx);
         g.save();
         let kept = g.saves.farm(1).unwrap();

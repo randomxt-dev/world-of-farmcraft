@@ -344,7 +344,7 @@ pub struct Layout {
     first_row: f32,
     /// The fence gallery: which of [`FENCES`] stands where.
     pub bed_facing: f32,
-    /// The pens the previews show: the livestock pen, then the chicken run.
+    /// The pens the previews show: the cows', the sheep's, the pigs', then the chicken run.
     pub pens: Vec<Pen>,
     /// The wild critters around the property: the index of each in `npcs`, and the spots it
     /// wanders between, its home first.
@@ -567,50 +567,55 @@ impl Layout {
             }
             npcs.push(n);
         }
-        // The previews' pens on open grass off the field: the livestock pen past its north-west
-        // edge and the chicken run beside the pet pen. Each side is a whole number of fence sections, so
+        // The previews' pens on open grass off the field. Each side is a whole number of fence sections, so
         // the sections meet end to end and close at the corners.
         // The spots are clear of buildings, props, trees, villagers and the field, on ground that
         // rises less than 2 yd across (found with `examples/pens.rs`).
-        let pens: Vec<Pen> = [([-9848.0, 424.0], 10, 7), ([-9960.0, 322.0], 5, 4)]
-            .into_iter()
-            .map(|(corner, along_x, along_y)| {
-                let [x0, y0]: [f32; 2] = corner;
-                let (x1, y1) = (
-                    x0 + along_x as f32 * FENCE_LENGTH,
-                    y0 + along_y as f32 * FENCE_LENGTH,
-                );
-                let corners = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]];
-                let mut fences = Vec::new();
-                for k in 0..corners.len() {
-                    let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
-                    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
-                    let dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
-                    let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
-                    let sections = (length / FENCE_LENGTH).round() as usize;
-                    for s in 0..sections {
-                        let t = s as f32 * FENCE_LENGTH;
-                        fences.push((on_ground(a[0] + dir[0] * t, a[1] + dir[1] * t), facing));
-                    }
+        // Cows, sheep and pigs each have a pen; the chickens a run.
+        let pens: Vec<Pen> = [
+            ([-9848.0, 424.0], 6, 5),
+            ([-9964.0, 332.0], 6, 5),
+            ([-9914.0, 272.0], 6, 5),
+            ([-9878.0, 284.0], 5, 4),
+        ]
+        .into_iter()
+        .map(|(corner, along_x, along_y)| {
+            let [x0, y0]: [f32; 2] = corner;
+            let (x1, y1) = (
+                x0 + along_x as f32 * FENCE_LENGTH,
+                y0 + along_y as f32 * FENCE_LENGTH,
+            );
+            let corners = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]];
+            let mut fences = Vec::new();
+            for k in 0..corners.len() {
+                let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+                let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                let dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+                let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
+                let sections = (length / FENCE_LENGTH).round() as usize;
+                for s in 0..sections {
+                    let t = s as f32 * FENCE_LENGTH;
+                    fences.push((on_ground(a[0] + dir[0] * t, a[1] + dir[1] * t), facing));
                 }
-                let mut spots = Vec::new();
-                let step = if along_x > 6 { 2.9 } else { 2.0 };
-                let mut x = x0 + step / 2.0;
-                while x < x1 - 1.0 {
-                    let mut y = y0 + step / 2.0;
-                    while y < y1 - 1.0 {
-                        spots.push(on_ground(x, y));
-                        y += step;
-                    }
-                    x += step;
+            }
+            let mut spots = Vec::new();
+            let step = if along_x > 5 { 2.9 } else { 2.0 };
+            let mut x = x0 + step / 2.0;
+            while x < x1 - 1.0 {
+                let mut y = y0 + step / 2.0;
+                while y < y1 - 1.0 {
+                    spots.push(on_ground(x, y));
+                    y += step;
                 }
-                Pen {
-                    area: [x0, y0, x1, y1],
-                    fences,
-                    spots,
-                }
-            })
-            .collect();
+                x += step;
+            }
+            Pen {
+                area: [x0, y0, x1, y1],
+                fences,
+                spots,
+            }
+        })
+        .collect();
         // The pet pen: every companion in rows on the grass south of the field, facing the house.
         for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
             let [x, y] = PEN[(i - 1) % PEN.len()];

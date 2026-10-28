@@ -60,6 +60,9 @@ fn start_server() -> anyhow::Result<String> {
 
 fn main() -> benilla_app::AppExit {
     install::ensure_wow_data();
+    // The map's own melons in the Stonefield field are scenery nobody can pick: the farm's crops
+    // grow there instead.
+    let _ = benilla_world::terrain_stream::HIDDEN_DOODADS.set(vec!["elwynnmelon".into()]);
     match start_server() {
         Ok(host) => {
             // The client reads these at startup: our server, and the login typed for the player.

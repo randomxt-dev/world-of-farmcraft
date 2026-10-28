@@ -1,6 +1,7 @@
 //! Look-ahead previews: the farm as it might stand on day 10, 25 or 50, with the plots dug and
-//! planted, the pen fenced, the animals home, the skills and quests where a steady farmer would
-//! have them. `.preview` (the hotbar binds it to F8) steps through them; nothing is saved, so a
+//! planted (the whole field by day 50), the pens fenced and full of animals (ten times the
+//! starting herd by day 25, twenty-five times by day 50), the skills and quests where a steady
+//! farmer would have them. `.preview` (the hotbar binds it to F8) steps through them; nothing is saved, so a
 //! relog returns the farmer's own farm.
 
 use farm_rules::Tile;
@@ -9,6 +10,8 @@ use super::*;
 
 /// The days a preview shows.
 const STAGES: [u32; 3] = [10, 25, 50];
+/// The preview herd's guids start here, clear of every villager's.
+const HERD_GUIDS: u64 = 0x80_0000;
 
 impl Game {
     /// `.preview [day]`: the next stage after today's, or `day`'s.
@@ -27,6 +30,7 @@ impl Game {
         self.farm.preview(day);
         self.preview_plots(day);
         self.preview_fences(day);
+        self.preview_clearing(day);
         self.previewing = true;
 
         let tiles = self.farm.tiles.len();
@@ -39,6 +43,7 @@ impl Game {
         self.critter_at = (self.layout.critters.iter()).map(|(_, s)| s[0]).collect();
         self.markers = [u32::MAX; 4];
         self.show_world();
+        self.preview_herd(day);
         if !had_pick && self.farm.has(Unlock::MiningPick) {
             let pick = player::pick(self.guid());
             self.send(Packet::new(
@@ -79,6 +84,7 @@ impl Game {
         }
         gone.extend((0..self.layout.npcs.len()).map(npc_guid));
         gone.push(self.dog_guid());
+        gone.append(&mut self.herd);
         for guid in gone.into_iter().filter(|&g| g != 0) {
             self.send(crate::world::destroy(guid));
         }
@@ -91,7 +97,7 @@ impl Game {
         let (extra, crops): (usize, &[Crop]) = match day {
             0..=10 => (8, &[Crop::Silverleaf, Crop::Peacebloom, Crop::Earthroot]),
             11..=25 => (
-                24,
+                96,
                 &[
                     Crop::Peacebloom,
                     Crop::Earthroot,
@@ -100,7 +106,7 @@ impl Game {
                 ],
             ),
             _ => (
-                48,
+                usize::MAX,
                 &[
                     Crop::Mageroyal,
                     Crop::Briarthorn,
@@ -141,44 +147,111 @@ impl Game {
             .collect();
     }
 
-    /// The fences by `day`: the livestock pen half up with the rest marked out on day 10, whole
-    /// from day 25, and by day 50 a fence along the far side of the plot too.
+    /// The fences by `day`: on day 10 the livestock pen half up and the rest marked out with
+    /// posts; from day 25 both pens whole.
     fn preview_fences(&mut self, day: u32) {
-        let pen = &self.layout.pen_fences;
-        let built_up_to = if day <= 10 {
-            pen.len() * 2 / 5
+        let pens: &[crate::layout::Pen] = if day <= 10 {
+            &self.layout.pens[..1]
         } else {
-            pen.len()
+            &self.layout.pens
         };
-        let mut fences: Vec<Fence> = (pen.iter().enumerate())
-            .map(|(k, &(at, facing))| Fence {
-                at,
-                facing,
-                style: FENCE_DISPLAY,
-                built: k < built_up_to,
-            })
-            .collect();
-        if day > 25 {
-            let row = (self.farm.dug.iter().map(|c| c.0))
-                .chain(0..PLOT_ROWS as i32)
-                .max()
-                .unwrap_or(0)
-                + 1;
-            let line: Vec<[f32; 3]> = (self.layout.field.range((row, i32::MIN)..=(row, i32::MAX)))
-                .map(|(_, &p)| p)
-                .step_by(3)
-                .collect();
-            for pair in line.windows(2) {
-                let (a, b) = (pair[0], pair[1]);
-                let facing = (b[1] - a[1]).atan2(b[0] - a[0]) + std::f32::consts::PI;
-                fences.push(Fence {
-                    at: a,
-                    facing,
-                    style: FENCE_DISPLAY,
-                    built: true,
-                });
-            }
+        let mut fences = Vec::new();
+        for pen in pens {
+            let built_up_to = if day <= 10 {
+                pen.fences.len() * 2 / 5
+            } else {
+                usize::MAX
+            };
+            fences.extend(
+                pen.fences
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &(at, facing))| Fence {
+                        at,
+                        facing,
+                        style: FENCE_DISPLAY,
+                        built: k < built_up_to,
+                    }),
+            );
         }
         self.farm.fences = fences;
+    }
+
+    /// The trees that stood where the pens went up are gone.
+    fn preview_clearing(&mut self, day: u32) {
+        let inside = |p: [f32; 3], a: [f32; 4]| {
+            (a[0] - 2.0..=a[2] + 2.0).contains(&p[0]) && (a[1] - 2.0..=a[3] + 2.0).contains(&p[1])
+        };
+        for (t, &(_, at)) in self.layout.trees.iter().enumerate() {
+            let cleared = self.layout.pens.iter().any(|pen| inside(at, pen.area));
+            if cleared {
+                if let Some(felled) = self.farm.felled.get_mut(t) {
+                    *felled = Some(day);
+                }
+            }
+        }
+    }
+
+    /// The herd by `day`, in the pens: the farm's own animals stand aside, and the pens fill with
+    /// cows, sheep and pigs, and the run with chickens, ten times the starting herd by day 25 and
+    /// twenty-five times by day 50.
+    fn preview_herd(&mut self, day: u32) {
+        let times = match day {
+            0..=10 => return,
+            11..=25 => 10,
+            _ => 25,
+        };
+        let own: Vec<usize> = (0..self.layout.npcs.len())
+            .filter(|&i| {
+                let n = &self.layout.npcs[i];
+                matches!(n.role, Role::Animal(..)) || (n.role == Role::None && n.look.name == "Pig")
+            })
+            .collect();
+        for &i in &own {
+            self.send(crate::world::destroy(npc_guid(i)));
+        }
+        let kind = |name: &str| {
+            own.iter()
+                .copied()
+                .find(|&i| self.layout.npcs[i].look.name == name)
+        };
+        let count = |name: &str| {
+            own.iter()
+                .filter(|&&i| self.layout.npcs[i].look.name == name)
+                .count()
+        };
+        let livestock: Vec<usize> = ["Cow", "Sheep", "Pig"]
+            .into_iter()
+            .flat_map(|name| std::iter::repeat_n(kind(name), count(name) * times))
+            .flatten()
+            .collect();
+        let chickens: Vec<usize> = std::iter::repeat_n(kind("Chicken"), count("Chicken") * times)
+            .flatten()
+            .collect();
+        let mut low = HERD_GUIDS;
+        for (pen, herd) in self.layout.pens.iter().zip([livestock, chickens]) {
+            // Spread the herd over the pen's spots, every other one first, so a small herd
+            // still fills the pen.
+            let n = pen.spots.len().max(1);
+            for (k, &i) in herd.iter().enumerate() {
+                let spot = pen.spots[(k * 7) % n];
+                let jitter =
+                    |salt: u64| (farm_rules::rng::below(low, salt, 100) as f32 / 100.0 - 0.5) * 1.2;
+                let at = [spot[0] + jitter(1), spot[1] + jitter(2), spot[2]];
+                let facing = farm_rules::rng::below(low, 3, 628) as f32 / 100.0;
+                let entry = NPC_BASE + i as u32;
+                low += 1;
+                let guid = HIGH_UNIT << 48 | u64::from(entry) << 24 | low;
+                let shown = Shown {
+                    guid,
+                    entry,
+                    position: at,
+                    orientation: facing,
+                    owner: None,
+                };
+                self.send(creatures::create(&shown, &self.layout.npcs[i].look));
+                self.herd.push(guid);
+            }
+        }
     }
 }

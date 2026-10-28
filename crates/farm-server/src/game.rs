@@ -344,6 +344,8 @@ pub struct Game {
     ridden: f32,
     /// Showing a look-ahead preview: nothing is saved.
     previewing: bool,
+    /// The preview's herd as shown.
+    herd: Vec<u64>,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The quest log as last sent: (quest id, counter word) per slot.
@@ -417,6 +419,7 @@ impl Game {
             marker_age: None,
             ridden: 0.0,
             previewing: false,
+            herd: Vec::new(),
             tool: items::SHOVEL,
             quest_log: Vec::new(),
             markers: [u32::MAX; 4],
@@ -2783,11 +2786,8 @@ mod tests {
         drain(&mut rx);
         g.command(".preview");
         assert_eq!(g.farm.clock.day, 50);
-        assert_eq!(g.farm.tiles.len(), g.layout.tiles.len() + 48);
-        assert!(
-            g.farm.fences.len() > g.layout.pen_fences.len(),
-            "a fence along the plot too"
-        );
+        assert_eq!(g.farm.tiles.len(), g.layout.field.len(), "the whole field");
+        assert_eq!(g.herd.len(), 8 * 25, "twenty-five times the herd");
         drain(&mut rx);
         g.save();
         let kept = g.saves.farm(1).unwrap();

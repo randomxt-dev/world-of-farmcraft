@@ -287,6 +287,17 @@ pub enum Role {
     Horse,
 }
 
+/// A fenced pen the previews show.
+#[derive(Clone, Debug)]
+pub struct Pen {
+    /// `[x0, y0, x1, y1]`: the ground it fences in.
+    pub area: [f32; 4],
+    /// Each fence section's spot and facing, corner to corner round the pen.
+    pub fences: Vec<([f32; 3], f32)>,
+    /// Spots for animals inside, in rows.
+    pub spots: Vec<[f32; 3]>,
+}
+
 /// The farm horse's look, standing or ridden: a brown horse.
 pub const HORSE_DISPLAY: u32 = 2405;
 
@@ -333,9 +344,8 @@ pub struct Layout {
     first_row: f32,
     /// The fence gallery: which of [`FENCES`] stands where.
     pub bed_facing: f32,
-    /// The livestock pen the previews show built: each fence section's spot and facing, round the
-    /// cows, sheep and pig, with a gap for a gate on the side toward the house.
-    pub pen_fences: Vec<([f32; 3], f32)>,
+    /// The pens the previews show: the livestock pen, then the chicken run.
+    pub pens: Vec<Pen>,
     /// The wild critters around the property: the index of each in `npcs`, and the spots it
     /// wanders between, its home first.
     pub critters: Vec<(usize, Vec<[f32; 3]>)>,
@@ -557,29 +567,50 @@ impl Layout {
             }
             npcs.push(n);
         }
-        // The livestock pen round the cows, sheep and pig, walked corner to corner.
-        let corners: [[f32; 2]; 4] = [
-            [-9878.0, 372.0],
-            [-9878.0, 408.0],
-            [-9830.0, 408.0],
-            [-9830.0, 372.0],
-        ];
-        let mut pen_fences = Vec::new();
-        for k in 0..corners.len() {
-            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
-            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
-            let n = (length / FENCE_LENGTH).round().max(1.0) as usize;
-            let dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
-            let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
-            for s in 0..n {
-                if k == 0 && s == n / 2 {
-                    continue;
+        // The previews' pens on open grass off the field: the livestock pen past its north-west
+        // edge and the chicken run beside the pet pen. Each side is a whole number of fence sections, so
+        // the sections meet end to end and close at the corners.
+        // The spots are clear of buildings, props, trees, villagers and the field, on ground that
+        // rises less than 2 yd across (found with `examples/pens.rs`).
+        let pens: Vec<Pen> = [([-9848.0, 424.0], 10, 7), ([-9960.0, 322.0], 5, 4)]
+            .into_iter()
+            .map(|(corner, along_x, along_y)| {
+                let [x0, y0]: [f32; 2] = corner;
+                let (x1, y1) = (
+                    x0 + along_x as f32 * FENCE_LENGTH,
+                    y0 + along_y as f32 * FENCE_LENGTH,
+                );
+                let corners = [[x0, y0], [x0, y1], [x1, y1], [x1, y0]];
+                let mut fences = Vec::new();
+                for k in 0..corners.len() {
+                    let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+                    let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+                    let dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+                    let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
+                    let sections = (length / FENCE_LENGTH).round() as usize;
+                    for s in 0..sections {
+                        let t = s as f32 * FENCE_LENGTH;
+                        fences.push((on_ground(a[0] + dir[0] * t, a[1] + dir[1] * t), facing));
+                    }
                 }
-                let t = s as f32 * length / n as f32;
-                let (x, y) = (a[0] + dir[0] * t, a[1] + dir[1] * t);
-                pen_fences.push((on_ground(x, y), facing));
-            }
-        }
+                let mut spots = Vec::new();
+                let step = if along_x > 6 { 2.9 } else { 2.0 };
+                let mut x = x0 + step / 2.0;
+                while x < x1 - 1.0 {
+                    let mut y = y0 + step / 2.0;
+                    while y < y1 - 1.0 {
+                        spots.push(on_ground(x, y));
+                        y += step;
+                    }
+                    x += step;
+                }
+                Pen {
+                    area: [x0, y0, x1, y1],
+                    fences,
+                    spots,
+                }
+            })
+            .collect();
         // The pet pen: every companion in rows on the grass south of the field, facing the house.
         for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
             let [x, y] = PEN[(i - 1) % PEN.len()];
@@ -617,7 +648,7 @@ impl Layout {
             "Biscuit",
             HORSE_DISPLAY,
             Kind::Beast,
-            [-9910.0, 356.0, height(-9910.0, 356.0), 5.1],
+            [-9906.0, 333.0, height(-9906.0, 333.0), 5.1],
         );
         horse.look.subname = "Farm Horse".into();
         horse.look.npc_flags = NPC_GOSSIP;
@@ -695,7 +726,7 @@ impl Layout {
             field,
             first_row: first,
             critters,
-            pen_fences,
+            pens,
             shipping: on_ground(-9904.0, 345.0),
             npcs,
             wild: WILD
@@ -743,5 +774,24 @@ mod tests {
         }
         assert!(PEN.len() >= PETS.len() - 1, "a spot for every pet");
         assert!(!OAKS.is_empty());
+    }
+
+    #[test]
+    fn every_pen_closes_section_end_to_section_start() {
+        let l = Layout::stonefield(None);
+        for pen in &l.pens {
+            let n = pen.fences.len();
+            for k in 0..n {
+                let (at, facing) = pen.fences[k];
+                // A section runs from its spot along its own -x.
+                let end = [
+                    at[0] - FENCE_LENGTH * facing.cos(),
+                    at[1] - FENCE_LENGTH * facing.sin(),
+                ];
+                let next = pen.fences[(k + 1) % n].0;
+                let gap = (end[0] - next[0]).hypot(end[1] - next[1]);
+                assert!(gap < 0.01, "pen section {k} leaves a {gap} yd gap");
+            }
+        }
     }
 }

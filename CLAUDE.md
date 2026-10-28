@@ -73,6 +73,8 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
   Lumberjacking on Skinning, Woodworking on Engineering, Shepherding on Leatherworking (Riding is
   itself); the experience bar shows the picked bar slot's skill; `hotbar.lua` renames them
   in the Skills tab and the skill-up line. Watering's cast bar is a borrowed spell renamed the same way.
+- `.preview [day]` (F8 in game, `game/preview.rs` + `Farm::preview`) rebuilds the world as day 10,
+  25 or 50 might look; it never saves.
 - `markers.lua` draws the villagers' !/? on the minimap and world map from an addon line the
   server sends (`FarmcraftMarks`), placing them with Elwynn's `WorldMapArea.dbc` bounds.
 - In-game commands: `.time`, `.home`, `.gps` (where you stand), and for testing `.sleep`, `.rain`, `.hour`, `.gold`, `.chop`,

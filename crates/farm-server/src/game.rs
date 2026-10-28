@@ -23,6 +23,7 @@ use crate::world::player;
 use crate::world::socket::{Outbox, Packet};
 use crate::world::spells::{self, CastRequest, Target};
 
+mod preview;
 mod quests;
 
 use quests::{AXE_PRICE, PICK_PRICE, TEXT_BROG, TEXT_FARLEY, TEXT_KHELDEN};
@@ -341,6 +342,8 @@ pub struct Game {
     marker_age: Option<Duration>,
     /// Yards ridden since the last try at Riding.
     ridden: f32,
+    /// Showing a look-ahead preview: nothing is saved.
+    previewing: bool,
     /// The tool in hand: the shovel or the axe.
     tool: u32,
     /// The quest log as last sent: (quest id, counter word) per slot.
@@ -413,6 +416,7 @@ impl Game {
             since_wander: Duration::ZERO,
             marker_age: None,
             ridden: 0.0,
+            previewing: false,
             tool: items::SHOVEL,
             quest_log: Vec::new(),
             markers: [u32::MAX; 4],
@@ -1628,6 +1632,9 @@ impl Game {
     }
 
     pub fn save(&mut self) {
+        if self.previewing {
+            return;
+        }
         self.saves.store(self.guid(), &self.farm);
         self.since_save = Duration::ZERO;
     }
@@ -2107,6 +2114,7 @@ impl Game {
             ".ride" => self.toggle_ride(),
             ".markers" => self.send_markers(),
             ".ui" => self.send_ui(),
+            ".preview" => self.preview(words.next().and_then(|w| w.parse().ok())),
             ".quest" => {
                 if let Some(n) = words.next().and_then(|w| w.parse::<usize>().ok()) {
                     self.skip_to_quest(n.saturating_sub(1));
@@ -2755,6 +2763,35 @@ mod tests {
             "the whole shelf once it is done"
         );
         drain(&mut rx);
+    }
+
+    #[test]
+    fn previews_run_to_day_ten_twenty_five_and_fifty_and_save_nothing() {
+        let (mut g, mut rx) = new_game(false);
+        drain(&mut rx);
+        g.command(".preview");
+        assert_eq!(g.farm.clock.day, 10);
+        assert_eq!(g.farm.tiles.len(), g.layout.tiles.len() + 8);
+        assert!(g.farm.fences.iter().any(|f| f.built) && g.farm.fences.iter().any(|f| !f.built));
+        // Every packet of the rebuild reads back whole in the client.
+        let shown = drain(&mut rx);
+        assert!(shown.len() > 100);
+        g.command(".preview");
+        assert_eq!(g.farm.clock.day, 25);
+        assert!(g.farm.fences.iter().all(|f| f.built));
+        assert!(g.farm.has(Unlock::Herd));
+        drain(&mut rx);
+        g.command(".preview");
+        assert_eq!(g.farm.clock.day, 50);
+        assert_eq!(g.farm.tiles.len(), g.layout.tiles.len() + 48);
+        assert!(
+            g.farm.fences.len() > g.layout.pen_fences.len(),
+            "a fence along the plot too"
+        );
+        drain(&mut rx);
+        g.save();
+        let kept = g.saves.farm(1).unwrap();
+        assert_eq!(kept.clock.day, 1, "a preview is never saved");
     }
 
     #[test]

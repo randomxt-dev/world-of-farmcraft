@@ -333,6 +333,9 @@ pub struct Layout {
     first_row: f32,
     /// The fence gallery: which of [`FENCES`] stands where.
     pub bed_facing: f32,
+    /// The livestock pen the previews show built: each fence section's spot and facing, round the
+    /// cows, sheep and pig, with a gap for a gate on the side toward the house.
+    pub pen_fences: Vec<([f32; 3], f32)>,
     /// The wild critters around the property: the index of each in `npcs`, and the spots it
     /// wanders between, its home first.
     pub critters: Vec<(usize, Vec<[f32; 3]>)>,
@@ -554,6 +557,29 @@ impl Layout {
             }
             npcs.push(n);
         }
+        // The livestock pen round the cows, sheep and pig, walked corner to corner.
+        let corners: [[f32; 2]; 4] = [
+            [-9878.0, 372.0],
+            [-9878.0, 408.0],
+            [-9830.0, 408.0],
+            [-9830.0, 372.0],
+        ];
+        let mut pen_fences = Vec::new();
+        for k in 0..corners.len() {
+            let (a, b) = (corners[k], corners[(k + 1) % corners.len()]);
+            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let n = (length / FENCE_LENGTH).round().max(1.0) as usize;
+            let dir = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+            let facing = dir[1].atan2(dir[0]) + std::f32::consts::PI;
+            for s in 0..n {
+                if k == 0 && s == n / 2 {
+                    continue;
+                }
+                let t = s as f32 * length / n as f32;
+                let (x, y) = (a[0] + dir[0] * t, a[1] + dir[1] * t);
+                pen_fences.push((on_ground(x, y), facing));
+            }
+        }
         // The pet pen: every companion in rows on the grass south of the field, facing the house.
         for (i, &(name, display, scale)) in PETS.iter().enumerate().skip(1) {
             let [x, y] = PEN[(i - 1) % PEN.len()];
@@ -669,6 +695,7 @@ impl Layout {
             field,
             first_row: first,
             critters,
+            pen_fences,
             shipping: on_ground(-9904.0, 345.0),
             npcs,
             wild: WILD

@@ -315,6 +315,115 @@ impl Farm {
         true
     }
 
+    /// A look ahead: the farm as a steady farmer might have it by `day` (10, 25 or 50): the
+    /// quests done, what they unlocked, the skills, the purse and the bag. Where things stand in
+    /// the world (plots, crops, fences) is the server's to fill in.
+    pub fn preview(&mut self, day: u32) {
+        use Unlock::*;
+        let (done, studies, unlocks, levels, money): (usize, usize, &[Unlock], [u32; 7], u32) =
+            match day {
+                0..=10 => (
+                    7,
+                    0,
+                    &[
+                        WateringCan,
+                        Sickle,
+                        Horse,
+                        Market,
+                        Tilling,
+                        ShippingCrate,
+                        Axe,
+                        Fence,
+                    ],
+                    [35, 25, 1, 15, 10, 1, 20],
+                    150,
+                ),
+                11..=25 => (
+                    QUESTS.len(),
+                    0,
+                    &[
+                        WateringCan,
+                        Sickle,
+                        Horse,
+                        Market,
+                        Tilling,
+                        ShippingCrate,
+                        Axe,
+                        Fence,
+                        Hens,
+                        Herd,
+                        MiningPick,
+                    ],
+                    [75, 60, 40, 50, 45, 35, 60],
+                    1_200,
+                ),
+                _ => (
+                    QUESTS.len(),
+                    1,
+                    &[
+                        WateringCan,
+                        Sickle,
+                        Horse,
+                        Market,
+                        Tilling,
+                        ShippingCrate,
+                        Axe,
+                        Fence,
+                        Hens,
+                        Herd,
+                        MiningPick,
+                    ],
+                    [120, 100, 90, 95, 80, 85, 110],
+                    30_000,
+                ),
+            };
+        self.clock.day = day;
+        self.quests = Quests {
+            done,
+            active: Vec::new(),
+            studies,
+        };
+        self.unlocked = unlocks.iter().copied().collect();
+        let cap = RANKS[studies];
+        for (&skill, level) in Skill::ALL.iter().zip(levels) {
+            self.skills.0.insert(skill, (level.min(cap), cap));
+        }
+        self.money = money;
+        let mut bag = Bag::default();
+        let goods: &[(Item, u32)] = match day {
+            0..=10 => &[
+                (Item::Seeds(Crop::Peacebloom), 10),
+                (Item::Seeds(Crop::Earthroot), 6),
+                (Item::Produce(Crop::Silverleaf), 12),
+                (Item::Wood, 6),
+            ],
+            11..=25 => &[
+                (Item::Seeds(Crop::Mageroyal), 12),
+                (Item::Seeds(Crop::Pumpkin), 6),
+                (Item::Produce(Crop::Earthroot), 14),
+                (Item::Wood, 14),
+                (Item::CopperOre, 8),
+                (Item::Egg, 6),
+            ],
+            _ => &[
+                (Item::Seeds(Crop::Briarthorn), 12),
+                (Item::Seeds(Crop::Watermelon), 8),
+                (Item::Seeds(Crop::Pumpkin), 8),
+                (Item::Produce(Crop::Mageroyal), 18),
+                (Item::Wood, 20),
+                (Item::CopperOre, 16),
+                (Item::Wool, 6),
+                (Item::Milk, 4),
+            ],
+        };
+        for &(item, n) in goods {
+            bag.add(item, n);
+        }
+        self.bag = bag;
+        self.collected.iter_mut().for_each(|c| *c = false);
+        self.weather = Weather::Sunny;
+    }
+
     /// Whether a try at `skill` brings something extra, by its level's luck.
     pub fn lucky(&mut self, skill: Skill) -> bool {
         self.practiced += 1;
@@ -847,5 +956,25 @@ mod tests {
         );
         f.skills.0.insert(Skill::Mining, (150, 150));
         assert_eq!(f.offer(Villager::Khelden), Some(library + 1));
+    }
+
+    #[test]
+    fn a_preview_runs_ahead_to_day_ten_twenty_five_and_fifty() {
+        let mut f = Farm::new(1, 1, 1);
+        f.preview(10);
+        assert_eq!(f.clock.day, 10);
+        assert!(f.has(Unlock::Fence) && !f.has(Unlock::Hens));
+        assert_eq!(f.offer(Villager::Ma), Some(7), "Good Fences is next");
+        f.preview(25);
+        assert!(f.has(Unlock::Herd) && f.has(Unlock::MiningPick));
+        assert_eq!(f.skills.get(Skill::Farming), (75, 75));
+        assert_eq!(
+            f.offer(Villager::Ma),
+            Some(QUESTS.len()),
+            "the Abbey Library"
+        );
+        f.preview(50);
+        assert_eq!(f.skills.get(Skill::Riding), (110, 150));
+        assert_eq!(f.quests.studies, 1);
     }
 }

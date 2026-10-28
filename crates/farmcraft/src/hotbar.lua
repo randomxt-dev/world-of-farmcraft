@@ -365,5 +365,12 @@ watch_all()
 
 farm_light()
 
+-- F8 runs a look-ahead preview of the farm on day 10, 25 and 50. The battleground scoreboard's
+-- binding is borrowed for it: the farm has no battlegrounds.
+ToggleWorldStateScoreFrame = function()
+	SendChatMessage(".preview", "SAY")
+end
+SetBinding("F8", "TOGGLEWORLDSTATESCORES")
+
 Farmcraft_SkillBar()
 SendChatMessage(".ui", "SAY")

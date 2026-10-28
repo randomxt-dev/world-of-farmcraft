@@ -26,7 +26,7 @@ their pieces are no longer needed; `crates/benilla-*` and `crates/wenilla*` are 
 
 ## Remotes
 
-- `origin`: github.com/randomxt-dev/world-of-farmcraft (private).
+- `origin`: github.com/randomxt-dev/world-of-farmcraft (public since 2026-10-28: anything committed is published).
 - `upstream`: ballxxxxx/among-azeroth. Merged once as the base; later syncs are real merges.
 
 ## Hard rules
